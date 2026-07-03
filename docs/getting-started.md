@@ -31,7 +31,7 @@ instrumentation), and supports sync, async, **and streaming** (`stream=True`) cl
 
 ## 3. Try it offline (no API key)
 
-These run with zero network — token counting and pricing ship offline:
+Token counting and pricing ship offline, so this runs with zero network:
 
 ```python
 from cendor.core import tokens, prices
@@ -41,9 +41,9 @@ cost = prices.estimate("claude-opus-4-8", input_tokens=n, output_tokens=200)
 print(n, cost)            # e.g. 13  0.005065 USD
 ```
 
-The price table is offline-first but **refreshable** — `prices.refresh(source="litellm"|"openrouter"|"azure")`
-pulls live rates from no-auth sources (no extra deps), and `prices.age_days()`/`is_stale()` tell you
-when the bundled snapshot is getting old.
+The price table is offline-first but **refreshable**: `prices.refresh(source="litellm"|"openrouter"|"azure")`
+pulls live rates from no-auth sources (no extra deps). `prices.age_days()` / `prices.is_stale()` tell
+you when the bundled snapshot is getting old.
 
 ## 4. A first real call, with a budget and attribution
 
@@ -93,9 +93,11 @@ def test_support():
 audit.export("evidence.jsonl", framework="eu_ai_act")     # tamper-evident; verify offline
 ```
 
+> **Want it all wired together?** The full support agent — budget + context + record/replay + audit
+> in one function — is in the [Cookbook](/cookbook).
+
 ## Next steps
 
 - See how the pieces connect → [Architecture](architecture.md)
 - Use a specific provider (incl. Azure AI Foundry, Gemini, Bedrock, Ollama) → [Providers & Integration](providers.md)
-- A complete, connected example → [Guides & Recipes](guides.md)
 - Per-library manuals → [core](core.md) · [contextkit](contextkit.md) · [squeeze](squeeze.md) · [tokenguard](tokenguard.md) · [cassette](cassette.md) · [acttrace](acttrace.md)

@@ -1,12 +1,15 @@
 # Benchmarks
 
-Reproducible, offline measurements of every package in the stack — both the **headline claims** (compression ratios, token-count accuracy, tamper detection) and **runtime cost** (throughput, per-call overhead). There is no network and no API key anywhere in the suite: model calls use fake, provider-shaped clients, and timing is plain `time.perf_counter`.
+Reproducible, offline measurements of every package — both the **headline claims** (compression
+ratios, token-count accuracy, tamper detection) and **runtime cost** (throughput, per-call
+overhead). No network, no API key: model calls use fake, provider-shaped clients, and timing is
+plain `time.perf_counter`.
 
 ## How to reproduce
 
 ```bash
-uv run python benchmarks/run_all.py            # all tables below
-uv run --with tiktoken python benchmarks/run_all.py   # adds exact-token accuracy
+uv run python benchmarks/run_all.py                    # all tables below
+uv run --with tiktoken python benchmarks/run_all.py    # adds exact-token accuracy
 ```
 
 ## Environment
@@ -22,7 +25,8 @@ uv run --with tiktoken python benchmarks/run_all.py   # adds exact-token accurac
 
 ## cendor-core
 
-One `instrument()` seam, provider-aware token counting, and offline pricing — measured for accuracy against tiktoken and for the per-call overhead the seam adds.
+One `instrument()` seam, provider-aware token counting, and offline pricing — measured for accuracy
+against tiktoken and for the per-call overhead the seam adds.
 
 | Metric | Result | Notes |
 |---|---|---|
@@ -40,7 +44,8 @@ One `instrument()` seam, provider-aware token counting, and offline pricing — 
 
 ## cendor-contextkit
 
-Packing prioritized blocks into a token budget: how tightly it fills the budget, that it never overflows, and how fast it assembles.
+Packing prioritized blocks into a token budget: how tightly it fills the budget, that it never
+overflows, and how fast it assembles.
 
 | Metric | Result | Notes |
 |---|---|---|
@@ -52,7 +57,8 @@ Packing prioritized blocks into a token budget: how tightly it fills the budget,
 
 ## cendor-squeeze
 
-Content-aware, reversible compression: how much each kind shrinks (by characters and tokens), that every compression restores byte-for-byte, and throughput.
+Content-aware, reversible compression: how much each kind shrinks (by characters and tokens), that
+every compression restores byte-for-byte, and throughput.
 
 | Metric | Result | Notes |
 |---|---|---|
@@ -66,7 +72,8 @@ Content-aware, reversible compression: how much each kind shrinks (by characters
 
 ## cendor-tokenguard
 
-Budget enforcement + spend attribution as a bus subscriber: the cost it adds per call and how fast it aggregates spend.
+Budget enforcement + spend attribution as a bus subscriber: the cost it adds per call and how fast
+it aggregates spend.
 
 | Metric | Result | Notes |
 |---|---|---|
@@ -75,7 +82,8 @@ Budget enforcement + spend attribution as a bus subscriber: the cost it adds per
 
 ## cendor-cassette
 
-Record once, replay forever: a full run replayed vs live, the per-call replay overhead, and meaning-based matching.
+Record once, replay forever: a full run replayed vs live, the per-call replay overhead, and
+meaning-based matching.
 
 | Metric | Result | Notes |
 |---|---|---|
@@ -86,9 +94,16 @@ Record once, replay forever: a full run replayed vs live, the per-call replay ov
 
 ## Method & caveats
 
-- **No network, no keys.** Every model call is a fake client matching the provider's shape; usage and responses are synthetic but realistic.
-- **Token accuracy** compares the offline heuristic to `tiktoken` (the real OpenAI tokenizer). With the `[tiktoken]` extra installed, OpenAI counts are exact (0% error); the heuristic is the zero-dependency fallback. Claude/Gemini have no offline native tokenizer, so that row is a cross-tokenizer ballpark, not ground truth.
-- **Cassette speedup** models a real call with a fake client that sleeps a few milliseconds; production LLM calls are 100×–1000× slower, so the real-world speedup is far larger than shown here.
-- **Compression ratios** depend heavily on input shape and repetition (described per row). The log rows report **both** a repetition-heavy sample (~55% identical heartbeat lines, as much production log traffic is) and a mixed-entropy sample (~15% heartbeats, the rest distinct) — the mixed row is the honest lower bound. Inputs are typical verbose payloads, not adversarially chosen to flatter the compressors, but the headline log ratio is repetition-driven; read the mixed-entropy row for less repetitive logs.
-- Throughput numbers are single-machine and relative; they vary with hardware. Re-run locally for your own figures.
-
+- **No network, no keys.** Every model call is a fake client matching the provider's shape; usage and
+  responses are synthetic but realistic.
+- **Token accuracy** compares the offline heuristic to `tiktoken` (the real OpenAI tokenizer). With
+  `[tiktoken]`, OpenAI counts are exact (0% error); the heuristic is the zero-dependency fallback.
+  Claude/Gemini have no offline native tokenizer, so that row is a cross-tokenizer ballpark.
+- **Cassette speedup** models a real call with a fake client that sleeps a few milliseconds;
+  production LLM calls are 100×–1000× slower, so the real-world speedup is far larger than shown.
+- **Compression ratios depend on input shape and repetition.** The log rows report **both** a
+  repetition-heavy sample (~55% identical heartbeat lines, as much production traffic is) and a
+  mixed-entropy sample (~15% heartbeats). The mixed row is the honest lower bound — read it for less
+  repetitive logs; the headline log ratio is repetition-driven.
+- Throughput numbers are single-machine and relative; they vary with hardware. Re-run locally for
+  your own figures.

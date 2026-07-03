@@ -1,7 +1,8 @@
 # Guides & Recipes
 
-Practical, copy-paste recipes. The headline is the **full-stack support agent** — one `instrument()`
-call, and budgeting, context assembly, compression, record/replay, and auditing all cooperate.
+Practical, copy-paste recipes. The headline is the **full-stack support agent** — one
+`instrument()` call, and budgeting, context assembly, compression, record/replay, and auditing all
+cooperate.
 
 ## Lifecycle of one turn
 
@@ -83,7 +84,11 @@ audit = AuditLog(system="loan", risk_tier="high", path="audit.jsonl", signing_ke
 ok, detail = verify("audit.jsonl", key="k")   # True unless the chain was tampered
 ```
 
-## Recipe: validate & block disallowed input (audited)
+## Recipe: block disallowed input, audited
+Your guard enforces on `core`'s interceptor seam; `acttrace` records the refusal. The full,
+runnable version (with a real SSN policy and offline verification) is in
+[acttrace → Flagging input](acttrace.md#flagging-input-that-shouldnt-be-processed).
+
 ```python
 from cendor.core.instrument import add_interceptor, MISS
 from cendor.core.types import LLMCall

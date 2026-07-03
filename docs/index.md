@@ -27,51 +27,44 @@ client = instrument(OpenAI())   # ← the one line you change
 
 That single wrap publishes every LLM and tool call onto an in-process **event bus**. Each library
 *subscribes* — none patches your client, none imports another — so you add budgeting, recording, or
-auditing with **zero per-call wiring**.
+auditing with **zero per-call wiring**. Read the diagram top to bottom: it's one request's lifecycle,
+with each library labelled **where it acts**.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}} }%%
 graph TD
     YOU["your agent code"]
     B["1. Build the prompt"]
-    PRE["2. Pre-flight (before the call runs)"]
+    PRE["2. Pre-flight<br/>(before the call runs)"]
     CALL["3. The LLM call<br/>core.instrument() = the seam"]
     POST["4. After the call<br/>(automatic, via the event bus)"]
 
-    YOU --> B
-    B --> PRE
-    PRE --> CALL
-    CALL --> POST
+    YOU --> B --> PRE --> CALL --> POST
 
-    B --- CK["contextkit<br/>pack context into a token budget"]
+    B --- CK["contextkit<br/>pack context into a budget"]
     B --- SQ["squeeze<br/>compress oversized blocks"]
     PRE --- TG1["tokenguard<br/>block / downgrade if over budget"]
     PRE --- AT1["acttrace<br/>policy guard: flag + block bad input"]
     POST --- TG2["tokenguard<br/>record spend by feature / user"]
-    POST --- CS["cassette<br/>record the run (replay it in tests)"]
+    POST --- CS["cassette<br/>record the run (replay in tests)"]
     POST --- AT2["acttrace<br/>append to the tamper-evident log"]
 
-    classDef you fill:#0f172a,stroke:#0f172a,color:#ffffff;
-    classDef phase fill:#334155,stroke:#1e293b,color:#ffffff;
-    classDef seam fill:#b45309,stroke:#92400e,color:#ffffff;
-    classDef ck fill:#1d4ed8,stroke:#1e40af,color:#ffffff;
-    classDef sq fill:#15803d,stroke:#166534,color:#ffffff;
-    classDef tg fill:#7c3aed,stroke:#6d28d9,color:#ffffff;
-    classDef cs fill:#0d9488,stroke:#0f766e,color:#ffffff;
-    classDef at fill:#be123c,stroke:#9f1239,color:#ffffff;
-
-    class YOU you;
-    class B,PRE,POST phase;
+    classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
+    classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
+    classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
+    classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
+    classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
+    classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
     class CALL seam;
     class CK ck;
     class SQ sq;
     class TG1,TG2 tg;
-    class AT1,AT2 at;
     class CS cs;
+    class AT1,AT2 at;
 ```
 
-Read it top to bottom — that's one request's lifecycle, with each library labelled **where it acts**.
-**tokenguard** and **acttrace** each appear twice: they run *before* the call (cap spend / guard the
-input) **and** *after* it (record cost / append to the log).
+**tokenguard** and **acttrace** each appear twice: they run *before* the call (cap spend / guard
+the input) **and** *after* it (record cost / append to the log).
 
 ## The six libraries
 
@@ -79,12 +72,12 @@ Each solves one of those problems, and each works on its own:
 
 | Library | Solves | In one line |
 |---|---|---|
-| [contextkit](contextkit.md) | prompts overflow | Pack prioritized blocks into a token budget, evict by rule, and get a receipt of what was kept / shrunk / dropped. |
-| [squeeze](squeeze.md) | a blob is too big | Content-aware, deterministic compression (JSON / logs / code / prose) — fully reversible, byte-for-byte. |
+| [contextkit](contextkit.md) | prompts overflow | Pack prioritized blocks into a token budget; get a receipt of what was kept / shrunk / dropped. |
+| [squeeze](squeeze.md) | a blob is too big | Content-aware, deterministic compression (JSON / logs / code / prose) — fully reversible. |
 | [tokenguard](tokenguard.md) | runaway cost | Cap spend before a call runs (block / downgrade), and attribute cost per feature / user. |
 | [cassette](cassette.md) | can't test agents | Record a whole run once (LLM + tool calls), replay it forever — offline, deterministic. |
 | [acttrace](acttrace.md) | no audit trail | Tamper-evident, offline-verifiable decision log + policy flags, with compliance evidence packs. |
-| [core](core.md) | the shared glue | Types, token counting, offline-first prices (refreshable from live no-auth sources, with estimate-vs-billed labeling), the `instrument()` seam, and the event bus every tool rides. |
+| [core](core.md) | the shared glue | Types, token counting, offline-first prices, the `instrument()` seam, and the event bus every tool rides. |
 
 ```
 contextkit  →  squeeze  →  tokenguard  →  cassette  →  acttrace
@@ -101,6 +94,9 @@ pip install cendor-tokenguard # or any single tool (pulls cendor-core transitive
 ```
 
 Every package imports under the `cendor.*` namespace.
+
+> **Prefer to read code?** The [Cookbook](/cookbook) has the full-stack support agent — one
+> `instrument()` call, all six tools cooperating — as one copy-paste block.
 
 ## Where to go next
 

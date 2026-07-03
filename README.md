@@ -42,43 +42,36 @@ That single wrap publishes every LLM and tool call onto an in-process **event bu
 auditing with **zero per-call wiring**.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}} }%%
 graph TD
     YOU["your agent code"]
     B["1. Build the prompt"]
-    PRE["2. Pre-flight (before the call runs)"]
+    PRE["2. Pre-flight<br/>(before the call runs)"]
     CALL["3. The LLM call<br/>core.instrument() = the seam"]
     POST["4. After the call<br/>(automatic, via the event bus)"]
 
-    YOU --> B
-    B --> PRE
-    PRE --> CALL
-    CALL --> POST
+    YOU --> B --> PRE --> CALL --> POST
 
-    B --- CK["contextkit<br/>pack context into a token budget"]
+    B --- CK["contextkit<br/>pack context into a budget"]
     B --- SQ["squeeze<br/>compress oversized blocks"]
     PRE --- TG1["tokenguard<br/>block / downgrade if over budget"]
     PRE --- AT1["acttrace<br/>policy guard: flag + block bad input"]
     POST --- TG2["tokenguard<br/>record spend by feature / user"]
-    POST --- CS["cassette<br/>record the run (replay it in tests)"]
+    POST --- CS["cassette<br/>record the run (replay in tests)"]
     POST --- AT2["acttrace<br/>append to the tamper-evident log"]
 
-    classDef you fill:#0f172a,stroke:#0f172a,color:#ffffff;
-    classDef phase fill:#334155,stroke:#1e293b,color:#ffffff;
-    classDef seam fill:#b45309,stroke:#92400e,color:#ffffff;
-    classDef ck fill:#1d4ed8,stroke:#1e40af,color:#ffffff;
-    classDef sq fill:#15803d,stroke:#166534,color:#ffffff;
-    classDef tg fill:#7c3aed,stroke:#6d28d9,color:#ffffff;
-    classDef cs fill:#0d9488,stroke:#0f766e,color:#ffffff;
-    classDef at fill:#be123c,stroke:#9f1239,color:#ffffff;
-
-    class YOU you;
-    class B,PRE,POST phase;
+    classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
+    classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
+    classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
+    classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
+    classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
+    classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
     class CALL seam;
     class CK ck;
     class SQ sq;
     class TG1,TG2 tg;
-    class AT1,AT2 at;
     class CS cs;
+    class AT1,AT2 at;
 ```
 
 Read it top to bottom — that's one request's lifecycle, with each library labelled **where it acts**.
@@ -118,7 +111,7 @@ below is directional — timing rows vary by machine.
 | OpenAI token counting (with `tiktoken`) | **exact** — 0% error vs the real tokenizer |
 | Log compression (squeeze) | **~99% on repetition-heavy logs, ~30% on high-entropy logs** — always **fully reversible** |
 | Replayed run vs live (cassette) | **orders of magnitude faster**, no API key (modeled at 4 ms/call; real LLMs are far slower) |
-| `instrument()` overhead per call | **~12 µs** — bus emit + usage extraction + Decimal pricing |
+| `instrument()` overhead per call | **~25 µs** — bus emit + usage extraction + Decimal pricing |
 | Tamper detection (acttrace) | a **single edited byte** breaks the chain → `verify()` returns `False` |
 
 ## Install
@@ -376,8 +369,8 @@ Knowing exactly where the edges are is part of the design:
 
 ## Docs
 
-Full documentation lives in [`docs/`](docs/) — every page renders on GitHub, and `mkdocs.yml` builds
-it into a searchable site (`mkdocs serve`):
+Full documentation lives in [`docs/`](docs/) — every page renders on GitHub, and is published as a
+searchable site at [cendor.ai/docs](https://cendor.ai/docs):
 
 - [Getting Started](docs/getting-started.md) — install + your first budgeted, audited call
 - [Architecture](docs/architecture.md) — the layering, the `instrument()` seam, the event bus

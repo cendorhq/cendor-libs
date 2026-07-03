@@ -12,9 +12,9 @@ contextkit  →  squeeze  →  tokenguard  →  cassette  →  acttrace
  assemble       compress      budget         test         audit
 ```
 
-Everything ships under the `cendor.*` import namespace. The foundation, `cendor-core`,
-defines the common vocabulary (what an "LLM call" is, how tokens are counted and priced, how
-events are emitted) that lets the tools interlock without coupling.
+Everything ships under the `cendor.*` import namespace. The foundation, `cendor-core`, defines the
+common vocabulary — what an "LLM call" is, how tokens are counted and priced, how events are emitted
+— that lets the tools interlock without coupling.
 
 | Role | PyPI package | Import |
 |---|---|---|
@@ -35,10 +35,9 @@ The layering is what lets each tool stand alone *and* compose.
 
 - **Types:** `LLMCall`, `ToolCall`, `Usage`, `Money` (Decimal-backed).
 - **Protocols** (structural / duck-typed): `Compressor`, `EvictionStrategy`, `Sink`, `Subscriber`,
-  `Handle`. Because they're `Protocol`s, a library satisfies one by *shape* — `squeeze` is a
-  `Compressor` without importing `contextkit`; `acttrace` is a `Subscriber` without importing the bus.
-- **Primitives:** `tokens.count(...)`, a tokenizer registry, and a `prices` table (bundled
-  snapshot + optional refresh).
+  `Handle`. A library satisfies one by *shape* — `squeeze` is a `Compressor` without importing
+  `contextkit`; `acttrace` is a `Subscriber` without importing the bus.
+- **Primitives:** `tokens.count(...)`, a tokenizer registry, and a `prices` table.
 
 ### Layer 2 — One instrumentation point
 `tokenguard`, `cassette`, and `acttrace` all need to *observe* LLM and tool calls. Rather than each
@@ -49,12 +48,11 @@ from cendor.core import instrument
 client = instrument(openai_client)   # also Anthropic, Bedrock, Gemini, Ollama
 ```
 
-`instrument()` wraps the client once, publishes a normalized `LLMCall` onto an in-process **event
-bus**, and (optionally) emits an OpenTelemetry GenAI span. Each sibling tool *subscribes* instead
-of patching. One wrap, many listeners, no conflicts. It handles sync, async, and **streaming**
-(`stream=True`) calls — a streamed response is passed through chunk-by-chunk and emitted once it
-completes. Wrapping is idempotent and additive (it coexists with OpenLLMetry / OpenInference), and
-the bus is thread-safe within a process.
+`instrument()` wraps the client once, publishes a normalized `LLMCall` onto the in-process **event
+bus**, and optionally emits an OpenTelemetry span. Each sibling tool *subscribes* instead of
+patching — one wrap, many listeners, no conflicts. It handles sync, async, and streaming calls;
+wrapping is idempotent and additive (it coexists with OpenLLMetry / OpenInference), and the bus is
+thread-safe within a process.
 
 ### Layer 3 — Cooperation via the shared stream
 Because every instrumented call flows through the same bus, downstream tools get each other's work
@@ -83,25 +81,32 @@ sequenceDiagram
 ```
 
 > Install the umbrella, call `instrument()` once, and the `acttrace` audit log auto-populates with
-> the budget, the context decisions, and the tool calls. That's what "they compose" means — a
-> shared event schema, not marketing.
+> the budget, the context decisions, and the tool calls. That's what "they compose" means — a shared
+> event schema, not marketing.
 
 ### Dependency graph
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}} }%%
 graph TD
-    core["cendor-core<br/>(types · tokens · prices · instrument · bus · OTel)"]
-    ck[cendor-contextkit]
-    sq[cendor-squeeze]
-    tg[cendor-tokenguard]
-    cs[cendor-cassette]
-    at[cendor-acttrace]
+    core["cendor-core<br/>types · tokens · prices · instrument · bus · OTel"]
+    ck["cendor-contextkit"]
+    sq["cendor-squeeze"]
+    tg["cendor-tokenguard"]
+    cs["cendor-cassette"]
+    at["cendor-acttrace"]
     core --> ck & sq & tg & cs & at
     sq -. "satisfies Compressor (contextkit[squeeze])" .-> ck
     tg -. "cost via the bus" .-> at
     ck -. "assembly decisions via the bus" .-> at
-    classDef foundation fill:#1e2327,stroke:#0a7,color:#fff;
-    class core foundation;
+
+    classDef co fill:#94A3BB,color:#0F172A,stroke:#64748B;
+    classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
+    classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
+    classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
+    classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
+    classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
+    class core co; class ck ck; class sq sq; class tg tg; class cs cs; class at at;
 ```
 
 Solid arrows = package dependency. Dotted = runtime cooperation (no import required).
@@ -110,10 +115,10 @@ Solid arrows = package dependency. Dotted = runtime cooperation (no import requi
 
 The tools wrap *around and inside* your existing loop, at four points in a call's lifecycle:
 
-- **Inbound** (you call them as you build the request): `contextkit` (assemble messages within a
-  budget) and `squeeze` (compress oversized blocks — usually invoked *by* contextkit).
-- **Wrap-around** (they ride the instrumented call): `tokenguard` (pre-flight cost check,
-  post-flight record), `cassette` (record/replay, test-time), `acttrace` (append to the audit log).
+- **Inbound** (as you build the request): `contextkit` (assemble messages within a budget) and
+  `squeeze` (compress oversized blocks — usually invoked *by* contextkit).
+- **Wrap-around** (they ride the instrumented call): `tokenguard` (pre-flight cost check, post-flight
+  record), `cassette` (record/replay, test-time), `acttrace` (append to the audit log).
 
 ```python
 from openai import OpenAI
@@ -136,18 +141,19 @@ def handle(user_msg: str) -> str:
     return resp.choices[0].message.content
 ```
 
-The same `Context`/`tokenguard` code is identical across providers, because they operate on
-messages and on the instrumented call, not on a vendor SDK.
+The same `Context`/`tokenguard` code is identical across providers, because they operate on messages
+and on the instrumented call, not on a vendor SDK.
 
 ### Two integration modes
 
 - **You own the loop** (raw chat-completions + your own tool dispatch): `instrument()` sees every
   model and tool call directly. Wrap your tool dispatcher with `core.instrument_tool` so `ToolCall`
   events join the stream too.
-- **A managed runtime owns the loop** (Foundry Agent Service, OpenAI Assistants/Agents): the
-  provider runs the tool-calling loop server-side, so your client may not see each call. These
-  runtimes emit `gen_ai.*` OpenTelemetry spans — feed those to `core.otel.ingest(...)` and the
-  calls join the same bus, so `tokenguard`/`acttrace` work in this mode too.
+- **A managed runtime owns the loop** (Foundry Agent Service, OpenAI Assistants/Agents): the provider
+  runs the tool-calling loop server-side, so your client may not see each call. These runtimes emit
+  `gen_ai.*` OpenTelemetry spans — feed those to
+  [`core.otel.ingest(...)`](providers.md#managed-runtimes-opentelemetry-ingestion) and the calls join
+  the same bus, so `tokenguard`/`acttrace` work in this mode too.
 
 > `contextkit` / `squeeze` apply only when *you* assemble the prompt. If a managed runtime owns
 > context assembly internally, those two have nothing to shape; the other three still apply.
@@ -155,13 +161,12 @@ messages and on the instrumented call, not on a vendor SDK.
 ## Installing & versioning
 
 Install only what you need (`pip install cendor-tokenguard`) or the whole stack
-(`pip install cendor`). Each tool depends on `cendor-core` and is versioned
-independently (SemVer). `core` is kept small and stable — consumers pin `cendor-core>=1.0,<2.0`,
-so minor releases stay additive and never break the tools above it; breaking changes land only in
-a new major.
+(`pip install cendor`). Each tool depends on `cendor-core` and is versioned independently (SemVer).
+`core` is kept small and stable — consumers pin `cendor-core>=1.0,<2.0`, so minor releases stay
+additive and never break the tools above it; breaking changes land only in a new major.
 
 ### The namespace mechanism (PEP 420)
 The umbrella works because of **implicit namespace packages**: every package ships code under
-`src/cendor/<tool>/` with **no** `src/cendor/__init__.py`, so `cendor` is a namespace
-many distributions contribute to. The `cendor` umbrella distribution ships no code — it only
-declares the others as dependencies.
+`src/cendor/<tool>/` with **no** `src/cendor/__init__.py`, so `cendor` is a namespace many
+distributions contribute to. The `cendor` umbrella distribution ships no code — it only declares the
+others as dependencies.

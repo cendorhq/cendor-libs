@@ -7,16 +7,20 @@ ingestion path for managed runtimes.
 ## How detection works
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}} }%%
 graph TD
     A["instrument(client)"] --> B{"client has…"}
-    B -->|"chat.completions.create"| OAI[openai]
+    B -->|"chat.completions.create"| OAI["openai"]
     B -->|"responses.create"| OAI
-    B -->|"messages.create"| ANT[anthropic]
-    B -->|"converse"| BR[bedrock]
-    B -->|"generate_content (GenerativeModel)"| GEM[google]
+    B -->|"messages.create"| ANT["anthropic"]
+    B -->|"converse"| BR["bedrock"]
+    B -->|"generate_content (GenerativeModel)"| GEM["google"]
     B -->|"models.generate_content (google-genai)"| GEM
-    B -->|"chat callable"| OLL[ollama]
+    B -->|"chat callable"| OLL["ollama"]
     B -->|"none of the above"| NOOP["returned untouched"]
+
+    classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
+    class A seam;
 ```
 
 An OpenAI client exposes both `chat.completions.create` and `responses.create`; a `google-genai`
@@ -26,6 +30,9 @@ wraps **every** entrypoint it finds, so whichever API your code calls is capture
 ## Per-provider setup
 
 ### OpenAI (Chat Completions + Responses API)
+`instrument()` wraps both entrypoints; the Responses API reports usage differently, and it's all
+normalized into the same `Usage`.
+
 ```python
 from openai import OpenAI
 from cendor.core import instrument
@@ -33,10 +40,9 @@ client = instrument(OpenAI())                       # env: OPENAI_API_KEY
 client.chat.completions.create(model="gpt-4o", messages=[...])   # Chat Completions
 client.responses.create(model="gpt-4o", input="…")               # Responses API (also captured)
 ```
-`instrument()` wraps both entrypoints. The Responses API (the default for new OpenAI apps and the
-Agents SDK) reports usage differently — `input_tokens`/`output_tokens`, with cached tokens under
-`input_tokens_details.cached_tokens` and reasoning under `output_tokens_details.reasoning_tokens` —
-all normalized into the same `Usage`.
+The Responses API (default for new OpenAI apps and the Agents SDK) reports `input_tokens`/
+`output_tokens`, with cached tokens under `input_tokens_details.cached_tokens` and reasoning under
+`output_tokens_details.reasoning_tokens` — all normalized.
 
 ### Anthropic
 ```python
@@ -46,6 +52,9 @@ client.messages.create(model="claude-sonnet-4-6", max_tokens=256, messages=[...]
 ```
 
 ### Azure AI Foundry (models via the OpenAI SDK)
+Detected as `openai` (same SDK shape). For the Foundry **Agent Service** (server-side loop), don't
+`instrument()` — ingest its telemetry (see [Managed runtimes](#managed-runtimes-opentelemetry-ingestion)).
+
 ```python
 from openai import AzureOpenAI
 client = instrument(AzureOpenAI(
@@ -54,19 +63,20 @@ client = instrument(AzureOpenAI(
     api_version="2024-10-21"))
 client.chat.completions.create(model="<your-deployment-name>", messages=[...])  # detected as openai
 ```
-For the Foundry **Agent Service** (server-side loop), don't `instrument()` — ingest its telemetry
-(see *Managed runtimes* below).
 
 ### Google Gemini
+Both SDKs are detected — the current `google-genai` (model from the kwarg) and the legacy
+`google-generativeai` (model read from the `GenerativeModel` object).
+
 ```python
 # Current SDK (google-genai) — the recommended shape:
 from google import genai
 client = instrument(genai.Client())                 # env: GOOGLE_API_KEY / GEMINI_API_KEY
-client.models.generate_content(model="gemini-1.5-pro", contents="…")   # model from the kwarg
+client.models.generate_content(model="gemini-1.5-pro", contents="…")
 await client.aio.models.generate_content(model="gemini-1.5-pro", contents="…")  # async also wrapped
 ```
 ```python
-# Legacy SDK (google-generativeai) — still detected, model read from the GenerativeModel object:
+# Legacy SDK (google-generativeai) — still detected:
 import google.generativeai as genai
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 model = instrument(genai.GenerativeModel("gemini-1.5-pro"))
@@ -91,7 +101,8 @@ client.chat(model="llama3", messages=[...])   # no key
 ## Managed runtimes (OpenTelemetry ingestion)
 
 When a runtime owns the agent loop server-side and only emits `gen_ai.*` spans, feed the span
-attributes to `core.otel.ingest(...)` so the call still lands on the bus:
+attributes to `core.otel.ingest(...)` so the call still lands on the bus — and `tokenguard` /
+`acttrace` consume it as usual:
 
 ```python
 from cendor.core import otel
@@ -100,15 +111,18 @@ otel.ingest({
     "gen_ai.request.model": "gpt-4o",
     "gen_ai.usage.input_tokens": 1000,
     "gen_ai.usage.output_tokens": 500,
-})   # -> emits a normalized LLMCall; tokenguard / acttrace consume it as usual
+})   # -> emits a normalized LLMCall
 ```
 
-## Live pricing — which providers expose rates
+`contextkit` / `squeeze` apply only when **you** assemble the prompt; if a managed runtime owns
+context internally, those two have nothing to shape while the other three still work.
 
-Cost in `cendor` is computed from a price table. The bundled snapshot works offline; to keep
-rates current, `prices.refresh(source=...)` pulls them live. But not every provider lets you: the
-**direct model labs publish no pricing API** — their model-list endpoints return ids only — so
-"ask the provider for today's price" only works for gateways, cloud catalogs, and aggregators.
+## Live pricing
+
+Cost is computed from a price table. Which providers actually let you refresh it live varies. The bundled snapshot works offline; `prices.refresh(source=…)`
+pulls live rates. But the **direct model labs publish no pricing API** — their model-list endpoints
+return ids only — so "ask the provider for today's price" only works for gateways, cloud catalogs,
+and aggregators.
 
 | Source | Live pricing API? | Auth | Built-in adapter |
 |---|---|---|---|
@@ -118,25 +132,32 @@ rates current, `prices.refresh(source=...)` pulls them live. But not every provi
 | **Azure Retail Prices** | ✅ `retailPrice`/`unitOfMeasure` | none | `refresh(source="azure")` |
 | AWS Bedrock / GCP Vertex | ✅ Price List / Billing Catalog | creds/SDK | bring your own `mapper=` |
 
-The three built-in adapters are all **unauthenticated HTTPS GETs** → no credentials, no SDKs, no new
-dependencies. AWS/GCP need credentials and SKU/region mapping, so they're intentionally left out of
-core (pass a custom `mapper=` if you need them). All refreshes are offline-safe and fall back to the
-last-good table silently. See [core.md → Prices](core.md#prices).
+The three built-in adapters are all **unauthenticated HTTPS GETs** — no credentials, no SDKs, no new
+dependencies. AWS/GCP need credentials and SKU/region mapping, so they're intentionally out of core.
+All refreshes are offline-safe and fall back to the last-good table silently. See
+[core → Prices](core.md#prices).
 
-```python
-from cendor.core import prices
-prices.refresh(source="litellm")            # broadest coverage
-prices.is_stale(max_age_days=30)            # was the active table updated recently?
-prices.source_name(), prices.source_url()   # where the active rates came from
-```
+A gateway that returns the **actual billed cost** on the response (e.g. OpenRouter's `usage.cost`) is
+better than any table: `instrument()` uses that figure directly and labels the call `cost_reported`
+(vs `cost_estimated` for a table estimate).
 
-A gateway that returns the **actual billed cost** on the response (e.g. OpenRouter's `usage.cost`)
-is even better than any table: `instrument()` uses that figure directly and labels the call
-`cost_reported` (vs `cost_estimated` for a table estimate).
+## Streaming
+
+Streaming is supported for every provider: pass `stream=True` and the chunk iterator flows through
+your code unchanged while usage is accumulated, so the call is still priced and recorded once the
+stream completes. How real (vs estimated) the streamed usage is depends on the entrypoint:
+
+- **OpenAI Chat Completions** — `instrument()` auto-requests a final usage chunk
+  (`stream_options={"include_usage": True}`, unless you set `stream_options` yourself), so streamed
+  usage is the provider's **real billed count**.
+- **OpenAI Responses API** — usage rides the `response.completed` event, so nothing is injected.
+- **Other providers** — usage is read from the provider's own stream reporting where present, else an
+  offline estimate flagged `usage_estimated`.
+
+AWS Bedrock's separate `converse_stream` entrypoint isn't wrapped — use `converse`.
 
 ## Notes
-- **Streaming is supported** for these providers: pass `stream=True` and the chunk iterator flows through your code unchanged while usage is accumulated, so the call is still priced and recorded once the stream completes. For OpenAI **Chat Completions** streams `instrument()` auto-requests a final usage chunk (`stream_options={"include_usage": True}`) so streamed usage is real, not estimated; the **Responses API** stream carries usage on its `response.completed` event, so nothing is injected there. (AWS Bedrock's separate `converse_stream` entrypoint isn't wrapped — use `converse`.)
-- `contextkit` / `squeeze` apply only when **you** assemble the prompt. If a managed runtime owns
-  context internally, those two have nothing to shape; `tokenguard`/`cassette`/`acttrace` still do.
+
 - Pricing for a model is looked up in the bundled snapshot; an unpriced model yields `cost = None`
   (the call still works). Add rates with `prices.refresh()`.
+- New model ids need no library release — capture is by client shape, and pricing is a data table.
