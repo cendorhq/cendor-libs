@@ -37,8 +37,8 @@ jobs:
       id-token: write      # OIDC trusted publishing — no stored tokens
       contents: write      # checkout (read) + create the GitHub Release (write)
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - name: Assert tag version matches pyproject version
         env:
           PKG: ${{ needs.setup.outputs.pkg }}
