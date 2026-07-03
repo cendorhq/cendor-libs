@@ -1,0 +1,32 @@
+# The umbrella meta-package: installs the whole stack. Ships NO code.
+# NEVER add a src/ directory or a cendor/__init__.py here — it would break the namespace.
+[project]
+name = "cendor"
+version = "1.0.0"
+description = "The Cendor stack — installs the full suite of composable AI-engineering primitives."
+requires-python = ">=3.11"
+license = "Apache-2.0"
+readme = "README.md"
+authors = [{ name = "Raghav Mishra" }]
+# Each member is pinned to the 1.x line — a floor at 1.0.0 and a cap below the next major —
+# so `pip install cendor` always resolves a coherent, tested stack. Under semantic versioning
+# the whole 1.x line stays additive; breaking changes land only in a new major.
+dependencies = [
+  "cendor-core>=1.0.0,<2.0",
+  "cendor-tokenguard>=1.0.0,<2.0",
+  "cendor-contextkit>=1.0.0,<2.0",
+  "cendor-squeeze>=1.0.0,<2.0",
+  "cendor-cassette>=1.0.0,<2.0",
+  "cendor-acttrace>=1.0.0,<2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cendorhq/Cendor"
+Repository = "https://github.com/cendorhq/Cendor"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true     # deps-only meta-package: builds an empty wheel, contributes no code

@@ -1,0 +1,95 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs for the same ref (PR pushes); never cancel a main-branch build.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]   # development happens on Windows — test it too
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash   # Git Bash on the Windows runner, so `find`/heredocs work cross-platform
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - name: namespace guard (no top-level cendor/__init__.py)
+        run: |
+          if find packages -path '*/src/cendor/__init__.py' | grep . ; then
+            echo "ERROR: a top-level cendor/__init__.py exists — it breaks the namespace"; exit 1
+          fi
+      - name: type-check
+        run: >-
+          uv run mypy -p cendor.core -p cendor.tokenguard -p cendor.contextkit
+          -p cendor.squeeze -p cendor.cassette -p cendor.acttrace
+      - name: tests + coverage
+        run: >-
+          uv run pytest -q
+          --cov=cendor --cov-report=term-missing --cov-report=json:coverage.json
+          --cov-fail-under=80
+      - name: per-package coverage summary
+        if: ${{ always() && matrix.os == 'ubuntu-latest' }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, sys
+          data = json.loads(pathlib.Path("coverage.json").read_text())
+          pkgs: dict[str, list[int]] = {}
+          for path, info in data.get("files", {}).items():
+              parts = path.replace(os.sep, "/").split("/")
+              pkg = next((p for p in parts if p.startswith("cendor-")), None)
+              if not pkg:
+                  continue
+              s = info["summary"]
+              agg = pkgs.setdefault(pkg, [0, 0])
+              agg[0] += s["num_statements"]
+              agg[1] += s["missing_lines"]
+          lines = ["| package | statements | missed | coverage |", "|---|---:|---:|---:|"]
+          for pkg in sorted(pkgs):
+              stmts, missed = pkgs[pkg]
+              pct = 100 * (stmts - missed) / stmts if stmts else 100.0
+              lines.append(f"| {pkg} | {stmts} | {missed} | {pct:.1f}% |")
+          totals = data.get("totals", {})
+          lines.append(f"| **TOTAL** | {totals.get('num_statements', 0)} | "
+                       f"{totals.get('missing_lines', 0)} | "
+                       f"{totals.get('percent_covered', 0):.1f}% |")
+          text = "## Coverage by package\n\n" + "\n".join(lines) + "\n"
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          (open(summary, "a") if summary else sys.stdout).write(text)
+          PY
+
+  smoke:
+    # Build the wheels from source and install them into a clean venv (no PyPI) on each Python,
+    # to verify the shipped artifacts + the PEP 420 namespace import for a real user.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build all wheels
+        run: |
+          for p in cendor-core cendor-tokenguard cendor-contextkit \
+                   cendor-squeeze cendor-cassette cendor-acttrace cendor; do
+            uv build --package "$p"
+          done
+      - name: Install from local wheels (offline) and import the namespace
+        run: |
+          python -m venv .smoke
+          .smoke/bin/pip install --no-index --find-links dist cendor
+          .smoke/bin/python -c "import cendor.core, cendor.tokenguard, cendor.contextkit, cendor.squeeze, cendor.cassette, cendor.acttrace; print('import ok')"

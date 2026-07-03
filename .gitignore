@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.uv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.json
+htmlcov/
+.smoke/
+.idea/
+.vscode/
+.DS_Store
+*.log
+plan/
+artifact/
+
+# Local-only working files — never committed
+MEMORY.md
+INIT_PROMPT.md
+
+# MkDocs build output (local preview only)
+site/

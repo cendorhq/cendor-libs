@@ -1,0 +1,77 @@
+name: Release
+on:
+  push:
+    tags:
+      - '*-v*.*.*'        # e.g. tokenguard-v0.1.0, core-v0.1.0, cendor-v0.1.0
+
+# Each package publishes in its OWN GitHub environment, because PyPI requires every
+# (repository, workflow, environment) trusted-publisher binding to be unique — so one repo +
+# one workflow publishing many projects needs a distinct environment per project. The PyPI
+# trusted-publisher "Environment name" for each project must match the name derived below
+# (the tag's tool segment): core, tokenguard, contextkit, squeeze, cassette, acttrace, cendor.
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      pkg: ${{ steps.derive.outputs.pkg }}
+      env: ${{ steps.derive.outputs.env }}
+      version: ${{ steps.derive.outputs.version }}
+      dir: ${{ steps.derive.outputs.dir }}
+    steps:
+      - id: derive
+        run: |
+          TOOL="${GITHUB_REF_NAME%-v*}"             # core-v0.1.0 -> core ; cendor-v0.1.0 -> cendor
+          VERSION="${GITHUB_REF_NAME##*-v}"         # core-v0.1.0 -> 0.1.0
+          if [ "$TOOL" = "cendor" ]; then PKG="cendor"; else PKG="cendor-$TOOL"; fi
+          echo "pkg=$PKG"         >> "$GITHUB_OUTPUT"
+          echo "env=$TOOL"        >> "$GITHUB_OUTPUT"   # environment == tool segment (unique per project)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dir=packages/$PKG" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: setup
+    runs-on: ubuntu-latest
+    environment: ${{ needs.setup.outputs.env }}     # e.g. "core" — must match the PyPI publisher
+    permissions:
+      id-token: write      # OIDC trusted publishing — no stored tokens
+      contents: write      # checkout (read) + create the GitHub Release (write)
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v3
+      - name: Assert tag version matches pyproject version
+        env:
+          PKG: ${{ needs.setup.outputs.pkg }}
+          VERSION: ${{ needs.setup.outputs.version }}
+          DIR: ${{ needs.setup.outputs.dir }}
+        run: |
+          # Guard against a mismatched tag (e.g. acttrace-v9.9.9 publishing the 0.7.0 wheel titled
+          # 9.9.9). Read the version straight from the package's pyproject and fail loudly if it
+          # differs from the tag's version segment — before we build or publish anything.
+          PYPROJECT_VERSION="$(
+            grep -m1 -E '^version[[:space:]]*=' "$DIR/pyproject.toml" | sed -E 's/.*"([^"]+)".*/\1/'
+          )"
+          echo "tag version=$VERSION  pyproject version=$PYPROJECT_VERSION  ($PKG)"
+          if [ "$VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME says v$VERSION but $DIR/pyproject.toml is $PYPROJECT_VERSION — fix one and re-tag"
+            exit 1
+          fi
+      - run: uv build --package "${{ needs.setup.outputs.pkg }}"
+      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Create GitHub Release (notes from CHANGELOG)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKG: ${{ needs.setup.outputs.pkg }}
+          VERSION: ${{ needs.setup.outputs.version }}
+          DIR: ${{ needs.setup.outputs.dir }}
+        run: |
+          # Extract this version's section from the package CHANGELOG for the release body.
+          # Match the "## [VERSION]" header by literal prefix (index) to stay portable across
+          # awk implementations (mawk on CI vs gawk locally treat \[ in dynamic regex differently).
+          awk -v hdr="## [$VERSION]" '
+            index($0, hdr)==1 {p=1; next}
+            p && (index($0,"## [")==1 || /^\[[^]]+\]: http/) {exit}
+            p {print}
+          ' "$DIR/CHANGELOG.md" > /tmp/notes.md
+          [ -s /tmp/notes.md ] || echo "$PKG $VERSION" > /tmp/notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$PKG $VERSION" --notes-file /tmp/notes.md

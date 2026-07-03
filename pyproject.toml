@@ -1,0 +1,66 @@
+# uv workspace root (not published). See CLAUDE.md for conventions.
+[project]
+name = "cendor-workspace"
+version = "0.0.0"
+description = "Cendor monorepo workspace root (not published)."
+requires-python = ">=3.11"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+cendor-core = { workspace = true }
+cendor-tokenguard = { workspace = true }
+cendor-contextkit = { workspace = true }
+cendor-squeeze = { workspace = true }
+cendor-cassette = { workspace = true }
+cendor-acttrace = { workspace = true }
+
+# Workspace members are listed here so a plain `uv sync` installs them (editable) into the
+# dev environment, making `uv run pytest` work across all packages. They resolve via
+# [tool.uv.sources] above. Add each new package here as it is scaffolded.
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=5",
+  "hypothesis>=6",
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "cendor-core",
+  "cendor-tokenguard",
+  "cendor-contextkit",
+  "cendor-squeeze",
+  "cendor-cassette",
+  "cendor-acttrace",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Benchmark scripts carry inline sample data and long descriptive result strings; reflowing them
+# under the 100-col limit hurts readability and they ship in no wheel. All other rules still apply.
+"benchmarks/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+namespace_packages = true
+explicit_package_bases = true
+
+# Optional provider/telemetry SDKs are imported lazily behind try/except — they aren't
+# installed by default, so don't fail type-checking when their stubs are absent.
+[[tool.mypy.overrides]]
+module = ["tiktoken.*", "opentelemetry.*"]
+ignore_missing_imports = true

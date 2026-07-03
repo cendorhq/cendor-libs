@@ -1,0 +1,23 @@
+[project]
+name = "cendor-cassette"
+version = "1.0.0"
+description = "Test: record an agent run once, replay it forever — deterministic, offline, free. The vcrpy of the agent era."
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Raghav Mishra" }]
+readme = "README.md"
+dependencies = ["cendor-core>=1.0,<2.0"]
+
+[project.urls]
+Homepage = "https://github.com/cendorhq/Cendor"
+Repository = "https://github.com/cendorhq/Cendor"
+
+[project.optional-dependencies]
+embeddings = ["model2vec>=0.3"]   # optional: free, offline local embeddings for semantic_match (numpy-only, no torch)
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cendor"]     # contributes cendor/cassette only — NEVER add src/cendor/__init__.py
