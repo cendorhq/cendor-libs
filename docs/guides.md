@@ -85,19 +85,32 @@ ok, detail = verify("audit.jsonl", key="k")   # True unless the chain was tamper
 ```
 
 ## Recipe: block disallowed input, audited
-Your guard enforces on `core`'s interceptor seam; `acttrace` records the refusal. The full,
-runnable version (with a real SSN policy and offline verification) is in
-[acttrace → Flagging input](acttrace.md#flagging-input-that-shouldnt-be-processed).
+`acttrace.guard()` enforces a policy on `core`'s interceptor seam and records every decision;
+the blocked call never reaches the model, so the `policy_flag` is its only record. The full
+walkthrough (actions, presets, custom `on_block`, offline verification) is in
+[acttrace → Enforcing a policy](acttrace.md#enforcing-a-policy-with-guard).
+
+```python
+from cendor.core.instrument import add_interceptor
+from cendor.acttrace import AuditLog, Policy, guard
+
+audit = AuditLog(system="support_bot", risk_tier="high")
+add_interceptor(guard(Policy.gdpr(), audit=audit))   # block special-category, redact PII — audited
+```
+
+For a bespoke rule, write the interceptor by hand — return `MISS` to proceed, `flag()` then
+`raise` to block:
 
 ```python
 from cendor.core.instrument import add_interceptor, MISS
 from cendor.core.types import LLMCall
+from cendor.acttrace import PolicyViolation
 
-def guard(call):                                          # a pre-flight guard on the seam
+def block_pii(call):                                     # a pre-flight guard on the seam
     if isinstance(call, LLMCall) and contains_pii(call.messages):   # YOUR rule
         audit.flag("PII in prompt", action="blocked")               # acttrace records the refusal
         raise PolicyViolation("blocked")                            # your guard enforces it
     return MISS
 
-add_interceptor(guard)   # the blocked call never reaches the model — flag() is its only record
+add_interceptor(block_pii)   # the blocked call never reaches the model — flag() is its only record
 ```

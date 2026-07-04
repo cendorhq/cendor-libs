@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.0] — 2026-07-04
+### Added
+- **Offline detection engine** — a `Detector` registry (`DETECTORS`, `register_detector()`) of validator-gated patterns spanning **20 categories** across six groups: secrets (`api_key`, `aws_key`, `google_api_key`, `github_token`, `slack_token`, `private_key`, `jwt`, `bearer_token`), free-text credentials (`password`), financial (`credit_card`, `iban`, `us_routing`, `swift_bic`), government IDs (`us_ssn`), PII (`email`, `phone`, `ipv4`, `ipv6`, `mac_address`), and GDPR Art.9 special-category data. Loose patterns are gated by local checksums/format checks (Luhn, IBAN mod-97, Verhoeff, ABA, ISO-3166) — regex + arithmetic only, no model, no network.
+- **`Policy`** (`allow` · `flag` · `redact` · `block` per category/group) with presets `Policy.default()` / `gdpr()` / `pci()` / `strict()`, and `Finding`.
+- **Pure `scan()` / `redact()`** — detect or scrub any str/dict/list independent of the audit chain; `scan()` returns counts and resolved actions, never the raw value.
+- **`AuditLog(policy=…)`** — auto-scans every auto-captured payload against the full registry, scrubs `redact`/`block` categories before chaining, and auto-flags each detection with its resolved action/severity. Category-tagged `policy_flag`s now map to specific controls in `export()` (e.g. special-category → GDPR Art.9).
+- **`guard(policy, audit=…, on_block=…)` + `PolicyViolation`** — a batteries-included enforcement callable for `core`'s interceptor seam. Per outbound call it resolves each detected category via the policy: **block** → record `policy_flag(action="blocked")` and raise (the call never runs); **redact** → scrub the outbound messages so the *provider* receives cleaned content (via `core`'s `Reroute(messages=…)`) and record `action="redacted"` → proceed (tools have no message-rewrite seam, so a redact on tool arguments is record-only — block is the pre-send control there); **flag** → record and proceed. Recorder/enforcer split intact: `guard()` returns a callable *you* install on the seam. Requires `cendor-core` with `Reroute(messages=…)`.
+- **Opt-in extras (defaults unchanged, no new hard deps)** — `enable_locale_pack("uk", "in")` registers locale government-ID detectors (UK NINO prefix-validated, India Aadhaar Verhoeff-checked); `enable_entropy_detector(min_length=, min_entropy=)` adds a noisy high-entropy generic-secret detector (off by default); and the optional `[ner]` extra (`pip install "cendor-acttrace[ner]"`) provides `ner_redactor()` / `ner_available()` for offline NER-backed name/address redaction via Microsoft Presidio. A zero-extra install detects exactly the built-in categories and `default_redactor` is unchanged.
+
+### Changed
+- `AuditLog(redact=True)` is now exactly `policy=Policy.default()` — **100% backward compatible**: secrets & `email` are `redact`ed, everything else `flag`ged. `default_redactor` is rebuilt from the registry and scrubs the original six categories byte-for-byte.
+
 ## [1.0.0] — 2026-07-03
 ### Added
 - First release of `cendor-acttrace` — a tamper-evident, append-only record of every AI decision (what model, what context, what it cost, which tools, and who signed off), mapped to control templates and exportable as an evidence pack. Integrity comes from a hash chain, not a server.

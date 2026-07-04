@@ -73,9 +73,21 @@ real figure from an estimate (an unknown model with no reported cost leaves `cos
 
 ### Interceptors (replay / reroute)
 `add_interceptor(fn)` registers a pre-call hook that can return a response to short-circuit
-the call (replay — used by `cassette`), a `Reroute(model=…)` to rewrite the request before it
-runs (downgrade — used by `tokenguard`), or `MISS` to proceed untouched. One seam powers both,
-so there's never a second patch point.
+the call (replay — used by `cassette`), a `Reroute(…)` to rewrite the request before it runs, or
+`MISS` to proceed untouched. One seam powers all three, so there's never a second patch point.
+
+`Reroute(**updates)` applies its keyword updates to the outgoing call's kwargs before it
+executes. Two keys are special-cased so the emitted `LLMCall` stays consistent with what is
+actually sent, and so a rewrite works across providers:
+
+- `Reroute(model=…)` also updates `call.model` — the downgrade `tokenguard` uses for
+  `on_exceed="downgrade"`.
+- `Reroute(messages=…)` rewrites the outbound messages — mapped to the provider's own kwarg
+  (`messages` for Chat Completions / Anthropic / Bedrock / Ollama, `input` for the OpenAI
+  Responses API, `contents` for Gemini) — and updates `call.messages`. This is how `acttrace`'s
+  `guard()` does **redact-before-send**: the scrubbed messages, not the originals, reach the
+  provider. Applies uniformly to sync, async, and streaming calls (the rewrite happens before the
+  real call runs).
 
 ### OpenTelemetry (optional)
 `otel.span(...)` emits a GenAI `gen_ai.*` span when OpenTelemetry is installed, else it's a

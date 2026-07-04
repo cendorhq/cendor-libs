@@ -20,7 +20,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 import threading
 import uuid
 from collections import Counter
@@ -35,7 +34,46 @@ from typing import Any, Literal
 from cendor.core import bus
 from cendor.core.types import LLMCall, ToolCall
 
-__all__ = ["AuditLog", "AuditEntry", "verify", "frameworks", "default_redactor", "GENESIS"]
+from .detectors import (
+    DETECTORS,
+    Detector,
+    _scan_counts,
+    _scrub,
+    detectors,
+    group_of,
+    register_detector,
+)
+from .guard import PolicyViolation, guard
+from .ner import ner_available, ner_redactor
+from .packs import LOCALE_PACKS, enable_entropy_detector, enable_locale_pack
+from .policy import Finding, Policy, redact, scan
+
+__all__ = [
+    "AuditLog",
+    "AuditEntry",
+    "verify",
+    "frameworks",
+    "default_redactor",
+    "GENESIS",
+    # detection & policy (roadmap phase 1)
+    "Detector",
+    "DETECTORS",
+    "register_detector",
+    "detectors",
+    "Policy",
+    "Finding",
+    "scan",
+    "redact",
+    # enforcement (roadmap phase 2)
+    "guard",
+    "PolicyViolation",
+    # optional power — all opt-in (roadmap phase 3)
+    "enable_locale_pack",
+    "enable_entropy_detector",
+    "LOCALE_PACKS",
+    "ner_available",
+    "ner_redactor",
+]
 
 GENESIS = "0" * 64
 
@@ -110,9 +148,58 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
 }
 
 
+# Category/group-specific control pointers, layered *on top of* the per-type ``policy_flag`` mapping
+# above when a flag names the category it fired on (``data=[...]``). This makes a category-tagged
+# flag point at the specific control it is evidence for (e.g. a special-category flag → GDPR Art.9,
+# a card-data flag → the PCI-DSS pointer) rather than the generic data-governance bucket. Keyed by
+# detector group or specific category; still evidence pointers, never a compliance claim. The PCI
+# entries are cross-references (PCI-DSS is not a bundled export framework) surfaced under the data-
+# protection frameworks where card handling is in scope.
+_CATEGORY_CONTROLS: dict[str, dict[str, list[str]]] = {
+    "special_category": {
+        "gdpr": ["Art.9 special-category data"],
+        "eu_ai_act": ["Art.10(5) special categories for bias detection"],
+    },
+    "gov_id": {
+        "gdpr": ["Art.87 processing of national identification numbers"],
+    },
+    "financial": {
+        "gdpr": ["PCI-DSS 3.3/3.4 (payment-card data — cross-reference)"],
+        "eu_ai_act": ["PCI-DSS 3.3/3.4 (payment-card data — cross-reference)"],
+    },
+    "pii": {
+        "gdpr": ["Art.4(1) personal data", "Art.5(1)(c) data minimisation"],
+    },
+    "secret": {
+        "gdpr": ["Art.32 security of processing"],
+    },
+    "credential": {
+        "gdpr": ["Art.32 security of processing"],
+    },
+}
+
+
 def frameworks() -> list[str]:
     """Frameworks with a bundled (starting-template) control mapping for :meth:`AuditLog.export`."""
     return sorted(_CONTROLS)
+
+
+def _controls_for_entry(entry: AuditEntry, framework: str, controls: dict[str, list[str]]) -> list:
+    """Control IDs an entry is evidence for: the per-type mapping, plus category-specific pointers
+    for a ``policy_flag`` whose ``data`` names the categories it fired on (additive, deduped)."""
+    result = list(controls.get(entry.type, []))
+    if entry.type != "policy_flag":
+        return result
+    data = entry.payload.get("data")
+    cats = data if isinstance(data, list) else ([data] if isinstance(data, str) else [])
+    for cat in cats:
+        for key in (cat, group_of(cat) if isinstance(cat, str) else None):
+            if key is None:
+                continue
+            for control in _CATEGORY_CONTROLS.get(key, {}).get(framework, []):
+                if control not in result:
+                    result.append(control)
+    return result
 
 
 @dataclass
@@ -128,59 +215,7 @@ class AuditEntry:
     sig: str = ""  # HMAC-SHA256 of `hash` under the signing key, if the log is signed
 
 
-# Targeted PII/secret patterns (GDPR), each with a category label. Deliberately narrow — every
-# pattern is prefix-anchored (`sk-`, `AKIA`, `AIza`, `eyJ`, `Bearer`) so it does NOT touch
-# ids/hashes/uuids (the chain's own hex hashes never match). Kept consistent with cassette's
-# `_REDACTIONS`. The category labels are what an auto-emitted policy_flag records.
-_REDACTION_CATEGORIES: list[tuple[str, re.Pattern[str]]] = [
-    ("email", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
-    # openai sk- keys incl. the hyphenated modern forms (sk-ant-…, sk-proj-…) + legacy sk-…
-    ("api_key", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}")),
-    ("aws_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),  # AWS access key id
-    ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),  # Google API key
-    # bare JSON Web Token (three base64url segments)
-    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
-    ("bearer_token", re.compile(r"\b[Bb]earer\s+[A-Za-z0-9._-]+\b")),
-]
-_REDACTIONS = [pat for _, pat in _REDACTION_CATEGORIES]
-
-
-def _redact(obj: Any) -> Any:
-    if isinstance(obj, str):
-        out = obj
-        for pat in _REDACTIONS:
-            out = pat.sub("<redacted>", out)
-        return out
-    if isinstance(obj, dict):
-        return {k: _redact(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_redact(v) for v in obj]
-    return obj
-
-
-def _scan_redactions(obj: Any) -> set[str]:
-    """Categories of sensitive data (``email`` / ``api_key`` / ``aws_key`` / ``google_api_key`` /
-    ``jwt`` / ``bearer_token``) present anywhere in ``obj`` — what the built-in redactor would
-    scrub. Drives the auto policy_flag on redaction."""
-    found: set[str] = set()
-
-    def walk(o: Any) -> None:
-        if isinstance(o, str):
-            for cat, pat in _REDACTION_CATEGORIES:
-                if pat.search(o):
-                    found.add(cat)
-        elif isinstance(o, dict):
-            for v in o.values():
-                walk(v)
-        elif isinstance(o, list):
-            for v in o:
-                walk(v)
-
-    walk(obj)
-    return found
-
-
-#: Entry types that carry caller-supplied content (where PII actually lands), so a redaction in one
+#: Entry types that carry caller-supplied content (where PII actually lands), so a detection in one
 #: of them is worth a follow-up flag. Excludes structural entries (audit_open / decision_end), the
 #: flag itself (no recursion), and human_oversight (a reviewer's identity is legitimate audit data,
 #: not PII to flag). Note: llm_call stores only metadata — messages are never recorded — so PII most
@@ -189,11 +224,63 @@ _AUTO_REDACT_TYPES = frozenset(
     {"decision", "decision_record", "llm_call", "tool_call", "context_assembly"}
 )
 
+#: Snapshot of the default policy backing :data:`default_redactor` (secrets & email → redact). The
+#: registry is still consulted live, so a :func:`register_detector` in group ``secret``/``pii`` is
+#: picked up here too.
+_DEFAULT_POLICY = Policy.default()
 
-#: The built-in redactor (emails / ``sk-`` keys incl. ``sk-ant-``/``sk-proj-`` / AWS + Google API
-#: keys / JWTs / bearer tokens). Exposed so a custom ``redactor`` can compose it:
+#: Verb recorded on an auto-flag for each resolved action, and the deterministic emit order
+#: (most-severe first). ``allow`` never produces a flag.
+_ACTION_VERB = {"block": "blocked", "redact": "redacted", "flag": "flagged"}
+_SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
+
+
+def _redact(obj: Any) -> Any:
+    """The built-in scrubber: remove every ``redact``/``block`` category under the default policy.
+
+    Rebuilt from the :mod:`~cendor.acttrace.detectors` registry, so the original six categories
+    (emails / ``sk-`` keys incl. ``sk-ant-``/``sk-proj-`` / AWS + Google API keys / JWTs / bearer
+    tokens) scrub byte-for-byte as before, and any newly-registered secret is covered too.
+    """
+    cleaned, _findings = redact(obj, _DEFAULT_POLICY)
+    return cleaned
+
+
+#: The built-in redactor. Exposed so a custom ``redactor`` can compose it:
 #: ``AuditLog(redactor=lambda o: my_scrub(default_redactor(o)))``.
 default_redactor = _redact
+
+
+def _max_severity(severities: Any) -> str:
+    """The most serious of the given severities (``info`` < ``warning`` < ``critical``)."""
+    return max(severities, key=lambda s: _SEVERITY_RANK.get(s, 0), default="warning")
+
+
+def _auto_flags(
+    counts: dict[str, tuple[Detector, int]], policy: Policy, etype: str
+) -> list[tuple[str, str, str, list[str]]]:
+    """Group detected categories by resolved action into ``(reason, action, severity, data)`` rows.
+
+    One row per non-``allow`` action, emitted most-severe first. The ``redacted`` row keeps its
+    historical ``severity="info"`` (scrubbing is a benign safety net); ``flagged``/``blocked`` rows
+    carry the strongest detector severity in the group.
+    """
+    by_action: dict[str, list[tuple[str, str]]] = {}
+    for _cat, (det, _n) in counts.items():
+        action = policy.action_for(det.category, det.group)
+        if action == "allow":
+            continue
+        by_action.setdefault(action, []).append((det.category, det.severity))
+    rows: list[tuple[str, str, str, list[str]]] = []
+    for action in ("block", "redact", "flag"):
+        items = by_action.get(action)
+        if not items:
+            continue
+        cats = sorted({c for c, _s in items})
+        verb = _ACTION_VERB[action]
+        severity = "info" if action == "redact" else _max_severity(s for _c, s in items)
+        rows.append((f"{verb} {', '.join(cats)} from {etype}", verb, severity, cats))
+    return rows
 
 
 def _jsonable(obj: Any) -> Any:
@@ -249,21 +336,32 @@ class AuditLog:
         redact: bool = True,
         redactor: Callable[[Any], Any] | None = None,
         flag_on_redact: bool = True,
+        policy: Policy | None = None,
     ) -> None:
-        """``redactor`` overrides the built-in scrubber: a ``payload -> payload`` callable applied
-        before each entry is chained/written (compose :data:`default_redactor` to extend it). Runs
-        only when ``redact=True``.
+        """``policy`` selects the detection posture (see :class:`~cendor.acttrace.Policy`): every
+        auto-captured payload is scanned against the full detector registry and, per the policy,
+        ``redact``/``block`` categories are scrubbed and detections are auto-flagged with their
+        resolved action/severity. Defaults to :meth:`Policy.default` (secrets & email redacted,
+        everything else flagged) — identical to previous behaviour. ``redact=True`` ⇒
+        ``Policy.default()``; ``redact=False`` disables scanning/scrubbing entirely.
 
-        ``flag_on_redact`` (default ``True``): when the built-in redactor scrubs sensitive data from
-        an auto-captured entry, also append a ``policy_flag`` recording *what category* was redacted
-        — so "we removed PII" is itself in the tamper-evident chain, not silent. Only fires with the
-        built-in redactor (a custom ``redactor`` owns its own flagging)."""
+        ``redactor`` overrides the built-in scrubber: a ``payload -> payload`` callable applied
+        before each entry is chained/written (compose :data:`default_redactor` to extend it). A
+        custom ``redactor`` bypasses the policy engine and owns its own flagging.
+
+        ``flag_on_redact`` (default ``True``): when the built-in path acts on sensitive data in an
+        auto-captured entry, also append a ``policy_flag`` recording *what category* and *what
+        action* — so "we removed / flagged PII" is itself in the tamper-evident chain, not silent.
+        Only fires with the built-in path (a custom ``redactor`` owns its own flagging)."""
         self.system = system
         self.risk_tier = risk_tier
         self.path = Path(path) if path else None
         self._signing_key = signing_key.encode() if isinstance(signing_key, str) else signing_key
-        self._redact = redact  # scrub emails/keys/tokens from payloads (GDPR); on by default
-        self._redactor = redactor or _redact  # the scrubber used when redaction is on
+        # A policy (explicit or from redact=True) turns on scanning/scrubbing; redact=False with no
+        # policy turns it off. The policy drives both what is scrubbed and what is auto-flagged.
+        self._redact = redact or policy is not None
+        self._policy = policy or Policy.default()
+        self._redactor = redactor or _redact  # _redact sentinel => built-in policy-driven path
         self._flag_on_redact = flag_on_redact
         self.entries: list[AuditEntry] = []
         self._head = GENESIS
@@ -297,11 +395,23 @@ class AuditLog:
             seq = len(self.entries)
             ts = datetime.now(UTC).isoformat()
             safe = _jsonable(payload)
-            redacted_categories: set[str] = set()
+            auto_flags: list[tuple[str, str, str, list[str]]] = []
             if self._redact:
-                if self._redactor is _redact and etype in _AUTO_REDACT_TYPES:
-                    redacted_categories = _scan_redactions(safe)  # detect on the pre-scrub view
-                safe = self._redactor(safe)  # scrub before hashing so the chain is consistent
+                if self._redactor is _redact:  # built-in path: policy-driven scan → scrub → flag
+                    counts = _scan_counts(safe)  # detect on the pre-scrub view
+                    if counts:
+                        scrub = {
+                            cat
+                            for cat, (det, _n) in counts.items()
+                            if self._policy.action_for(det.category, det.group)
+                            in ("redact", "block")
+                        }
+                        if scrub:
+                            safe = _scrub(safe, scrub)  # scrub before hashing → chain is consistent
+                        if etype in _AUTO_REDACT_TYPES and self._flag_on_redact:
+                            auto_flags = _auto_flags(counts, self._policy, etype)
+                else:
+                    safe = self._redactor(safe)  # custom redactor owns scrubbing + its own flagging
             h = _chain_hash(self._head, seq, ts, etype, safe)
             sig = ""
             if self._signing_key is not None:
@@ -310,17 +420,10 @@ class AuditLog:
             self.entries.append(entry)
             self._head = h
             self._write_line(json.dumps(entry.__dict__, ensure_ascii=False) + "\n")
-        if redacted_categories and self._flag_on_redact:
-            # append a follow-up policy_flag so the redaction is itself in the chain. The flag's own
+        for reason, action, severity, data in auto_flags:
+            # append a follow-up policy_flag so the detection is itself in the chain. The flag's own
             # _append carries etype="policy_flag" (not an auto type), so this never recurses.
-            cats = sorted(redacted_categories)
-            self.flag(
-                f"redacted {', '.join(cats)} from {etype}",
-                action="redacted",
-                severity="info",
-                data=cats,
-                auto=True,
-            )
+            self.flag(reason, action=action, severity=severity, data=data, auto=True)
         return entry
 
     def _write_line(self, line: str) -> None:
@@ -402,8 +505,8 @@ class AuditLog:
         self,
         reason: str,
         *,
-        action: FlagAction = "flagged",
-        severity: FlagSeverity = "warning",
+        action: str = "flagged",
+        severity: str = "warning",
         data: Any = None,
         **fields: Any,
     ) -> AuditEntry:
@@ -460,7 +563,9 @@ class AuditLog:
         if framework and framework not in _CONTROLS:
             raise ValueError(f"unknown framework {framework!r}; available: {frameworks()}")
         controls = _CONTROLS.get(framework or "", {})
-        covered = sorted({c for e in self.entries for c in controls.get(e.type, [])})
+        covered = sorted(
+            {c for e in self.entries for c in _controls_for_entry(e, framework or "", controls)}
+        )
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("w", encoding="utf-8") as fh:
@@ -482,7 +587,7 @@ class AuditLog:
             for entry in self.entries:
                 row = dict(entry.__dict__)
                 if framework:
-                    row["controls"] = controls.get(entry.type, [])
+                    row["controls"] = _controls_for_entry(entry, framework, controls)
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
@@ -508,8 +613,8 @@ class Decision:
         self,
         reason: str,
         *,
-        action: FlagAction = "flagged",
-        severity: FlagSeverity = "warning",
+        action: str = "flagged",
+        severity: str = "warning",
         data: Any = None,
         **fields: Any,
     ) -> AuditEntry:

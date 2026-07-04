@@ -42,8 +42,15 @@ MISS: Any = object()
 class Reroute:
     """Returned by an interceptor to modify the outgoing request, then run the real call.
 
-    Used by ``tokenguard`` for ``on_exceed="downgrade"`` (e.g. ``Reroute(model="gpt-4o-mini")``).
-    Any keyword updates are applied to the call's kwargs before it executes.
+    Used by ``tokenguard`` for ``on_exceed="downgrade"`` (e.g. ``Reroute(model="gpt-4o-mini")``)
+    and by ``acttrace``'s ``guard()`` for redact-before-send (``Reroute(messages=[…])``). Any
+    keyword updates are applied to the call's kwargs before it executes. Two are special-cased so
+    the emitted ``LLMCall`` stays consistent with what is actually sent and so message rewrites work
+    across providers:
+
+    * ``model=`` also updates ``call.model``.
+    * ``messages=`` rewrites the outbound messages — mapped to the provider's own kwarg
+      (``messages`` / ``input`` / ``contents``) — and also updates ``call.messages``.
     """
 
     def __init__(self, **updates: Any) -> None:
@@ -181,7 +188,7 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
             _ensure_stream_usage_options(provider, kwargs)
             directive = _intercept(call)
             if isinstance(directive, Reroute):
-                _apply_reroute(call, kwargs, directive)
+                _apply_reroute(call, kwargs, directive, provider)
                 response = await fn(*args, **kwargs)
             elif directive is not MISS:
                 call.metadata["replayed"] = True
@@ -205,7 +212,7 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
         _ensure_stream_usage_options(provider, kwargs)
         directive = _intercept(call)
         if isinstance(directive, Reroute):
-            _apply_reroute(call, kwargs, directive)
+            _apply_reroute(call, kwargs, directive, provider)
             response = fn(*args, **kwargs)
         elif directive is not MISS:
             call.metadata["replayed"] = True
@@ -224,10 +231,25 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
     return wrapper
 
 
-def _apply_reroute(call: LLMCall, kwargs: dict, directive: Reroute) -> None:
-    kwargs.update(directive.updates)
-    if "model" in directive.updates:
-        call.model = directive.updates["model"]
+#: Per-provider kwarg carrying the request messages, so ``Reroute(messages=…)`` rewrites the right
+#: field (Chat Completions/Anthropic/Bedrock/Ollama use ``messages``; the OpenAI Responses API uses
+#: ``input``; Gemini uses ``contents``).
+_MESSAGES_KWARG = {"openai_responses": "input", "google": "contents"}
+
+_MISSING: Any = object()  # so ``Reroute(messages=[])`` (a valid empty rewrite) is still detected
+
+
+def _apply_reroute(call: LLMCall, kwargs: dict, directive: Reroute, provider: str = "") -> None:
+    updates = dict(directive.updates)
+    messages = updates.pop("messages", _MISSING)
+    kwargs.update(updates)  # generic updates (model, max_tokens, …)
+    if "model" in updates:
+        call.model = updates["model"]
+    if messages is not _MISSING:
+        # Rewrite the provider's own messages kwarg and keep the emitted event consistent with what
+        # is actually sent. (If a Gemini caller passed contents positionally, set the kwarg form.)
+        kwargs[_MESSAGES_KWARG.get(provider, "messages")] = messages
+        call.messages = messages
     call.metadata["rerouted"] = True
 
 

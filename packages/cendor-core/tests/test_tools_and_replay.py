@@ -101,3 +101,117 @@ def test_interceptor_can_reroute_the_request(events):
     assert seen_models == ["gpt-4o-mini"]  # real call ran with the rerouted model
     assert events[0].model == "gpt-4o-mini"  # event reflects the model actually used
     assert events[0].metadata.get("rerouted") is True
+
+
+def test_interceptor_can_reroute_the_messages(events):
+    # Reroute(messages=…) rewrites the outbound messages the provider receives (used by acttrace's
+    # guard() for redact-before-send) and keeps the emitted event consistent with what was sent.
+    seen = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            seen["messages"] = kwargs["messages"]
+            return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1))
+
+    client = instrument(SimpleNamespace(chat=SimpleNamespace(completions=Completions())))
+    scrubbed = [{"role": "user", "content": "mail me at <redacted>"}]
+
+    def rewriter(event):
+        return Reroute(messages=scrubbed) if isinstance(event, LLMCall) else MISS
+
+    add_interceptor(rewriter)
+    try:
+        client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": "mail me at a@b.com"}]
+        )
+    finally:
+        remove_interceptor(rewriter)
+
+    assert seen["messages"] == scrubbed  # provider received the rewritten messages
+    assert events[0].messages == scrubbed  # emitted event reflects what was actually sent
+    assert events[0].metadata.get("rerouted") is True
+
+
+def test_reroute_messages_maps_to_the_responses_api_input_kwarg(events):
+    # The OpenAI Responses API carries messages on `input`, not `messages` — Reroute(messages=…)
+    # must rewrite the right provider kwarg.
+    seen = {}
+
+    class Responses:
+        def create(self, **kwargs):
+            seen["kwargs"] = kwargs
+            return SimpleNamespace(usage=SimpleNamespace(input_tokens=1, output_tokens=1))
+
+    client = instrument(SimpleNamespace(responses=Responses()))
+    scrubbed = [{"role": "user", "content": "<redacted>"}]
+
+    def rewriter(event):
+        return Reroute(messages=scrubbed) if isinstance(event, LLMCall) else MISS
+
+    add_interceptor(rewriter)
+    try:
+        client.responses.create(model="gpt-4o", input="secret")
+    finally:
+        remove_interceptor(rewriter)
+
+    assert seen["kwargs"].get("input") == scrubbed  # rewritten onto `input`
+    assert "messages" not in seen["kwargs"]  # no spurious `messages` kwarg leaked
+
+
+async def test_interceptor_can_reroute_messages_async(events):
+    seen = {}
+
+    class Completions:
+        async def create(self, **kwargs):
+            seen["messages"] = kwargs["messages"]
+            return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1))
+
+    client = instrument(SimpleNamespace(chat=SimpleNamespace(completions=Completions())))
+    scrubbed = [{"role": "user", "content": "<redacted>"}]
+
+    def rewriter(event):
+        return Reroute(messages=scrubbed) if isinstance(event, LLMCall) else MISS
+
+    add_interceptor(rewriter)
+    try:
+        await client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": "a@b.com"}]
+        )
+    finally:
+        remove_interceptor(rewriter)
+
+    assert seen["messages"] == scrubbed
+    assert events[0].messages == scrubbed
+
+
+def test_interceptor_can_reroute_messages_streaming(events):
+    seen = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            seen["messages"] = kwargs["messages"]
+
+            def chunks():
+                yield SimpleNamespace(
+                    usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1), choices=[]
+                )
+
+            return chunks()
+
+    client = instrument(SimpleNamespace(chat=SimpleNamespace(completions=Completions())))
+    scrubbed = [{"role": "user", "content": "<redacted>"}]
+
+    def rewriter(event):
+        return Reroute(messages=scrubbed) if isinstance(event, LLMCall) else MISS
+
+    add_interceptor(rewriter)
+    try:
+        stream = client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": "a@b.com"}], stream=True
+        )
+        list(stream)  # drain so the LLMCall is emitted
+    finally:
+        remove_interceptor(rewriter)
+
+    assert seen["messages"] == scrubbed  # rewritten before the streaming call ran
+    assert events[0].messages == scrubbed

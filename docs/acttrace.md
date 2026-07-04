@@ -64,25 +64,104 @@ close that gap:
 
 Without a key, the `_meta` check is in-file only, and `verify()`'s `detail` says so.
 
-### Redaction (on by default)
-Emails and secrets in payloads are scrubbed **before** entries are chained and written,
-since audit logs get exported. The built-in redactor covers six categories — `email`,
-`api_key`, `bearer_token`, `aws_key`, `google_api_key`, and `jwt` — and never touches ids
-or hashes. Turn it off with `redact=False`, or supply your own rules with `redactor=`
-(compose the exported `default_redactor` to extend the built-ins).
+### Detection & policy
+`acttrace` ships an **offline, deterministic** detection engine: a registry of `Detector`s
+(a labelled regex plus an optional checksum/format **validator**) and a `Policy` that maps
+each detected category to an action — `allow` · `flag` · `redact` · `block`. Detection is
+regex + local arithmetic only — no model, no network, no account. The registry is the single
+source of truth, so `default_redactor` is rebuilt from it and the original categories scrub
+byte-for-byte.
 
-### Auto-flag on redaction
-Scrubbing used to be silent. With `flag_on_redact=True` (the default), whenever the
-**built-in** redactor scrubs a content-bearing auto-captured entry, `acttrace` appends a
-`policy_flag` recording *which categories* were removed — so "we removed PII" lands in the
-same tamper-evident chain, not nowhere. The follow-up flag carries `action="redacted"`,
-`severity="info"`, `auto=True`, and `data=[…]` (the sorted categories), and is tagged to the
-open decision if there is one. A custom `redactor=` owns its own flagging, so this fires only
-for the built-in one.
+**Coverage (built-ins).** Every loose pattern (card, IBAN, routing, phone, SSN, BIC) is
+**validator-gated** to hold false positives down; ids, UUIDs, git SHAs, and ISO timestamps are
+left untouched.
+
+| Group | Categories | Validator | Default action |
+|---|---|---|---|
+| `secret` | `api_key` (`sk-`/`sk-ant-`/`sk-proj-`), `aws_key`, `google_api_key`, `github_token`, `slack_token`, `private_key` (PEM), `jwt`, `bearer_token` | anchored regex | **redact** |
+| `credential` | `password` (free-text "password is …") | regex | flag |
+| `financial` | `credit_card`, `iban`, `us_routing`, `swift_bic` | Luhn · mod-97 · ABA · ISO-3166 | flag |
+| `gov_id` | `us_ssn` | range check (Verhoeff/locale packs available) | flag |
+| `pii` | `email`, `phone`, `ipv4`, `ipv6`, `mac_address` | format check | email **redact**, rest flag |
+| `special_category` (GDPR Art.9) | `special_category` (health/biometric/religion — best-effort keyword) | — | flag |
+
+**Policy presets** re-map those defaults for a given posture:
+
+| Preset | Stance |
+|---|---|
+| `Policy.default()` | today's behaviour — secrets & `email` `redact`, everything else `flag` |
+| `Policy.gdpr()` | special-category `block`; other personal/secret data `redact` |
+| `Policy.pci()` | payment/financial data `block`; secrets & PII `redact` |
+| `Policy.strict()` | high-severity groups (`secret`/`credential`/`financial`/`gov_id`) `block`, the rest `redact` |
+
+**`scan` / `redact` — pure, no side effects.** Use them anywhere, independent of the chain:
+
+```python
+from cendor.acttrace import scan, redact, Policy
+
+scan("card 4111 1111 1111 1111 for alice@example.com")
+# [Finding(category='credit_card', group='financial', severity='critical', action='flag', count=1),
+#  Finding(category='email',       group='pii',       severity='warning',  action='redact', count=1)]
+
+cleaned, findings = redact({"note": "ping alice@example.com"}, Policy.default())
+# cleaned == {"note": "ping <redacted>"}   — findings report counts, never the raw value
+```
+
+`scan()` reports **counts only** — the raw offending value is never returned, so you can't
+accidentally chain a secret. `redact()` scrubs only the `redact`/`block` categories and returns
+the cleaned copy plus the findings. Add your own rule with
+`register_detector(Detector(category, group, severity, pattern, validator=…))`.
+
+### AuditLog & the policy engine
+`AuditLog(policy=…)` scans every auto-captured payload against the full registry and, per the
+policy, scrubs `redact`/`block` categories **before** entries are chained (audit logs get
+exported) and appends a `policy_flag` for each detection. `AuditLog(redact=True)` — the default
+— is exactly `policy=Policy.default()`, so existing behaviour is unchanged; `redact=False`
+turns detection off; a custom `redactor=` bypasses the policy engine and owns its own flagging.
+
+With `flag_on_redact=True` (the default), each auto-captured entry with detections gets one
+`policy_flag` per resolved action — `action="redacted"` (`severity="info"`), `"flagged"`, or
+`"blocked"` (carrying the strongest detector severity) — with `auto=True` and `data=[…]` (the
+sorted categories), tagged to the open decision if there is one. So "we removed / flagged this"
+lands in the same tamper-evident chain, not nowhere.
 
 > `llm_call` entries record only metadata (provider / model / usage / cost), never the prompt
 > messages — so in practice PII surfaces in a `decision`'s input or a `tool_call`'s arguments,
 > and that's where the auto-flag most often fires.
+
+> **`AuditLog` redaction scrubs the *record*, not the *request*.** By the time the subscriber
+> sees a payload the call already ran, so this redaction protects the exported evidence — it is
+> not a pre-send control. To scrub or stop sensitive data *before it reaches the model*, install a
+> [`guard()`](#enforcing-a-policy-with-guard) on `core`'s interceptor seam (its `redact` scrubs the
+> outbound messages; its `block` stops the call).
+
+### Optional extras (all opt-in)
+The default install is pure-regex and offline. Three extras add coverage **without changing the
+defaults** — you turn each on explicitly:
+
+- **Locale gov-ID packs** — `enable_locale_pack("uk", "in")` registers extra government-ID
+  detectors (UK NINO, prefix-validated; India Aadhaar, Verhoeff-checked). Idempotent; unknown codes
+  raise. More packs land here over time.
+- **Entropy detector** — `enable_entropy_detector(min_length=24, min_entropy=3.5)` adds a
+  `high_entropy_secret` detector for opaque generic secrets the anchored patterns miss. It is
+  **noisy** by nature (hashes, base64, long random ids look high-entropy), which is why it ships
+  off by default — enable it only where the recall is worth the false positives.
+- **NER-backed redaction** (`pip install "cendor-acttrace[ner]"`) — regex can't catch free-text
+  **names/addresses**; `ner_redactor(...)` plugs [Microsoft Presidio](https://microsoft.github.io/presidio/)
+  in as a `redactor=` for `AuditLog`. `ner_available()` reports whether the extra is installed;
+  `ner_redactor()` raises a clear `ImportError` (with the install hint) when it isn't. Presidio runs
+  locally — still no network.
+
+```python
+from cendor.acttrace import AuditLog, enable_locale_pack, ner_redactor, default_redactor
+
+enable_locale_pack("uk", "in")                         # + UK NINO, India Aadhaar
+audit = AuditLog(system="intake",
+                 redactor=ner_redactor(compose=default_redactor))   # regex + NER names/addresses
+```
+
+> Extras never become hard dependencies and never touch the defaults: a zero-extra install detects
+> exactly the built-in categories, and `default_redactor` is unchanged.
 
 ### Compliance evidence packs
 `export(framework=…)` writes the chain as a JSONL pack and annotates each entry with control
@@ -100,7 +179,7 @@ current chain head, `log.detach()` stops subscribing.
 
 ```python
 AuditLog(system, risk_tier="limited", path=None, signing_key=None,
-         redact=True, redactor=None, flag_on_redact=True)
+         redact=True, redactor=None, flag_on_redact=True, policy=None)
 ```
 
 | Param | Type | Default | What it does |
@@ -109,9 +188,10 @@ AuditLog(system, risk_tier="limited", path=None, signing_key=None,
 | `risk_tier` | `str` | `"limited"` | Risk classification (e.g. `"high"`), recorded for the pack. |
 | `path` | `str \| None` | `None` | Also stream entries to this JSONL file as they're chained. |
 | `signing_key` | `str \| None` | `None` | HMAC secret; signs each entry **and** the exported `_meta` header. |
-| `redact` | `bool` | `True` | Scrub PII before entries are chained (see [Redaction](#redaction-on-by-default)). |
-| `redactor` | `callable \| None` | `None` | Custom scrubber; compose `default_redactor` to extend the built-ins. |
-| `flag_on_redact` | `bool` | `True` | Append a `policy_flag` when the built-in redactor scrubs (see [Auto-flag](#auto-flag-on-redaction)). |
+| `policy` | `Policy \| None` | `None` | Detection posture (see [Detection & policy](#detection--policy)); defaults to `Policy.default()`. |
+| `redact` | `bool` | `True` | Scan/scrub payloads before chaining; `redact=True` ⇒ `Policy.default()`, `redact=False` off. |
+| `redactor` | `callable \| None` | `None` | Custom scrubber; bypasses the policy engine. Compose `default_redactor` to extend the built-ins. |
+| `flag_on_redact` | `bool` | `True` | Append a `policy_flag` per resolved action on the built-in path (see [AuditLog & the policy engine](#auditlog--the-policy-engine)). |
 
 ### `audit.decision()`
 A context manager that groups a unit of work; auto-captured calls inside it are tagged to
@@ -135,7 +215,7 @@ The handle adds `d.record(**fields)` (record metadata) and
 ### `audit.flag()` / `d.flag()`
 Records a tamper-evident `policy_flag` — e.g. input a guard refused. `acttrace` *records*
 the flag; your guard makes and enforces the decision (see
-[Flagging input](#flagging-input-that-shouldnt-be-processed)). Both forms **return** the
+[Enforcing a policy](#enforcing-a-policy-with-guard)). Both forms **return** the
 chained `AuditEntry`.
 
 ```python
@@ -176,12 +256,27 @@ verify(path, key=None, expected_head=None, expect_entries=None) -> tuple[bool, s
 
 CLI: `acttrace verify <file> [--key …] [--expect-head …] [--expect-entries N]`.
 
+### Detection & policy API
+
+| Name | Signature | What it does |
+|---|---|---|
+| `scan` | `scan(obj, policy=None) -> list[Finding]` | Detect sensitive data; returns findings (counts + resolved action), never raw values. |
+| `redact` | `redact(obj, policy=None) -> tuple[obj, list[Finding]]` | Scrub `redact`/`block` categories; returns the cleaned copy + findings. |
+| `Policy` | `Policy(actions, default="flag")` + `.default()`/`.gdpr()`/`.pci()`/`.strict()` | Map category/group → `allow`/`flag`/`redact`/`block`. |
+| `Detector` | `Detector(category, group, severity, pattern, validator=None)` | One offline detector; a validator gates loose matches. |
+| `register_detector` | `register_detector(Detector(...))` | Add a custom detector to the global registry. |
+| `Finding` | `Finding(category, group, severity, action, count)` | A single detected category (frozen). |
+| `enable_locale_pack` | `enable_locale_pack("uk", "in")` | Opt in to locale gov-ID detectors (see [Optional extras](#optional-extras-all-opt-in)). |
+| `enable_entropy_detector` | `enable_entropy_detector(min_length=24, min_entropy=3.5)` | Opt in to the high-entropy generic-secret detector (noisy). |
+| `ner_available` / `ner_redactor` | `ner_redactor(compose=default_redactor)` | NER-backed name/address redaction — requires the `[ner]` extra. |
+
 ### Helpers
 
 | Name | Signature | What it does |
 |---|---|---|
 | `frameworks` | `frameworks()` | The bundled control-mapping framework names. |
-| `default_redactor` | `default_redactor(obj)` | The built-in six-category scrubber — compose it in a custom `redactor=`. |
+| `default_redactor` | `default_redactor(obj)` | The built-in scrubber (all `Policy.default()` `redact` categories) — compose it in a custom `redactor=`. |
+| `detectors` | `detectors()` | A copy of the active detector registry. |
 
 ## How it works
 
@@ -220,70 +315,89 @@ graph LR
 4. **Verify.** `verify()` re-walks the chain (and signatures, with a key) offline, returning
    `(ok, detail)`.
 
-## Flagging input that shouldn't be processed
+## Enforcing a policy with guard()
 
-`acttrace` is a *recorder*, not a gate — by the time it sees an event, the call already
+`acttrace` is a *recorder*, not a gate — by the time it sees a bus event, the call already
 happened. Deciding "this input must not be processed" and **enforcing** it is a pre-flight
-guard on `core`'s interceptor seam (the same seam `tokenguard` uses to block). Wire the two
-together: your guard enforces, `acttrace` records the refusal as tamper-evident evidence.
-Because a raising interceptor short-circuits the call, the blocked call never reaches the bus
-— so `flag()` is the *only* record that the refusal happened.
+guard on `core`'s interceptor seam (the same seam `tokenguard` uses to block). `guard()` gives
+you that guard in one line: it reuses the same `scan()` engine, enforces the policy's action per
+category, and records each decision on your `AuditLog`.
+
+```python
+from cendor.core.instrument import add_interceptor
+from cendor.acttrace import AuditLog, Policy, guard
+
+log = AuditLog(system="support_bot", risk_tier="high", path="audit.jsonl", signing_key="ops-key")
+add_interceptor(guard(Policy.gdpr(), audit=log))   # enforce + record — block / warn / redact
+```
+
+Per outbound call (inspecting `call.messages` for an LLM, `call.arguments` for a tool), the
+policy resolves each detected category to an action:
+
+| Action | What `guard()` does |
+|---|---|
+| **block** | record `policy_flag(action="blocked")` → **raise** `on_block` (the call never runs) |
+| **redact** | scrub the outbound **messages** so the *provider* receives cleaned content (via `core`'s `Reroute(messages=…)`), record `action="redacted"` → proceed. Tools have no message-rewrite seam, so a redact on tool arguments is record-only there (**block** is the pre-send control for tools) |
+| **flag** | record `policy_flag(action="flagged")` → proceed untouched |
+| nothing | proceed untouched (`MISS`) |
+
+So `guard()` redaction **is** a real pre-send control for model calls: the sensitive value never
+leaves the process. (This is distinct from `AuditLog`'s redaction, which scrubs the *record* after
+the fact — see [AuditLog & the policy engine](#auditlog--the-policy-engine).)
+
+`guard(policy=None, audit=None, on_block=PolicyViolation)`. `audit` is optional (without it the
+guard still enforces, silently); `on_block` is the exception to raise — an exception **class**
+or a factory `list[Finding] -> Exception`. The raised `PolicyViolation` carries `.findings`
+(categories/counts, never raw values). `Policy.default()` never blocks — use `gdpr()` / `pci()` /
+`strict()` (or a custom policy) to make a category `block`.
 
 ```mermaid
 %%{init: {"flowchart": {"htmlLabels": false}} }%%
 graph TD
-    REQ["incoming request"]
-    GUARD["your pre-flight guard<br/>core.add_interceptor"]
-    POL{"policy: disallowed?"}
+    REQ["outbound call"]
+    GUARD["guard(policy, audit)<br/>core.add_interceptor"]
+    POL{"policy.action_for(category)"}
     OK["return MISS<br/>(call proceeds)"]
-    FLAG["audit.flag(reason, action=blocked)<br/>tamper-evident policy_flag"]
-    STOP["raise — block the call"]
+    FLAG["audit.flag(action=blocked)<br/>tamper-evident policy_flag"]
+    STOP["raise on_block — block the call"]
 
     REQ --> GUARD --> POL
-    POL -->|no| OK
-    POL -->|yes| FLAG --> STOP
+    POL -->|allow / flag / redact*| OK
+    POL -->|block| FLAG --> STOP
 
     classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
     class FLAG at;
 ```
 
-> Red = **acttrace** (records the refusal). Everything else is **your guard** — it decides
-> and enforces. That split is the point: `acttrace` neither defines nor enforces policy.
+> Red = **acttrace** (records the refusal). The seam that *stops* the call is `core`'s
+> `add_interceptor` — `guard()` merely returns a callable you install there. `acttrace` still
+> neither runs nor owns enforcement; the recorder/enforcer split is intact.
 
-A complete, runnable example — define a policy, wire the guard, watch a disallowed call get
-blocked *and* recorded, then verify the evidence pack offline:
+Because a raising interceptor short-circuits the call, the blocked call never reaches the bus —
+so the guard's `policy_flag` is the *only* record that the refusal happened. `verify("audit.jsonl",
+key="ops-key")` confirms the chain (including that flag) offline.
+
+**Rolling your own.** `guard()` is a thin wrapper over the seam; you can write the interceptor
+by hand for a bespoke rule — return `MISS` to proceed, `audit.flag(...)` then `raise` to block:
 
 ```python
 import re
-from openai import OpenAI
-from cendor.core import instrument
 from cendor.core.instrument import add_interceptor, MISS
 from cendor.core.types import LLMCall
-from cendor.acttrace import AuditLog, verify
+from cendor.acttrace import PolicyViolation
 
-client = instrument(OpenAI())
-audit  = AuditLog(system="support_bot", risk_tier="high", path="audit.jsonl", signing_key="ops-key")
-
-class PolicyViolation(Exception):
-    pass
-
-SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")   # YOUR policy: what must never reach the model
+SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")   # YOUR bespoke rule
 
 def block_pii(call):
     if isinstance(call, LLMCall):
         text = " ".join(m["content"] for m in call.messages if isinstance(m.get("content"), str))
         if SSN.search(text):
-            audit.flag("SSN in prompt", action="blocked", severity="critical", data="us_ssn")  # record
-            raise PolicyViolation("PII must not be sent to the model")                          # enforce
-    return MISS                                    # anything else proceeds untouched
+            log.flag("SSN in prompt", action="blocked", severity="critical", data="us_ssn")  # record
+            raise PolicyViolation("PII must not be sent to the model")                        # enforce
+    return MISS
 
 add_interceptor(block_pii)
 ```
-
-The disallowed call is stopped *before* it runs, yet `audit.jsonl` carries a signed
-`policy_flag` recording *why* it was refused — `verify("audit.jsonl", key="ops-key")` confirms
-the chain (including the flag) offline. The detection rule is entirely yours; `acttrace` only
-records it and lets you verify it later.
 
 ## Plugs into the stack
 

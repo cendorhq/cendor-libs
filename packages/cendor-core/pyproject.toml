@@ -1,6 +1,6 @@
 [project]
 name = "cendor-core"
-version = "1.0.0"
+version = "1.1.0"
 description = "Foundation for the Cendor stack: shared types, token counting, offline-first & refreshable prices, instrument(), event bus, OTel."
 requires-python = ">=3.11"
 license = "Apache-2.0"

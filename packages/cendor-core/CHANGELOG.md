@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.0] — 2026-07-04
+### Added
+- **`Reroute(messages=…)`** — an interceptor can now rewrite the outbound **messages** (not just the model), mapped to each provider's own kwarg (`messages` / `input` / `contents`) and reflected on `call.messages`. Applies to sync, async, and streaming calls. This is the seam `acttrace`'s `guard()` uses for redact-before-send. Additive and backward-compatible — existing `Reroute(model=…)` / `Reroute(**kwargs)` behaviour is unchanged.
+
 ## [1.0.0] — 2026-07-03
 ### Added
 - First release of `cendor-core` — the shared foundation for the Cendor stack: canonical types, provider-aware token counting, an offline price table, a single `instrument()` interception seam, an in-process event bus, and OpenTelemetry GenAI emitters. Kept tiny on purpose; it's the blast radius for every other tool.
