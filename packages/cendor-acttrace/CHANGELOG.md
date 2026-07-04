@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.2.0] — 2026-07-05
+### Added
+- **`AuditLog(max_entries=N)`** bounds the **in-memory** entry ring for long-running logs: once full, the oldest in-memory entry is evicted so memory stays flat. The **file is the source of truth** — the hash chain lives in `head` + the on-disk log, so eviction never touches it; `verify(path, …)` re-walks the full chain and `export()` re-reads the file when memory was bounded, so both stay complete. New `AuditLog.evicted_from_memory` property counts what left memory (never silent), and a `BoundedMemoryWithoutPathWarning` is raised if `max_entries` is set without `path=` (evicted entries would be lost). Default `max_entries=None` is unbounded and **byte-identical** to previous behaviour.
+
 ## [1.1.0] — 2026-07-04
 ### Added
 - **Offline detection engine** — a `Detector` registry (`DETECTORS`, `register_detector()`) of validator-gated patterns spanning **20 categories** across six groups: secrets (`api_key`, `aws_key`, `google_api_key`, `github_token`, `slack_token`, `private_key`, `jwt`, `bearer_token`), free-text credentials (`password`), financial (`credit_card`, `iban`, `us_routing`, `swift_bic`), government IDs (`us_ssn`), PII (`email`, `phone`, `ipv4`, `ipv6`, `mac_address`), and GDPR Art.9 special-category data. Loose patterns are gated by local checksums/format checks (Luhn, IBAN mod-97, Verhoeff, ABA, ISO-3166) — regex + arithmetic only, no model, no network.

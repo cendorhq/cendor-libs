@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.0] — 2026-07-05
+### Added
+- **`sinks.QueueSink(inner, *, max_queue=None)`** — wrap any spend sink so its writes run on a background daemon thread, keeping durable I/O **off the model call's hot path** (the bus runs subscribers inline, so a SQLite/OTel/file sink otherwise adds its latency to every call). `write()` enqueues and returns immediately; a single worker drains the inner sink **in order**. `flush()` blocks until drained; `close()` flushes, stops the worker, and closes the inner sink (also a context manager) — call one before exit for durability, since the worker is a daemon. `max_queue=` applies back-pressure when full (never silently drops a row). Uses the optional `Sink.flush()`/`Sink.close()` lifecycle methods (see `cendor-core` 1.2.0). Additive — existing sinks and `use_sink()` are unchanged.
+
 ## [1.0.0] — 2026-07-03
 ### Added
 - First release of `cendor-tokenguard` — stop runaway LLM bills and get per-feature / per-user cost attribution for free, with one decorator and one context manager. No dashboard, no account, no infra; it rides core's `instrument()` seam and never patches your client.

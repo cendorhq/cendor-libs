@@ -137,11 +137,35 @@ calls had no price. `report().assert_under(usd=…, **tags)` turns cost into a t
 |---|---|---|
 | `downgrades()` | `downgrades()` | The pre-flight reroutes performed (`{from, to, tags}`). |
 | `clamps()` | `clamps()` | The pre-flight token clamps applied (`{model, kwarg, limit, tags}`). |
-| `use_sink(sink)` | `use_sink(sink)` | Also persist each spend row to a sink; built-ins `sinks.SQLiteSink(path)`, `sinks.OTelSink()` (any `write(row)` object works). |
+| `use_sink(sink)` | `use_sink(sink)` | Also persist each spend row to a sink; built-ins `sinks.SQLiteSink(path)`, `sinks.OTelSink()`, `sinks.QueueSink(inner)` (any `write(row)` object works). |
 | `configure(...)` | `configure(max_records=100_000, on_unpriced="warn")` | Tune runtime behavior (defaults shown). `max_records` FIFO-bounds the in-memory buffer (`None` disables); `on_unpriced` `"warn"`/`"raise"`. |
 | `dropped()` | `dropped()` | Count of spend rows evicted by the `max_records` cap since the last `reset()`. |
 | `unpriced_calls()` | `unpriced_calls()` | Count of recorded calls with no price (a USD blind spot). |
 | `reset()` | `reset()` | Clear recorded spend + active context and restore defaults (handy between tests). |
+
+### `QueueSink` — low-latency durable logging
+
+The bus fans out to subscribers **inline**, so a durable sink (SQLite/OTel/file) adds its write
+latency to *every* model call. On a long or high-throughput run that's a latency cliff. Wrap the
+sink in `sinks.QueueSink` to move that I/O onto a background thread — `write()` enqueues and
+returns immediately, and a single worker drains it into the inner sink **in order**:
+
+```python
+from cendor.tokenguard import use_sink
+from cendor.tokenguard.sinks import QueueSink, SQLiteSink
+
+sink = QueueSink(SQLiteSink("spend.db"))     # durable logging, off the hot path
+use_sink(sink)
+# … the run: model calls no longer pay the sink's I/O latency …
+sink.flush()     # block until the queue is drained (e.g. at a checkpoint)
+sink.close()     # flush + stop the worker + close the inner sink (or use `with QueueSink(...)`)
+```
+
+- **Ordering preserved** (single FIFO worker); `max_queue=N` applies back-pressure when full (a row
+  is never silently dropped) — `None` (default) is unbounded.
+- **Durability is opt-in at shutdown:** the worker is a daemon thread, so call `flush()`/`close()`
+  before exit or a hard crash can drop still-queued rows. `flush()`/`close()` are the optional
+  [`core.protocols.Sink`](core.md#modules--protocols) lifecycle methods.
 
 ## How it works
 

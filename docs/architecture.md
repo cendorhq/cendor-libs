@@ -144,19 +144,39 @@ def handle(user_msg: str) -> str:
 The same `Context`/`tokenguard` code is identical across providers, because they operate on messages
 and on the instrumented call, not on a vendor SDK.
 
-### Two integration modes
+### Three integration modes
 
 - **You own the loop** (raw chat-completions + your own tool dispatch): `instrument()` sees every
   model and tool call directly. Wrap your tool dispatcher with `core.instrument_tool` so `ToolCall`
-  events join the stream too.
+  events join the stream too. Group a run with `core.trace("run-id")` for correlation.
+- **A framework owns the loop** (LangChain / LangGraph): the SDK-aligned integration point is the
+  framework's **callback system**, not the inner client (which LangChain reaches via
+  `with_raw_response`, losing usage). Attach
+  [`cendor.core.langchain.CendorCallbackHandler`](providers.md#frameworks-langchain--langgraph) — it
+  records usage/reasoning/tools and a root-run `trace_id` onto the same bus.
 - **A managed runtime owns the loop** (Foundry Agent Service, OpenAI Assistants/Agents): the provider
   runs the tool-calling loop server-side, so your client may not see each call. These runtimes emit
   `gen_ai.*` OpenTelemetry spans — feed those to
   [`core.otel.ingest(...)`](providers.md#managed-runtimes-opentelemetry-ingestion) and the calls join
   the same bus, so `tokenguard`/`acttrace` work in this mode too.
 
-> `contextkit` / `squeeze` apply only when *you* assemble the prompt. If a managed runtime owns
-> context assembly internally, those two have nothing to shape; the other three still apply.
+> `contextkit` / `squeeze` apply only when *you* assemble the prompt. If a framework/managed runtime
+> owns context assembly internally, those two have nothing to shape; the other three still apply.
+
+**Recording vs. enforcement — align to the SDK.** cendor's guiding rule is *align to the behaviour
+of what it wraps*: add no failure mode the SDK lacks (no crashes, no leaks, no latency cliffs), and
+claim no scope the SDK doesn't. **Enforcement** (pre-flight `tokenguard` caps, `acttrace`'s
+`guard()` redact-before-send) lives on the `instrument()` seam — it can refuse or rewrite a call
+*before it runs*. The framework **callback path is recording-only** (post-call): it observes
+usage/cost/tools/correlation but cannot enforce, because it never touches the client. Choose the
+direct-SDK seam when you need enforcement; use callbacks to observe a framework you don't want to
+wrap.
+
+**Scope & non-goals (deliberate — align by staying out).** cendor is process-local: it provides a
+correlation *hook* (`trace_id`, sinks), **not** an orchestrator, and does **no** cross-process /
+distributed aggregation, run-graph modelling, or checkpoint/resume of its own state. For a
+long-running or multi-agent system, aggregate durably via a sink into your own store and correlate
+by `trace_id`; resuming the agent is the orchestrator's job, not cendor's.
 
 ## Installing & versioning
 

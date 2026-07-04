@@ -179,7 +179,7 @@ current chain head, `log.detach()` stops subscribing.
 
 ```python
 AuditLog(system, risk_tier="limited", path=None, signing_key=None,
-         redact=True, redactor=None, flag_on_redact=True, policy=None)
+         redact=True, redactor=None, flag_on_redact=True, policy=None, max_entries=None)
 ```
 
 | Param | Type | Default | What it does |
@@ -192,6 +192,38 @@ AuditLog(system, risk_tier="limited", path=None, signing_key=None,
 | `redact` | `bool` | `True` | Scan/scrub payloads before chaining; `redact=True` ⇒ `Policy.default()`, `redact=False` off. |
 | `redactor` | `callable \| None` | `None` | Custom scrubber; bypasses the policy engine. Compose `default_redactor` to extend the built-ins. |
 | `flag_on_redact` | `bool` | `True` | Append a `policy_flag` per resolved action on the built-in path (see [AuditLog & the policy engine](#auditlog--the-policy-engine)). |
+| `max_entries` | `int \| None` | `None` | Cap the **in-memory** entry ring for a long-running log (see [Long-running logs](#long-running-logs-max_entries)). `None` = unbounded (keep every entry in memory). |
+
+<a id="long-running-logs-max_entries"></a>
+#### Long-running logs (`max_entries`)
+
+A multi-day agent can emit millions of events. `AuditLog` keeps every entry in memory by default,
+so `entries` grows without bound. For a long-running process, pass `max_entries=N` to cap the
+in-memory ring: once it's full, the **oldest in-memory entry is evicted** and memory stays flat.
+
+**The file is the source of truth.** The hash chain lives in `log.head` + the on-disk log, not in
+the retained window — so eviction never touches the chain. Every entry is still written to `path`,
+and `verify(path, …)` re-walks the *full* chain from the file; `export()` likewise reads the file
+when memory has been bounded, so the evidence pack stays complete.
+
+```python
+log = AuditLog(system="agent", path="audit.jsonl", max_entries=10_000)   # bound + path
+# … a long run: log.entries holds ≤ 10_000; the file holds all of them …
+log.evicted_from_memory          # how many left memory (never silent; 0 when unbounded)
+verify("audit.jsonl", expected_head=log.head)   # validates the complete on-disk chain
+```
+
+- **Always pair `max_entries` with `path=`.** Bounding without a file discards evicted entries
+  entirely (there's nowhere to keep them) — acttrace raises a `BoundedMemoryWithoutPathWarning`.
+- `log.evicted_from_memory` counts entries evicted from memory (a property; `0` when unbounded).
+- `max_entries` must be a positive `int` or `None` (else `ValueError`).
+
+> **Why the file write stays synchronous.** Unlike `tokenguard`'s spend logging — where you can
+> put a durable sink behind a background [`QueueSink`](tokenguard.md#queuesink--low-latency-durable-logging)
+> to keep I/O off the hot path — acttrace `fsync`s each entry as it's chained **by design**: the
+> on-disk chain *is* the tamper-evidence, so an async write that lost the tail on a hard crash would
+> lose audit history. `max_entries` bounds *memory*, not durability; the file write is the integrity
+> guarantee and is intentionally not made async.
 
 ### `audit.decision()`
 A context manager that groups a unit of work; auto-captured calls inside it are tagged to

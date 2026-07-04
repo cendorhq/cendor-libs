@@ -117,6 +117,50 @@ otel.ingest({
 `contextkit` / `squeeze` apply only when **you** assemble the prompt; if a managed runtime owns
 context internally, those two have nothing to shape while the other three still work.
 
+## Frameworks (LangChain / LangGraph)
+
+For a framework, the SDK-aligned integration point is its **callback system**, not client
+wrapping. `langchain_openai` calls `client.with_raw_response.create().parse()` (so an inner-client
+`instrument()` sees a usage-less `LegacyAPIResponse`) and consumes streams via a context manager —
+so **instrumenting LangChain's inner client is unsupported** (usage is lost; older builds even
+crashed on streaming). Use the callback handler instead:
+
+```python
+pip install "cendor-core[langchain]"
+```
+
+```python
+from cendor.core.langchain import CendorCallbackHandler
+from langchain_openai import ChatOpenAI
+
+handler = CendorCallbackHandler()
+llm = ChatOpenAI(model="gpt-4o", callbacks=[handler])     # every call recorded onto the bus
+llm.invoke("hi")
+
+# LangGraph: attach once via config — it propagates to every node + tool, correlated by run:
+agent.invoke({"messages": [...]}, config={"callbacks": [handler]})
+```
+
+The handler reads LangChain's own `usage_metadata` (which carries **reasoning** and **cached**
+tokens), prices each call offline, emits normalized `LLMCall`/`ToolCall`, and stamps a
+**root-run `trace_id`** so every model/tool call of one `agent.invoke` shares an id (separate
+invocations get distinct ones). `tokenguard` and `acttrace` then consume these like any other bus
+event — with no client touch.
+
+**It is recording-only.** The callback path is post-call, so *enforcement* — `tokenguard`'s
+`on_exceed="block"`, `acttrace`'s `guard()` redact-before-send — is a **no-op** here (those act on
+the `instrument()` seam, which this path never touches). For enforcement, call the **provider SDK
+directly** and `instrument()` it.
+
+| Capability | Callback handler (LangChain/LangGraph) | Direct provider SDK + `instrument()` |
+|---|---|---|
+| Usage + cost | ✅ (from `usage_metadata`) | ✅ |
+| Reasoning tokens | ✅ | ✅ |
+| Tool calls (`ToolCall`) | ✅ | ✅ (`@instrument_tool`) |
+| Multi-node / multi-agent `trace_id` | ✅ (root-run id, automatic) | ✅ via `core.trace("run-id")` |
+| Pre-flight **enforcement** (block / downgrade / clamp / redact-before-send) | ❌ recording-only | ✅ |
+| Record/replay (`cassette`) | ❌ | ✅ |
+
 ## Live pricing
 
 Cost is computed from a price table. Which providers actually let you refresh it live varies. The bundled snapshot works offline; `prices.refresh(source=…)`

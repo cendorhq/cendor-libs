@@ -51,7 +51,23 @@ class EvictionStrategy(Protocol):
 
 @runtime_checkable
 class Sink(Protocol):
-    """A destination for records/entries (in-memory, JSONL, SQLite, OTel, ...)."""
+    """A destination for records/entries (in-memory, JSONL, SQLite, OTel, ...).
+
+    ``write(entry)`` is the **only required** method — a sink is anything of that shape, so
+    ``isinstance(obj, Sink)`` matches a write-only sink. A sink **may** additionally implement two
+    *optional* lifecycle methods, which callers invoke through ``hasattr``/``getattr`` guards (never
+    assumed present):
+
+    * ``flush() -> None`` — block until buffered records are durably written (e.g. drain a
+      background queue). Call before a checkpoint or at shutdown.
+    * ``close() -> None`` — flush, then release resources (file handles, DB connections, worker
+      threads). Call once when detaching the sink.
+
+    :class:`~cendor.tokenguard.sinks.QueueSink` implements both to move durable I/O off the model
+    call's hot path (the bus runs subscribers inline, so a slow sink otherwise adds its latency to
+    every call); ``SQLiteSink`` implements ``close()``. These are additive — a plain ``write``-only
+    sink stays fully valid, and ``runtime_checkable`` still matches it.
+    """
 
     def write(self, entry: Any) -> None: ...
 

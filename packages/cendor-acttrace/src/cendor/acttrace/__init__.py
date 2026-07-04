@@ -22,7 +22,8 @@ import json
 import os
 import threading
 import uuid
-from collections import Counter
+import warnings
+from collections import Counter, deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -55,6 +56,7 @@ __all__ = [
     "frameworks",
     "default_redactor",
     "GENESIS",
+    "BoundedMemoryWithoutPathWarning",
     # detection & policy (roadmap phase 1)
     "Detector",
     "DETECTORS",
@@ -80,6 +82,16 @@ GENESIS = "0" * 64
 #: Recommended vocabularies for a policy flag (normalized to lowercase; other strings are allowed).
 FlagAction = Literal["flagged", "redacted", "blocked"]
 FlagSeverity = Literal["info", "warning", "critical"]
+
+
+class BoundedMemoryWithoutPathWarning(UserWarning):
+    """Warned when ``AuditLog(max_entries=…)`` is set without ``path=``.
+
+    Bounding in-memory entries relies on the on-disk file as the source of truth (``verify()`` /
+    ``export()`` re-walk the file). Without ``path=``, evicted entries are lost entirely — so a
+    bounded, path-less log silently drops audit history. Pass ``path=`` alongside ``max_entries``.
+    """
+
 
 _active_decision: ContextVar[str | None] = ContextVar("cendor_acttrace_decision", default=None)
 
@@ -337,6 +349,7 @@ class AuditLog:
         redactor: Callable[[Any], Any] | None = None,
         flag_on_redact: bool = True,
         policy: Policy | None = None,
+        max_entries: int | None = None,
     ) -> None:
         """``policy`` selects the detection posture (see :class:`~cendor.acttrace.Policy`): every
         auto-captured payload is scanned against the full detector registry and, per the policy,
@@ -352,7 +365,17 @@ class AuditLog:
         ``flag_on_redact`` (default ``True``): when the built-in path acts on sensitive data in an
         auto-captured entry, also append a ``policy_flag`` recording *what category* and *what
         action* — so "we removed / flagged PII" is itself in the tamper-evident chain, not silent.
-        Only fires with the built-in path (a custom ``redactor`` owns its own flagging)."""
+        Only fires with the built-in path (a custom ``redactor`` owns its own flagging).
+
+        ``max_entries`` bounds the **in-memory** ``entries`` ring for a long-running log: once it is
+        reached, the oldest in-memory entry is evicted (counted by :attr:`evicted_from_memory`) so
+        memory stays flat. The **file is the source of truth** — the hash chain lives in
+        :attr:`head` + the on-disk log, so ``verify()`` / ``export()`` still cover the *full* chain
+        even after eviction. Default ``None`` keeps every entry in memory (unbounded, unchanged).
+        Bound long-running logs *together with* ``path=`` — bounding without a file discards the
+        evicted entries entirely (a :class:`BoundedMemoryWithoutPathWarning` is raised)."""
+        if max_entries is not None and max_entries < 1:
+            raise ValueError(f"max_entries must be a positive int or None, got {max_entries!r}")
         self.system = system
         self.risk_tier = risk_tier
         self.path = Path(path) if path else None
@@ -363,7 +386,24 @@ class AuditLog:
         self._policy = policy or Policy.default()
         self._redactor = redactor or _redact  # _redact sentinel => built-in policy-driven path
         self._flag_on_redact = flag_on_redact
-        self.entries: list[AuditEntry] = []
+        if max_entries is not None and self.path is None:
+            warnings.warn(
+                "AuditLog(max_entries=…) without path=: evicted entries are lost because the file "
+                "is the source of truth. Pass path= to keep the full chain on disk.",
+                BoundedMemoryWithoutPathWarning,
+                stacklevel=2,
+            )
+        self._max_entries = max_entries
+        # deque(maxlen) when bounded (O(1) eviction of the oldest); a plain list otherwise so the
+        # default is byte-identical to previous behaviour. Chain integrity is independent of this —
+        # it lives in _head + the file, not in the retained window.
+        self.entries: deque[AuditEntry] | list[AuditEntry] = (
+            deque(maxlen=max_entries) if max_entries is not None else []
+        )
+        self._seq = (
+            0  # monotonic total appended — the entry seq, since len(entries) caps when bound
+        )
+        self._evicted_from_memory = 0
         self._head = GENESIS
         # RLock (not Lock): _append can re-enter itself via the auto-redaction flag() on the same
         # thread. Guards the hash-chain critical section (head + entries + file append) so
@@ -382,6 +422,14 @@ class AuditLog:
         ``verify(path, expected_head=log.head)`` catches trailing entries being dropped."""
         return self._head
 
+    @property
+    def evicted_from_memory(self) -> int:
+        """Entries evicted from the in-memory ``entries`` ring by ``max_entries`` (0 if unbounded).
+
+        They remain in the on-disk log (the source of truth), so ``verify()`` / ``export()`` still
+        cover them — this counts only what left *memory*, never what left the chain."""
+        return self._evicted_from_memory
+
     def __enter__(self) -> AuditLog:
         return self
 
@@ -392,7 +440,8 @@ class AuditLog:
 
     def _append(self, etype: str, payload: dict) -> AuditEntry:
         with self._lock:  # hash-chain step is a read-modify-write on _head/entries/file — atomic
-            seq = len(self.entries)
+            seq = self._seq  # monotonic; not len(entries), which caps once the memory ring is full
+            self._seq += 1
             ts = datetime.now(UTC).isoformat()
             safe = _jsonable(payload)
             auto_flags: list[tuple[str, str, str, list[str]]] = []
@@ -417,7 +466,11 @@ class AuditLog:
             if self._signing_key is not None:
                 sig = hmac.new(self._signing_key, h.encode("utf-8"), hashlib.sha256).hexdigest()
             entry = AuditEntry(seq, ts, etype, safe, self._head, h, sig)
-            self.entries.append(entry)
+            if self._max_entries is not None and len(self.entries) == self._max_entries:
+                self._evicted_from_memory += (
+                    1  # this append will drop the oldest — count it, loudly
+                )
+            self.entries.append(entry)  # deque(maxlen) evicts the oldest in O(1) when full
             self._head = h
             self._write_line(json.dumps(entry.__dict__, ensure_ascii=False) + "\n")
         for reason, action, severity, data in auto_flags:
@@ -537,11 +590,35 @@ class AuditLog:
 
     # ------------------------------------------------------------------ export
 
-    def _summary(self) -> dict:
+    def _entries_for_export(self) -> list[AuditEntry]:
+        """The full chain to export. Normally the in-memory ``entries``; but when ``max_entries``
+        has evicted some (``evicted_from_memory > 0``), re-read them from the file — the source of
+        truth — so a bounded log still exports **every** entry, not just the retained window. The
+        default (unbounded) path returns ``list(self.entries)`` unchanged, so export stays
+        byte-identical to previous behaviour."""
+        if self._evicted_from_memory == 0 or self.path is None:
+            return list(self.entries)
+        with self._lock:  # flush any buffered tail so the file is current before we re-read it
+            if self._fh is not None:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+        entries: list[AuditEntry] = []
+        with self.path.open(encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if "_meta" in row:  # a header from a previous export in the same file — skip
+                    continue
+                entries.append(AuditEntry(**row))
+        return entries
+
+    def _summary(self, entries: list[AuditEntry]) -> dict:
         """Substance counts for the evidence-pack header: how many decisions, calls, oversight
         events and flags (broken down by action/severity) — what a reviewer scans first."""
-        types = Counter(e.type for e in self.entries)
-        flags = [e for e in self.entries if e.type == "policy_flag"]
+        types = Counter(e.type for e in entries)
+        flags = [e for e in entries if e.type == "policy_flag"]
         return {
             "decisions": types.get("decision", 0),
             "llm_calls": types.get("llm_call", 0),
@@ -563,8 +640,9 @@ class AuditLog:
         if framework and framework not in _CONTROLS:
             raise ValueError(f"unknown framework {framework!r}; available: {frameworks()}")
         controls = _CONTROLS.get(framework or "", {})
+        entries = self._entries_for_export()  # full chain (from the file if memory was bounded)
         covered = sorted(
-            {c for e in self.entries for c in _controls_for_entry(e, framework or "", controls)}
+            {c for e in entries for c in _controls_for_entry(e, framework or "", controls)}
         )
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -574,9 +652,9 @@ class AuditLog:
                 "risk_tier": self.risk_tier,
                 "framework": framework,
                 "controls_covered": covered,
-                "summary": self._summary(),
+                "summary": self._summary(entries),
                 "head_hash": self._head,
-                "entries": len(self.entries),
+                "entries": len(entries),
                 "disclaimer": "Evidence to support compliance — not legal advice.",
             }
             if self._signing_key is not None:
@@ -584,7 +662,7 @@ class AuditLog:
                 # head_hash/entries) is caught by verify(key=...). docs/acttrace.md §5.
                 meta_body["sig"] = _meta_signature(self._signing_key, meta_body)
             fh.write(json.dumps({"_meta": meta_body}, ensure_ascii=False) + "\n")
-            for entry in self.entries:
+            for entry in entries:
                 row = dict(entry.__dict__)
                 if framework:
                     row["controls"] = _controls_for_entry(entry, framework, controls)

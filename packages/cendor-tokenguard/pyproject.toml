@@ -1,6 +1,6 @@
 [project]
 name = "cendor-tokenguard"
-version = "1.0.0"
+version = "1.1.0"
 description = "Budget: pre-flight cost caps, spend attribution, and circuit-breakers for LLM calls."
 requires-python = ">=3.11"
 license = "Apache-2.0"

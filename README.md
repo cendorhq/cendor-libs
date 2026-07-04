@@ -247,7 +247,8 @@ ok, detail = verify("evidence.jsonl", key="k")   # tamper-evident, verified offl
 
 > Kept tiny on purpose — it's the blast radius for every other tool.
 
-- **`instrument()`** — wrap any client once: **OpenAI** (Chat Completions **and** the Responses API) **· Anthropic · AWS Bedrock · Google Gemini** (the `google-genai` SDK **and** legacy `google-generativeai`) **· Ollama**, detected by *shape* (so new models work the day they ship). Sync, async, **and streaming**; idempotent and additive. `instrument_tool()` does the same for your tools (emits `ToolCall`s).
+- **`instrument()`** — wrap any client once: **OpenAI** (Chat Completions **and** the Responses API) **· Anthropic · AWS Bedrock · Google Gemini** (the `google-genai` SDK **and** legacy `google-generativeai`) **· Ollama**, detected by *shape* (so new models work the day they ship). Sync, async, **and streaming** (the streamed value is both an iterator **and** a context manager, matching the SDK — so `with client…create(stream=True) as s:` works, e.g. under LangChain); idempotent and additive. `instrument_tool()` does the same for your tools (emits `ToolCall`s).
+- **LangChain / LangGraph** — `cendor.core.langchain.CendorCallbackHandler` (optional `cendor-core[langchain]`) records usage + **reasoning** + tools + a **run-correlated `trace_id`** from the framework's callbacks — the SDK-aligned way to observe a framework, no client touch. Recording-only; enforcement stays on the `instrument()` seam. (`core.trace("run-id")` gives direct-SDK agents the same correlation.)
 - **Event bus** — `subscribe` / `emit`; **thread-safe within a process**; one failing subscriber never starves another (the first exception re-raises after all run).
 - **Interceptor seam** — `add_interceptor` + `Reroute` / `MISS` powers replay (cassette) and reroute/block (tokenguard) **without a second patch point**.
 - **Token counting, three tiers** — exact (with `[tiktoken]`), BPE-estimate (o200k for Claude/Gemini), or an offline heuristic; `tokens.method(model)` reports which is active; `tokens.register()` plugs in a precise counter.
@@ -353,7 +354,9 @@ Knowing exactly where the edges are is part of the design:
   reopen-per-entry). One caveat: `tokenguard` budgets/tags are `ContextVar`-based — `asyncio` tasks
   inherit them, but a plain `threading.Thread` does not (use `contextvars.copy_context()`). State is
   module-global — ideal for scripts, tests, and a worker process; a multi-*process* deployment
-  externalizes durable spend via a sink (a deliberate v2 boundary).
+  externalizes durable spend via a sink (a deliberate v2 boundary). For long runs, both in-memory
+  buffers are boundable — `tokenguard`'s spend cap and `acttrace`'s `max_entries` (the file stays the
+  full, verifiable chain) — and `tokenguard.sinks.QueueSink` moves durable sink I/O off the hot path.
 - **`tokenguard` enforcement is projection-based.** Pre-flight `block` / `downgrade` use offline token
   estimates plus an output reserve, so they're approximate; post-flight `raise` is exact but stops the
   **next** call in a loop, not the one that breached — and for a **streamed** call it fires when the

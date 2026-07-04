@@ -2,10 +2,11 @@
 
 docs/core.md §6. Idempotent (re-wrapping is a no-op) and additive (coexists with other
 instrumentation like OpenLLMetry). Supports sync and async, and **streaming** responses
-(``stream=True``): the chunk iterator is passed through unchanged while usage is accumulated, so
+(``stream=True``): the streamed value is passed through unchanged while usage is accumulated, so
 the ``LLMCall`` is emitted once with usage/cost/latency when the stream completes — not the
-unconsumed iterator. Uses duck typing — the provider SDKs are never imported here, so they stay
-optional.
+unconsumed iterator. That value is *both* an iterator and a context manager (matching the SDK), so
+``for chunk in stream`` and ``with client…create(stream=True) as stream:`` both work. Uses duck
+typing — the provider SDKs are never imported here, so they stay optional.
 
 Two cooperation hooks (used by ``cassette``; harmless otherwise):
   * **record** — the raw provider response is attached at ``call.metadata["response"]`` before
@@ -22,7 +23,9 @@ import inspect
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, TypeVar
@@ -60,6 +63,37 @@ class Reroute:
 _interceptors: list[Callable[[Any], Any]] = []
 _interceptors_lock = threading.Lock()
 _install_lock = threading.Lock()  # serialize wrapping: concurrent instrument() must not double-wrap
+
+#: Ambient trace id stamped onto every ``LLMCall``/``ToolCall`` emitted from the current context.
+#: Default ``""`` ⇒ no correlation (unchanged behaviour). Set it with :func:`trace` to group a
+#: unit of work — e.g. a direct-SDK agent run — the same way the LangChain callback path derives a
+#: ``trace_id`` from ``parent_run_id``. Correlation is a *hook*, not an orchestrator (see the plan's
+#: non-goals): cendor stamps the id you set; it never invents a run graph.
+_trace_id: ContextVar[str] = ContextVar("cendor_trace_id", default="")
+
+
+def current_trace_id() -> str:
+    """The ambient ``trace_id`` for the current context (``""`` when unset)."""
+    return _trace_id.get()
+
+
+@contextmanager
+def trace(trace_id: str) -> Iterator[None]:
+    """Stamp ``trace_id`` onto every ``LLMCall``/``ToolCall`` emitted inside the block.
+
+    Gives direct-SDK (non-framework) agents the same run correlation the LangChain callback path
+    gets for free. Nests and works across sync/async calls (it's a ``contextvars`` binding).
+
+    ```python
+    with trace("run-42"):
+        client.chat.completions.create(...)   # emitted LLMCall.trace_id == "run-42"
+    ```
+    """
+    token = _trace_id.set(str(trace_id))
+    try:
+        yield
+    finally:
+        _trace_id.reset(token)
 
 
 def add_interceptor(fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
@@ -262,6 +296,7 @@ def _pre(
         provider=_public_provider(provider),  # internal "openai_responses" surfaces as "openai"
         model=model,
         messages=messages,
+        trace_id=_trace_id.get(),  # ambient correlation hook (default "" — unchanged)
         ts=datetime.now(UTC),
     )
     call.metadata["request_kwargs"] = kwargs  # so pre-flight interceptors can read e.g. max_tokens
@@ -377,73 +412,212 @@ def _ensure_stream_usage_options(provider: str, kwargs: dict) -> None:
 # --------------------------------------------------------------------------- streaming
 
 
-def _proxy_stream(call: LLMCall, stream: Any, provider: str, start: float) -> Any:
-    """Pass a sync streaming response through unchanged, collecting chunks; emit once on completion.
+class _ProxyStream:
+    """A sync streaming response wrapper that is *both* an iterator and a context manager.
 
-    The caller iterates exactly the provider's chunks. When the stream is exhausted (or closed
-    early), the ``LLMCall`` — now with usage, cost, and true end-to-end latency — is emitted once.
-    Without this, a streamed call returns an unconsumed iterator and emits no usable usage.
+    The provider SDK's streamed return value supports both ``for chunk in stream`` **and**
+    ``with client…create(stream=True) as stream:`` (the latter is how ``langchain_openai`` consumes
+    it). A bare generator only supports the former, so ``with`` raised ``TypeError: 'generator'
+    object does not support the context manager protocol`` — this wrapper restores the full surface:
+
+    * ``__iter__``/``__next__`` pass each provider chunk through unchanged, collecting it, and call
+      :func:`_finalize_stream` **once** on exhaustion (so usage/cost/latency emit exactly once).
+    * ``__enter__``/``__exit__`` run the underlying stream's own context manager when it has one and
+      guarantee a single finalize on block exit (idempotent with iteration-driven finalize).
+    * ``close()`` finalizes once and closes the underlying stream (releasing the HTTP connection).
+    * ``__getattr__`` forwards any other attribute (``.response``, …) to the underlying stream, so
+      the SDK's surface is preserved for callers that reach past iteration.
+
+    ``replay_chunks`` (used by :func:`_replay_stream`) makes finalize account for the full recorded
+    sequence regardless of how much the caller consumed, matching the previous replay behaviour.
     """
 
-    def gen() -> Any:
-        chunks: list[Any] = []
-        try:
-            for chunk in stream:
-                chunks.append(chunk)
-                yield chunk
-        finally:
-            _finalize_stream(call, chunks, provider, start)
+    def __init__(
+        self,
+        call: LLMCall,
+        stream: Any,
+        provider: str,
+        start: float,
+        replay_chunks: list | None = None,
+    ) -> None:
+        self._stream = stream
+        self._call = call
+        self._provider = provider
+        self._start = start
+        self._chunks: list[Any] = []
+        self._replay_chunks = replay_chunks
+        self._iter: Any = None
+        self._finalized = False
 
-    return gen()
+    def __iter__(self) -> _ProxyStream:
+        self._iter = iter(self._stream)
+        return self
+
+    def __next__(self) -> Any:
+        if self._iter is None:
+            self._iter = iter(self._stream)
+        try:
+            chunk = next(self._iter)
+        except StopIteration:
+            self._finalize()
+            raise
+        self._chunks.append(chunk)
+        return chunk
+
+    def __enter__(self) -> _ProxyStream:
+        enter = getattr(self._stream, "__enter__", None)
+        if enter is not None:
+            enter()  # run the SDK stream's own setup, but keep *this* wrapper as the bound value
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        try:
+            exit_ = getattr(self._stream, "__exit__", None)
+            if exit_ is not None:
+                exit_(*exc)
+            else:
+                self._close_underlying()
+        finally:
+            self._finalize()
+        return False
+
+    def close(self) -> None:
+        """Close the underlying stream and finalize once (mirrors the SDK stream's ``close``)."""
+        try:
+            self._close_underlying()
+        finally:
+            self._finalize()
+
+    def _close_underlying(self) -> None:
+        close = getattr(self._stream, "close", None)
+        if callable(close):
+            close()
+
+    def _finalize(self) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        chunks = self._replay_chunks if self._replay_chunks is not None else self._chunks
+        _finalize_stream(self._call, chunks, self._provider, self._start)
+
+    def __getattr__(self, name: str) -> Any:
+        # __getattr__ runs only on a normal-lookup miss; forward the rest of the SDK surface. The
+        # _stream guard avoids infinite recursion if _stream isn't set (e.g. during unpickling).
+        if name == "_stream":
+            raise AttributeError(name)
+        return getattr(self._stream, name)
+
+
+class _AProxyStream:
+    """Async counterpart of :class:`_ProxyStream`: an ``async for`` iterator **and** an ``async
+    with`` context manager, finalizing the ``LLMCall`` exactly once."""
+
+    def __init__(
+        self,
+        call: LLMCall,
+        stream: Any,
+        provider: str,
+        start: float,
+        replay_chunks: list | None = None,
+    ) -> None:
+        self._stream = stream
+        self._call = call
+        self._provider = provider
+        self._start = start
+        self._chunks: list[Any] = []
+        self._replay_chunks = replay_chunks
+        self._iter: Any = None
+        self._finalized = False
+
+    def __aiter__(self) -> _AProxyStream:
+        self._iter = self._stream.__aiter__()
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._iter is None:
+            self._iter = self._stream.__aiter__()
+        try:
+            chunk = await self._iter.__anext__()
+        except StopAsyncIteration:
+            self._finalize()
+            raise
+        self._chunks.append(chunk)
+        return chunk
+
+    async def __aenter__(self) -> _AProxyStream:
+        aenter = getattr(self._stream, "__aenter__", None)
+        if aenter is not None:
+            await aenter()  # SDK stream's own async setup; keep this wrapper as the bound value
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        try:
+            aexit = getattr(self._stream, "__aexit__", None)
+            if aexit is not None:
+                await aexit(*exc)
+            else:
+                await self._aclose_underlying()
+        finally:
+            self._finalize()
+        return False
+
+    async def aclose(self) -> None:
+        """Close the underlying async stream and finalize once."""
+        try:
+            await self._aclose_underlying()
+        finally:
+            self._finalize()
+
+    async def _aclose_underlying(self) -> None:
+        close = getattr(self._stream, "close", None) or getattr(self._stream, "aclose", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+
+    def _finalize(self) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        chunks = self._replay_chunks if self._replay_chunks is not None else self._chunks
+        _finalize_stream(self._call, chunks, self._provider, self._start)
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_stream":
+            raise AttributeError(name)
+        return getattr(self._stream, name)
+
+
+async def _aiter_list(items: list) -> Any:
+    """Yield a materialized list as an async iterator (for replaying a recorded async stream)."""
+    for item in items:
+        yield item
+
+
+def _proxy_stream(call: LLMCall, stream: Any, provider: str, start: float) -> Any:
+    """Wrap a sync streaming response: chunks pass through unchanged and usage is accumulated, so
+    the ``LLMCall`` is emitted once with usage/cost/latency on completion (or early close). The
+    result is both an iterator and a context manager — see :class:`_ProxyStream`."""
+    return _ProxyStream(call, stream, provider, start)
 
 
 def _aproxy_stream(call: LLMCall, stream: Any, provider: str, start: float) -> Any:
-    """Async counterpart of :func:`_proxy_stream` for ``async for`` streaming responses.
-
-    A plain function that *returns* an async generator (not ``async def``), so the wrapper can hand
-    the async iterator straight back to the caller's ``async for`` — not an un-awaited coroutine.
-    """
-
-    async def agen() -> Any:
-        chunks: list[Any] = []
-        try:
-            async for chunk in stream:
-                chunks.append(chunk)
-                yield chunk
-        finally:
-            _finalize_stream(call, chunks, provider, start)
-
-    return agen()
+    """Async counterpart of :func:`_proxy_stream` for ``async for`` / ``async with`` responses."""
+    return _AProxyStream(call, stream, provider, start)
 
 
 def _replay_stream(call: LLMCall, recorded: Any, provider: str, start: float) -> Any:
-    """Re-yield a recorded stream (a chunk sequence) so a replayed streamed call still iterates."""
+    """Re-yield a recorded stream (a chunk sequence) so a replayed streamed call still iterates —
+    and, like a live stream, supports ``with``. Finalize accounts for the full recording."""
     chunks = list(recorded) if recorded is not None else []
-
-    def gen() -> Any:
-        try:
-            yield from chunks
-        finally:
-            _finalize_stream(call, chunks, provider, start)
-
-    return gen()
+    return _ProxyStream(call, iter(chunks), provider, start, replay_chunks=chunks)
 
 
 def _areplay_stream(call: LLMCall, recorded: Any, provider: str, start: float) -> Any:
-    """Async counterpart of :func:`_replay_stream` (yields the recorded chunks for ``async for``).
-
-    Like :func:`_aproxy_stream`, a plain function returning an async generator.
-    """
+    """Async counterpart of :func:`_replay_stream` (``async for`` / ``async with`` over recorded
+    chunks)."""
     chunks = list(recorded) if recorded is not None else []
-
-    async def agen() -> Any:
-        try:
-            for chunk in chunks:
-                yield chunk
-        finally:
-            _finalize_stream(call, chunks, provider, start)
-
-    return agen()
+    return _AProxyStream(call, _aiter_list(chunks), provider, start, replay_chunks=chunks)
 
 
 def _finalize_stream(call: LLMCall, chunks: list, provider: str, start: float) -> None:
@@ -689,6 +863,7 @@ def _pre_tool(name: str, args: tuple, kwargs: dict) -> tuple[ToolCall, float]:
         id=uuid.uuid4().hex,
         name=name,
         arguments={"args": list(args), "kwargs": dict(kwargs)},
+        trace_id=_trace_id.get(),  # ambient correlation hook (default "" — unchanged)
         ts=datetime.now(UTC),
     )
     return tc, time.perf_counter()

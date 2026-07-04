@@ -10,6 +10,7 @@ Decimal as a string (never a float), and ``reasoning_tokens`` is a subset of ``o
 from __future__ import annotations
 
 import json
+import queue
 import sqlite3
 import threading
 from typing import Any
@@ -62,6 +63,85 @@ class SQLiteSink:
     def close(self) -> None:
         with self._lock:
             self.conn.close()
+
+
+#: Sentinel enqueued by :meth:`QueueSink.close` to tell the drain worker to stop.
+_SHUTDOWN: Any = object()
+
+
+class QueueSink:
+    """Wrap any :class:`~cendor.core.protocols.Sink` so its writes run on a background thread.
+
+    The bus fans out to subscribers **inline**, so a durable sink (SQLite/OTel/file) otherwise adds
+    its I/O latency to every model call. ``QueueSink`` decouples that: ``write()`` enqueues and
+    returns immediately, while a single daemon worker drains the queue into the inner sink **in
+    order** (FIFO — ordering is preserved). Wrap any existing sink:
+    ``use_sink(QueueSink(SQLiteSink(path)))``.
+
+    Durability is opt-in at shutdown: ``flush()`` blocks until the queue is empty and the inner sink
+    is flushed; ``close()`` flushes, stops the worker, and closes the inner sink. Call one of them
+    (or use the sink as a context manager) before exit so no tail records are lost — the worker is a
+    *daemon*, so an abrupt process exit without ``close()`` can drop still-queued rows. Both are the
+    optional :class:`~cendor.core.protocols.Sink` lifecycle methods.
+
+    ``max_queue`` bounds the queue; when it's full, ``write()`` **blocks** until the worker drains
+    room (back-pressure — a spend/audit row is never silently dropped). ``None`` (default) is
+    unbounded.
+    """
+
+    def __init__(self, inner: Any, *, max_queue: int | None = None) -> None:
+        self._inner = inner
+        self._queue: queue.Queue = queue.Queue(maxsize=max_queue or 0)
+        self._closed = False
+        self._lock = threading.Lock()
+        self._worker = threading.Thread(target=self._drain, name="cendor-queuesink", daemon=True)
+        self._worker.start()
+
+    def _drain(self) -> None:
+        while True:
+            item = self._queue.get()
+            try:
+                if item is _SHUTDOWN:
+                    return
+                self._inner.write(item)
+            except Exception:  # noqa: BLE001 - a bad row must not kill the worker (drop it, go on)
+                pass
+            finally:
+                self._queue.task_done()
+
+    def write(self, entry: Any) -> None:
+        """Enqueue a record for the worker (returns at once; blocks only when the queue is full)."""
+        if self._closed:
+            raise RuntimeError("QueueSink.write() after close()")
+        self._queue.put(entry)
+
+    def flush(self) -> None:
+        """Block until every queued record is written and the inner sink is flushed."""
+        self._queue.join()
+        inner_flush = getattr(self._inner, "flush", None)
+        if callable(inner_flush):
+            inner_flush()
+
+    def close(self) -> None:
+        """Drain the queue, stop the worker, and flush + close the inner sink (idempotent)."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._queue.put(
+            _SHUTDOWN
+        )  # after all enqueued rows (FIFO) — worker drains them, then exits
+        self._worker.join()
+        for name in ("flush", "close"):  # flush then release the inner sink's resources
+            fn = getattr(self._inner, name, None)
+            if callable(fn):
+                fn()
+
+    def __enter__(self) -> QueueSink:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
 
 class OTelSink:

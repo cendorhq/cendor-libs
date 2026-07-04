@@ -30,6 +30,12 @@ dev = [
   "hypothesis>=6",
   "ruff>=0.6",
   "mypy>=1.10",
+  # Integration-test deps: exercise the real LangChain/LangGraph stack with HTTP mocked by respx
+  # (no network, no keys). The tests importorskip these, so a plain install without them still runs.
+  "respx>=0.21",
+  "langchain-core>=0.3",
+  "langchain-openai>=0.2",
+  "langgraph>=0.2",
   "cendor-core",
   "cendor-tokenguard",
   "cendor-contextkit",

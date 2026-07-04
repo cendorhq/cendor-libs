@@ -31,7 +31,7 @@ for row in report(group_by=["feature", "user_id"]):       # where did the money 
 - **Cost attribution, free** — `track(feature=…, user_id=…)` tags ambient spend via `contextvars` (sync + async); `report(group_by=[…])` shows where the money went, reasoning tokens included.
 - **Cost as a test assertion** — `report().assert_under(usd=0.05, feature="search")`.
 - **Pre-flight projection** — `estimate(model, messages)` prices a call *without making it*.
-- **Durable + bounded** — pluggable `use_sink(tokenguard.sinks.SQLiteSink / OTelSink)`; FIFO-bounded in-memory buffer (`configure(max_records=…)`, `dropped()`).
+- **Durable + bounded** — pluggable `use_sink(tokenguard.sinks.SQLiteSink / OTelSink)`; FIFO-bounded in-memory buffer (`configure(max_records=…)`, `dropped()`). For long runs, wrap a durable sink in `sinks.QueueSink(SQLiteSink(path))` so its I/O runs on a background thread and **adds no per-call latency** — `flush()`/`close()` guarantee durability at shutdown.
 - **No silent USD blind spots** — a call whose model isn't in the price table records `$0`, so a **USD** cap can't bite. tokenguard warns once per model (`UnpricedModelWarning`) and counts these in `unpriced_calls()` / `report()`'s `unpriced_calls`; `configure(on_unpriced="raise")` makes `on_exceed="block"` reject them. A **token** cap is unaffected — tokens are counted regardless of price.
 - **Thread-safe, with one caveat** — the spend buffer and `SQLiteSink` are lock-guarded for concurrent emits, but budgets/tags are `ContextVar`-based: `asyncio` tasks inherit them, a plain `threading.Thread` does **not** (carry them with `contextvars.copy_context()`).
 

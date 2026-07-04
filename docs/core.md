@@ -180,6 +180,16 @@ The `protocols` are `typing.Protocol`s — a library satisfies one by *shape*, n
 class. That's how `squeeze` is a `Compressor` for `contextkit` without either importing the
 other.
 
+**`Sink` lifecycle (optional).** `write(entry)` is the only required method — `isinstance(obj,
+Sink)` matches any write-only sink. A sink **may** also implement two optional lifecycle methods,
+which callers invoke via `hasattr`/`getattr` guards: `flush()` (block until buffered records are
+durably written) and `close()` (flush, then release resources). These are additive — write-only
+sinks stay valid. [`tokenguard.sinks.QueueSink`](tokenguard.md#queuesink--low-latency-durable-logging)
+implements both to move durable I/O **off the model call's hot path**: the bus runs subscribers
+inline, so wrapping a SQLite/OTel/file sink in a `QueueSink` keeps its I/O latency out of every
+call. `QueueSink(SQLiteSink(path))` — enqueue-and-return, drain on a background thread in order,
+`flush()`/`close()` for durability at shutdown.
+
 ## How it works
 
 ```mermaid
@@ -206,13 +216,56 @@ graph LR
 ```
 
 <a id="streaming"></a>
-**Streaming.** With `stream=True`, the chunk iterator is passed through to your caller
+**Streaming.** With `stream=True`, the streamed value is passed through to your caller
 unchanged while `instrument()` accumulates usage in the background, emitting the `LLMCall`
 **once, when the stream completes** (or is closed early) — with true end-to-end latency. Usage
 is read from the provider's own stream reporting where present; when a provider streams no
 usage, it falls back to an offline estimate flagged `metadata["usage_estimated"] = True`.
 Streamed calls carry `metadata["streamed"] = True`, and the collected chunks are attached at
 `metadata["response"]` so `cassette` can record them.
+
+The streamed value is **both an iterator and a context manager** — exactly like the provider
+SDK's own stream object — so both usage forms work and finalize (emit) exactly once:
+
+```python
+stream = client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True)
+for chunk in stream:            # iterate…
+    ...
+
+with client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True) as stream:
+    for chunk in stream:        # …or use it as a context manager (what LangChain does)
+        ...
+# async: `async for chunk in stream` and `async with … as stream:` likewise
+```
+
+This context-manager surface is required by frameworks such as `langchain_openai`, which consume
+a streamed completion via `with client…create(stream=True) as response:`. Unknown attributes
+(`.response`, `.close()`, …) are forwarded to the underlying SDK stream, and closing early
+(`stream.close()` / block exit) finalizes the `LLMCall` once. Replayed streams (via `cassette`)
+carry the same iterator + context-manager surface.
+
+<a id="trace-id-correlation"></a>
+**Run correlation (`trace()`).** Every `LLMCall`/`ToolCall` carries a `trace_id` (default `""`).
+Set an ambient one with `with core.trace("run-id"):` to group a unit of work — a direct-SDK agent
+loop, a request — so its calls share an id downstream (`acttrace`, your own subscribers). It's a
+`contextvars` binding (nests, works across sync/async); `core.current_trace_id()` reads it.
+
+```python
+from cendor.core import trace
+with trace("session-42"):
+    client.chat.completions.create(...)      # emitted LLMCall.trace_id == "session-42"
+```
+
+This is a **hook, not an orchestrator** (see [architecture.md](architecture.md)): cendor stamps the
+id you set, it never invents a run graph. The LangChain/LangGraph callback path
+([providers.md](providers.md#frameworks-langchain--langgraph)) derives the same `trace_id`
+automatically from the framework's run tree.
+
+**Frameworks (LangChain / LangGraph).** For frameworks, the SDK-aligned integration point is the
+framework's **callback system**, not client wrapping. `cendor.core.langchain.CendorCallbackHandler`
+(optional extra `cendor-core[langchain]`) records usage + reasoning + tools + run-correlated
+`trace_id` with no client touch — **recording-only**. See
+[providers.md → Frameworks](providers.md#frameworks-langchain--langgraph).
 
 ## Plugs into the stack
 

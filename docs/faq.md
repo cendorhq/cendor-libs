@@ -77,6 +77,39 @@ snapshot (and it falls back to the bundled one offline).
 ### Is it tied to LangChain / an agent framework?
 No — it's framework-agnostic. It wraps *around and inside* whatever loop you already have.
 
+### Does Cendor work with LangChain / LangGraph?
+Yes — via the framework's **callback system**, which is the SDK-aligned integration point (not
+inner-client wrapping: LangChain calls the client through `with_raw_response`, so instrumenting it
+loses usage). Install `cendor-core[langchain]` and attach `CendorCallbackHandler`:
+
+```python
+from cendor.core.langchain import CendorCallbackHandler
+llm = ChatOpenAI(model="gpt-4o", callbacks=[CendorCallbackHandler()])
+# LangGraph: agent.invoke(..., config={"callbacks": [CendorCallbackHandler()]})
+```
+
+It records usage + **reasoning** + cost + tool calls, and stamps a root-run `trace_id` so every
+call of one `agent.invoke` is correlated. It is **recording-only** — pre-flight enforcement
+(`tokenguard` `block`, `acttrace` `guard()`) needs the direct provider SDK + `instrument()`, since
+the callback path never touches the client. See
+[providers.md → Frameworks](providers.md#frameworks-langchain--langgraph).
+
+### Does it work for multi-agent / multi-process systems?
+Multi-agent within a process: yes — the LangChain callback path correlates each `agent.invoke`
+under its own root-run `trace_id`, and for direct-SDK agents `core.trace("run-id")` sets an ambient
+`trace_id`. Multi-*process*: state is process-local by design (no server — CLAUDE.md rule 4), so
+correlate by `trace_id` and aggregate durably via a `tokenguard` sink into your own store. cendor
+provides a correlation *hook*, not a distributed orchestrator (see [architecture.md](architecture.md)).
+
+### Will a long-running agent grow memory without bound?
+No, if you bound the in-memory buffers. `tokenguard` FIFO-caps its spend buffer
+(`configure(max_records=…)`, default 100k) and `acttrace` bounds its in-memory entry ring with
+`AuditLog(path="audit.jsonl", max_entries=N)` — the **file stays the complete, verifiable chain**
+while memory holds only the recent window (`evicted_from_memory` counts what left). For durable
+history without per-call latency, wrap a sink in `tokenguard.sinks.QueueSink` (background-thread
+I/O). See [acttrace → Long-running logs](acttrace.md#long-running-logs-max_entries) and
+[tokenguard → QueueSink](tokenguard.md#queuesink--low-latency-durable-logging).
+
 ### Can I install just one library?
 Yes. Each tool works standalone and pulls `cendor-core` transitively. Use `pip install cendor` only if
 you want the whole stack.
