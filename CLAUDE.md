@@ -14,10 +14,11 @@ Pipeline: `contextkit` (assemble) → `squeeze` (compress) → `tokenguard` (bud
 4. **Local-first, no servers.** No library may require an account, network, or running infrastructure. Cloud and OpenTelemetry export are always optional.
 5. **Don't ship empty packages.** A package reaches PyPI only with tests + a README + a real `v0`.
 6. **`acttrace` produces *evidence*, not a guarantee.** Never claim "EU AI Act compliant" — it provides evidence to *support* compliance.
+7. **Agent orchestration lives in `cendorhq/cendor-sdk`, not here.** Never add an agent loop, handoff/supervisor, tool-schema generation, or provider response-normalization to any library in this repo. SDK needs land in `core` only as *generic* library features (e.g. a provider adapter for `instrument()`, like the HuggingFace `InferenceClient` detection) — never as orchestration.
 
 ## Repo layout
 ```
-cendor/                       # repo root (cendorhq/Cendor)
+cendor-libs/                  # repo root (cendorhq/cendor-libs)
 ├── CLAUDE.md  SKILLS.md  README.md  LICENSE   # MEMORY.md is a local-only, gitignored working file
 ├── pyproject.toml                 # uv workspace root
 ├── .github/workflows/             # ci.yml, release.yml
@@ -26,7 +27,8 @@ cendor/                       # repo root (cendorhq/Cendor)
 └── packages/
     ├── cendor-core/          # src/cendor/core/   (NO src/cendor/__init__.py)
     ├── cendor-tokenguard/    # src/cendor/tokenguard/
-    └── cendor/               # umbrella meta-package: pyproject only, no src/
+    ├── cendor-libs/          # umbrella meta-package (pins the six): pyproject only, no src/
+    └── cendor/               # brand alias (depends on cendor-libs): pyproject only, no src/
 ```
 `contextkit`, `squeeze`, `cassette`, and `acttrace` each live under `packages/cendor-<tool>/` alongside these; add any future package with the `new-package` skill.
 
@@ -60,5 +62,6 @@ Typed public API · tests that hit no network · README with a one-line killer m
 - Don't introduce tool→tool dependencies (rule 2).
 - Don't add web servers, databases, or hosted services to a library.
 - Don't expand `core`'s public API casually.
+- Don't add agent-orchestration logic (loops, handoff, provider normalization) here — that's `cendor-sdk` (rule 7).
 - Don't claim regulatory compliance anywhere.
 - Don't add a `Co-Authored-By` trailer to git commits.

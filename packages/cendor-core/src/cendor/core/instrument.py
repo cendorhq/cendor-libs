@@ -67,8 +67,8 @@ _install_lock = threading.Lock()  # serialize wrapping: concurrent instrument() 
 #: Ambient trace id stamped onto every ``LLMCall``/``ToolCall`` emitted from the current context.
 #: Default ``""`` ⇒ no correlation (unchanged behaviour). Set it with :func:`trace` to group a
 #: unit of work — e.g. a direct-SDK agent run — the same way the LangChain callback path derives a
-#: ``trace_id`` from ``parent_run_id``. Correlation is a *hook*, not an orchestrator (see the plan's
-#: non-goals): cendor stamps the id you set; it never invents a run graph.
+#: ``trace_id`` from ``parent_run_id``. Correlation is a *hook*, not an orchestrator: cendor stamps
+#: the id you set; it never invents a run graph, schedules turns, or drives an agent loop.
 _trace_id: ContextVar[str] = ContextVar("cendor_trace_id", default="")
 
 
