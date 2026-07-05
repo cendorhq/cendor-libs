@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.3.1] — 2026-07-05
+### Changed
+- Repository moved to `github.com/cendorhq/cendor-libs`; `[project.urls]` and the offline price-snapshot refresh URL (`prices.SNAPSHOT_URL`) now point at the new location. No API or behavior change.
+
 ## [1.3.0] — 2026-07-05
 ### Added
 - **Hugging Face detection in `instrument()`** — a `huggingface_hub.InferenceClient` is now recognized by its `chat_completion` method and wrapped, emitting an `LLMCall` attributed to `huggingface` with usage/cost captured. The response is OpenAI-shaped, so usage extraction and streamed-text handling reuse the OpenAI path. Purely additive and backward-compatible: clients without a `chat_completion` method are unaffected, and the check runs *before* the OpenAI-compat detection so an `InferenceClient` that also exposes `chat.completions.create` is still attributed to `huggingface` (not `openai`). Enables `cendor-sdk`'s HuggingFace provider to capture governed usage/cost/audit.
