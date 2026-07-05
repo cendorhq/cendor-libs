@@ -63,8 +63,8 @@ packaging / namespace / metadata breakage a user would hit. It's the `smoke` job
 
 ```bash
 for p in cendor-core cendor-tokenguard cendor-contextkit \
-         cendor-squeeze cendor-cassette cendor-acttrace cendor; do uv build --package "$p"; done
-python -m venv .smoke && .smoke/bin/pip install --no-index --find-links dist cendor
+         cendor-squeeze cendor-cassette cendor-acttrace cendor-libs cendor; do uv build --package "$p"; done
+python -m venv .smoke && .smoke/bin/pip install --no-index --find-links dist cendor-libs
 .smoke/bin/python -c "import cendor.core, cendor.tokenguard, cendor.contextkit, cendor.squeeze, cendor.cassette, cendor.acttrace; print('ok')"
 ```
 

@@ -2,13 +2,14 @@ name: Release
 on:
   push:
     tags:
-      - '*-v*.*.*'        # e.g. tokenguard-v0.1.0, core-v0.1.0, cendor-v0.1.0
+      - '*-v*.*.*'        # e.g. tokenguard-v0.1.0, core-v0.1.0, libs-v1.0.0 (umbrella), cendor-v1.1.0 (alias)
 
 # Each package publishes in its OWN GitHub environment, because PyPI requires every
 # (repository, workflow, environment) trusted-publisher binding to be unique — so one repo +
 # one workflow publishing many projects needs a distinct environment per project. The PyPI
 # trusted-publisher "Environment name" for each project must match the name derived below
-# (the tag's tool segment): core, tokenguard, contextkit, squeeze, cassette, acttrace, cendor.
+# (the tag's tool segment): core, tokenguard, contextkit, squeeze, cassette, acttrace, libs
+# (the cendor-libs umbrella), and cendor (the brand alias).
 
 jobs:
   setup:
@@ -21,8 +22,10 @@ jobs:
     steps:
       - id: derive
         run: |
-          TOOL="${GITHUB_REF_NAME%-v*}"             # core-v0.1.0 -> core ; cendor-v0.1.0 -> cendor
+          TOOL="${GITHUB_REF_NAME%-v*}"             # core-v0.1.0 -> core ; libs-v1.0.0 -> libs ; cendor-v1.1.0 -> cendor
           VERSION="${GITHUB_REF_NAME##*-v}"         # core-v0.1.0 -> 0.1.0
+          # `cendor` is the brand alias (packages/cendor). Everything else maps to `cendor-<tool>`,
+          # which also yields the umbrella: libs -> cendor-libs (packages/cendor-libs).
           if [ "$TOOL" = "cendor" ]; then PKG="cendor"; else PKG="cendor-$TOOL"; fi
           echo "pkg=$PKG"         >> "$GITHUB_OUTPUT"
           echo "env=$TOOL"        >> "$GITHUB_OUTPUT"   # environment == tool segment (unique per project)

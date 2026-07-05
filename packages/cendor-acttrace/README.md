@@ -75,4 +75,4 @@ add_interceptor(guard)   # the blocked call never reaches the bus — flag() is 
 > Produces **evidence to support** compliance — not legal advice, not a guarantee. Control
 > mappings are starting templates for your compliance team.
 
-See [`docs/acttrace.md`](https://github.com/cendorhq/Cendor/blob/main/docs/acttrace.md) · [CHANGELOG](https://github.com/cendorhq/Cendor/blob/main/packages/cendor-acttrace/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/Cendor](https://github.com/cendorhq/Cendor). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*
+See [`docs/acttrace.md`](https://github.com/cendorhq/cendor-libs/blob/main/docs/acttrace.md) · [CHANGELOG](https://github.com/cendorhq/cendor-libs/blob/main/packages/cendor-acttrace/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/cendor-libs](https://github.com/cendorhq/cendor-libs). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*

@@ -3,7 +3,7 @@
 ## 1. Install
 
 ```bash
-pip install cendor              # the whole stack (umbrella)
+pip install cendor-libs         # the whole stack (umbrella; `cendor` is an alias for it)
 # — or pick à la carte; each pulls cendor-core transitively —
 pip install cendor-tokenguard cendor-contextkit
 ```

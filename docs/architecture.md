@@ -181,7 +181,7 @@ by `trace_id`; resuming the agent is the orchestrator's job, not cendor's.
 ## Installing & versioning
 
 Install only what you need (`pip install cendor-tokenguard`) or the whole stack
-(`pip install cendor`). Each tool depends on `cendor-core` and is versioned independently (SemVer).
+(`pip install cendor-libs`; the `cendor` alias also works). Each tool depends on `cendor-core` and is versioned independently (SemVer).
 `core` is kept small and stable — consumers pin `cendor-core>=1.0,<2.0`, so minor releases stay
 additive and never break the tools above it; breaking changes land only in a new major.
 

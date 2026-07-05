@@ -33,4 +33,4 @@ preview = ctx.whatif(budget_tokens=4000)   # same inputs, tighter budget, no com
 
 **Inbound** — call it *before* the model call; `report()` flows onto core's bus, so `acttrace` records what the model actually saw.
 
-See [`docs/contextkit.md`](https://github.com/cendorhq/Cendor/blob/main/docs/contextkit.md) · [CHANGELOG](https://github.com/cendorhq/Cendor/blob/main/packages/cendor-contextkit/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/Cendor](https://github.com/cendorhq/Cendor). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*
+See [`docs/contextkit.md`](https://github.com/cendorhq/cendor-libs/blob/main/docs/contextkit.md) · [CHANGELOG](https://github.com/cendorhq/cendor-libs/blob/main/packages/cendor-contextkit/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/cendor-libs](https://github.com/cendorhq/cendor-libs). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*

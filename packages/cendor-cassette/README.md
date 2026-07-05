@@ -64,4 +64,4 @@ byte-stable drift: record/replay at `temperature=0`.
 
 **Wrap-around, test-time only** — records via core's bus, replays via a core interceptor; no second patch, no network.
 
-See [`docs/cassette.md`](https://github.com/cendorhq/Cendor/blob/main/docs/cassette.md) · [CHANGELOG](https://github.com/cendorhq/Cendor/blob/main/packages/cendor-cassette/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/Cendor](https://github.com/cendorhq/Cendor). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*
+See [`docs/cassette.md`](https://github.com/cendorhq/cendor-libs/blob/main/docs/cassette.md) · [CHANGELOG](https://github.com/cendorhq/cendor-libs/blob/main/packages/cendor-cassette/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/cendor-libs](https://github.com/cendorhq/cendor-libs). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*

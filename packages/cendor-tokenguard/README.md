@@ -26,7 +26,7 @@ for row in report(group_by=["feature", "user_id"]):       # where did the money 
 ## Highlights
 
 - **Pre-flight circuit breaker** — `on_exceed="block"` raises **before** an over-budget call runs; `"downgrade"` reroutes to a cheaper model pre-flight; `"truncate"` degrades; `"raise"` stops a runaway loop; or call your own function.
-- **Reasoning models, handled** — you can't predict a thinking model's hidden reasoning pre-flight, so `on_exceed="clamp"` injects the provider's own token ceiling (`max_completion_tokens`/`max_tokens`) sized to the remaining budget — the call is capped *server-side* instead of overspending. `report()` breaks out `reasoning_tokens`, and the cumulative gate enforces on exact usage (which already includes reasoning). See [`docs/tokenguard.md`](https://github.com/cendorhq/Cendor/blob/main/docs/tokenguard.md) → Reasoning models.
+- **Reasoning models, handled** — you can't predict a thinking model's hidden reasoning pre-flight, so `on_exceed="clamp"` injects the provider's own token ceiling (`max_completion_tokens`/`max_tokens`) sized to the remaining budget — the call is capped *server-side* instead of overspending. `report()` breaks out `reasoning_tokens`, and the cumulative gate enforces on exact usage (which already includes reasoning). See [`docs/tokenguard.md`](https://github.com/cendorhq/cendor-libs/blob/main/docs/tokenguard.md) → Reasoning models.
 - **Decorator *and* context manager** — budgets **nest** (an inner downgrade never masks an outer hard cap); config is validated at creation (a typo'd `on_exceed` or a map-less `downgrade` is a `ValueError`, never a silent no-op).
 - **Cost attribution, free** — `track(feature=…, user_id=…)` tags ambient spend via `contextvars` (sync + async); `report(group_by=[…])` shows where the money went, reasoning tokens included.
 - **Cost as a test assertion** — `report().assert_under(usd=0.05, feature="search")`.
@@ -39,4 +39,4 @@ for row in report(group_by=["feature", "user_id"]):       # where did the money 
 
 **Wrap-around** — it rides the call you already make. Offline and standalone — bundled prices, no account.
 
-See [`docs/tokenguard.md`](https://github.com/cendorhq/Cendor/blob/main/docs/tokenguard.md) · [CHANGELOG](https://github.com/cendorhq/Cendor/blob/main/packages/cendor-tokenguard/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/Cendor](https://github.com/cendorhq/Cendor). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*
+See [`docs/tokenguard.md`](https://github.com/cendorhq/cendor-libs/blob/main/docs/tokenguard.md) · [CHANGELOG](https://github.com/cendorhq/cendor-libs/blob/main/packages/cendor-tokenguard/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/cendor-libs](https://github.com/cendorhq/cendor-libs). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*

@@ -18,6 +18,9 @@ cendor-contextkit = { workspace = true }
 cendor-squeeze = { workspace = true }
 cendor-cassette = { workspace = true }
 cendor-acttrace = { workspace = true }
+# The umbrella `cendor-libs` (pins the six) and the brand alias `cendor` (depends on cendor-libs)
+# are also workspace members; the alias's dep on cendor-libs must resolve to the workspace copy.
+cendor-libs = { workspace = true }
 
 # Workspace members are listed here so a plain `uv sync` installs them (editable) into the
 # dev environment, making `uv run pytest` work across all packages. They resolve via

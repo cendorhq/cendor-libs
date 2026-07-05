@@ -9,8 +9,8 @@ readme = "README.md"
 dependencies = ["cendor-core>=1.0,<2.0"]
 
 [project.urls]
-Homepage = "https://github.com/cendorhq/Cendor"
-Repository = "https://github.com/cendorhq/Cendor"
+Homepage = "https://github.com/cendorhq/cendor-libs"
+Repository = "https://github.com/cendorhq/cendor-libs"
 
 [project.optional-dependencies]
 embeddings = ["model2vec>=0.3"]   # optional: free, offline local embeddings for semantic_match (numpy-only, no torch)

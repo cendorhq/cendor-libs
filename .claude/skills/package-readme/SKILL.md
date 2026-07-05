@@ -12,6 +12,6 @@ Keep it tight. Structure:
 4. `pip install cendor-<tool>`
 5. A 6–12 line copy-paste example that actually runs.
 6. A short "How it plugs into your agent" note if relevant (inbound vs wrap-around — see docs/architecture.md §4).
-7. Footer: *"Part of the Cendor stack — github.com/cendorhq/Cendor. Powered by PowerAI Labs."*.
+7. Footer: *"Part of the Cendor stack — github.com/cendorhq/cendor-libs. Powered by PowerAI Labs."*.
 
 Lead with the metric. Show, don't tell. No marketing fluff, no feature dump.

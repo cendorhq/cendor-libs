@@ -38,6 +38,6 @@ client = instrument(openai_or_anthropic_client)   # idempotent, additive · sync
 
 Install `cendor-core[tiktoken]` for **exact** OpenAI counts (heuristic fallback otherwise), `[otel]` to emit spans, or `[langchain]` for the LangChain/LangGraph callback handler. Provider SDKs are always optional extras.
 
-A rendered architecture diagram lives in [`docs/core.md`](https://github.com/cendorhq/Cendor/blob/main/docs/core.md) (GitHub renders Mermaid; PyPI shows code as text).
+A rendered architecture diagram lives in [`docs/core.md`](https://github.com/cendorhq/cendor-libs/blob/main/docs/core.md) (GitHub renders Mermaid; PyPI shows code as text).
 
-See [`docs/core.md`](https://github.com/cendorhq/Cendor/blob/main/docs/core.md) · [CHANGELOG](https://github.com/cendorhq/Cendor/blob/main/packages/cendor-core/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/Cendor](https://github.com/cendorhq/Cendor). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*
+See [`docs/core.md`](https://github.com/cendorhq/cendor-libs/blob/main/docs/core.md) · [CHANGELOG](https://github.com/cendorhq/cendor-libs/blob/main/packages/cendor-core/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/cendor-libs](https://github.com/cendorhq/cendor-libs). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*

@@ -35,7 +35,7 @@ _table_lock = threading.Lock()  # guards the lazy load + refresh() swap of the m
 #: the bundled ``prices.json`` on the repo's main branch; override by passing ``url=`` / ``source=``
 #: or reassigning this. Must resolve to a *public* static JSON (no auth, no running service).
 SNAPSHOT_URL: str = (
-    "https://raw.githubusercontent.com/cendorhq/Cendor/main/"
+    "https://raw.githubusercontent.com/cendorhq/cendor-libs/main/"
     "packages/cendor-core/src/cendor/core/prices.json"
 )
 

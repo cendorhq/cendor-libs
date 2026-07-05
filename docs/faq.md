@@ -111,8 +111,8 @@ I/O). See [acttrace → Long-running logs](acttrace.md#long-running-logs-max_ent
 [tokenguard → QueueSink](tokenguard.md#queuesink--low-latency-durable-logging).
 
 ### Can I install just one library?
-Yes. Each tool works standalone and pulls `cendor-core` transitively. Use `pip install cendor` only if
-you want the whole stack.
+Yes. Each tool works standalone and pulls `cendor-core` transitively. Use `pip install cendor-libs`
+(or its `cendor` alias) only if you want the whole stack.
 
 ### Does it secure my secrets?
 `cassette` and `acttrace` redact emails, `sk-` keys (including the hyphenated `sk-ant-`/`sk-proj-`

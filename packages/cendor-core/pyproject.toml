@@ -9,8 +9,8 @@ readme = "README.md"
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/cendorhq/Cendor"
-Repository = "https://github.com/cendorhq/Cendor"
+Homepage = "https://github.com/cendorhq/cendor-libs"
+Repository = "https://github.com/cendorhq/cendor-libs"
 
 [project.optional-dependencies]
 openai = ["openai>=1.0"]

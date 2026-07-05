@@ -1,11 +1,9 @@
-# Changelog — cendor (umbrella)
+# Changelog — cendor (brand alias)
 
-All notable changes to this meta-package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org). This package ships no code; it pins the suite — see each component package's own `CHANGELOG.md` for their changes.
+All notable changes to this meta-package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org). This package ships no code; it is a thin alias for `cendor-libs`.
 
-## [1.0.0] — 2026-07-03
-### Added
-- First release of `cendor` — the umbrella meta-package for the Cendor stack. `pip install cendor` pulls the whole suite of composable Python primitives for context, cost, testing, and governance.
-- Ships **no code** of its own — it only declares the other packages as dependencies, so they share the `cendor.*` import namespace (PEP 420).
-- Pins every member to the 1.x line (`>=1.0.0,<2.0`), so `pip install cendor` always resolves a coherent, tested stack instead of arbitrary latest versions.
-- Bundles `cendor-core` (foundation), `cendor-contextkit` (assemble context to a budget), `cendor-squeeze` (reversible compression), `cendor-tokenguard` (cost caps + attribution), `cendor-cassette` (record/replay agent runs), and `cendor-acttrace` (tamper-evident audit log).
-- Prefer installing only what you need — each package works standalone and pulls `cendor-core` transitively.
+## [1.1.0] — 2026-07-05
+### Changed
+- `cendor` is now a **brand alias** for the stack: its sole dependency is `cendor-libs>=1.0,<2.0` (the canonical umbrella meta-package). `pip install cendor` and `pip install cendor-libs` resolve to the same suite.
+- Prior to 1.1.0, `cendor` was itself the umbrella that pinned the six libraries directly; that role moved to `cendor-libs`. The change is transparent — installing `cendor` still pulls the whole stack — and there were no external users at the time of the change.
+- Ships **no code** of its own; the six libraries share the `cendor.*` import namespace (PEP 420) exactly as before.

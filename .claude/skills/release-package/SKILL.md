@@ -57,7 +57,7 @@ Use the GitHub REST API with the cached git credential — never print the token
 ```bash
 token=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | sed -n 's/^password=//p')
 curl -s -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/cendorhq/Cendor/actions/runs?per_page=20"
+  "https://api.github.com/repos/cendorhq/cendor-libs/actions/runs?per_page=20"
 ```
 
 ## 5. Verify on PyPI

@@ -1,28 +1,23 @@
-# The umbrella meta-package: installs the whole stack. Ships NO code.
+# The brand alias meta-package: `pip install cendor` → the whole stack, via `cendor-libs`. Ships NO code.
 # NEVER add a src/ directory or a cendor/__init__.py here — it would break the namespace.
+# Its ONLY dependency is `cendor-libs` (the canonical umbrella). This keeps the `cendor` name a
+# permanent, intuition-proof, zero-maintenance pointer — brand protected, but not the documented
+# default (`pip install cendor-libs` is). See PLAN §4.2.
 [project]
 name = "cendor"
-version = "1.0.0"
-description = "The Cendor stack — installs the full suite of composable AI-engineering primitives."
+version = "1.1.0"
+description = "Brand alias for the Cendor stack — installs cendor-libs (the full suite). Prefer `pip install cendor-libs`."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 readme = "README.md"
 authors = [{ name = "Raghav Mishra" }]
-# Each member is pinned to the 1.x line — a floor at 1.0.0 and a cap below the next major —
-# so `pip install cendor` always resolves a coherent, tested stack. Under semantic versioning
-# the whole 1.x line stays additive; breaking changes land only in a new major.
 dependencies = [
-  "cendor-core>=1.0.0,<2.0",
-  "cendor-tokenguard>=1.0.0,<2.0",
-  "cendor-contextkit>=1.0.0,<2.0",
-  "cendor-squeeze>=1.0.0,<2.0",
-  "cendor-cassette>=1.0.0,<2.0",
-  "cendor-acttrace>=1.0.0,<2.0",
+  "cendor-libs>=1.0,<2.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/cendorhq/Cendor"
-Repository = "https://github.com/cendorhq/Cendor"
+Homepage = "https://github.com/cendorhq/cendor-libs"
+Repository = "https://github.com/cendorhq/cendor-libs"
 
 [build-system]
 requires = ["hatchling"]

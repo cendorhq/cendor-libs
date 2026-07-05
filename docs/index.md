@@ -95,7 +95,7 @@ All six are **published on PyPI** and green in CI (offline tests · ruff · mypy
 ## Install
 
 ```bash
-pip install cendor            # the whole stack
+pip install cendor-libs       # the whole stack (`cendor` is an alias)
 pip install cendor-tokenguard # or any single tool (pulls cendor-core transitively)
 ```
 
