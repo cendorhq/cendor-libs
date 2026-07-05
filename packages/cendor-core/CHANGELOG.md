@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.3.0] — 2026-07-05
+### Added
+- **Hugging Face detection in `instrument()`** — a `huggingface_hub.InferenceClient` is now recognized by its `chat_completion` method and wrapped, emitting an `LLMCall` attributed to `huggingface` with usage/cost captured. The response is OpenAI-shaped, so usage extraction and streamed-text handling reuse the OpenAI path. Purely additive and backward-compatible: clients without a `chat_completion` method are unaffected, and the check runs *before* the OpenAI-compat detection so an `InferenceClient` that also exposes `chat.completions.create` is still attributed to `huggingface` (not `openai`). Enables `cendor-sdk`'s HuggingFace provider to capture governed usage/cost/audit.
+
 ## [1.2.0] — 2026-07-05
 ### Added
 - **`cendor.core.langchain.CendorCallbackHandler`** — an optional LangChain/LangGraph callback handler (the SDK-aligned way to observe a framework) that records **usage + reasoning + cached** tokens (from LangChain's `usage_metadata`), prices each call offline, emits normalized `LLMCall`/`ToolCall` on the bus, and correlates a whole `agent.invoke` — across its nodes, react loop, and tools — under one **root-run `trace_id`**. **No client touch**, so it sidesteps the `with_raw_response` usage loss and the streaming context-manager crash. **Recording-only** (post-call): enforcement stays on the `instrument()` seam. Gated by a new optional extra `cendor-core[langchain]` (`langchain-core>=0.3`); importing the module without it raises a clear `ImportError`. Keeps core dependency-light — nothing new is a hard dependency.
