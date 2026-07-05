@@ -18,6 +18,12 @@ Agent frameworks (LangChain, LlamaIndex, the provider SDKs) decide *what* your a
 don't handle these cross-cutting, *under-the-call* concerns. **Cendor does — and you keep your
 framework.**
 
+Using **LangChain or LangGraph**? Cendor plugs into the framework's own callback system —
+`CendorCallbackHandler` records usage, cost, reasoning, tool calls, and run-correlation with no
+client change. Calling a provider SDK directly? One `instrument()` wrap adds the same recording
+*plus* full enforcement (budgets, redact-before-send, replay). See
+[Providers → Frameworks](providers.md#frameworks-langchain--langgraph).
+
 ## The fix: wrap your client once, every tool plugs in
 
 ```python
@@ -102,7 +108,7 @@ Every package imports under the `cendor.*` namespace.
 
 - **[Getting Started](getting-started.md)** — install, the one idea (`instrument` once), and a first budgeted, audited call.
 - **[Architecture](architecture.md)** — the layers, the `instrument()` seam, the event bus, and the dependency graph.
-- **[Providers & Integration](providers.md)** — OpenAI / Anthropic / Bedrock / Gemini / Ollama, plus managed runtimes via OpenTelemetry.
+- **[Providers & Integration](providers.md)** — OpenAI / Anthropic / Bedrock / Gemini / Ollama, managed runtimes via OpenTelemetry, and LangChain / LangGraph via a callback handler.
 - **[Guides & Recipes](guides.md)** — copy-paste recipes, including the full-stack support agent.
 - **[Benchmarks](benchmarks.md)** — reproducible, offline numbers for every package.
 - **[FAQ](faq.md)** — common questions.

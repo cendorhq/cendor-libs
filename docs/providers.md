@@ -1,8 +1,9 @@
 # Providers & Integration
 
 `instrument()` identifies a client by its **shape**, not by model name — so new models from a
-provider work the day they ship. It supports five providers directly, plus an OpenTelemetry
-ingestion path for managed runtimes.
+provider work the day they ship. It supports five providers directly, an OpenTelemetry ingestion
+path for managed runtimes, and a callback handler for **LangChain / LangGraph** (see
+[Frameworks](#frameworks-langchain--langgraph)).
 
 ## How detection works
 

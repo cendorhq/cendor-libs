@@ -61,3 +61,4 @@ Typed public API · tests that hit no network · README with a one-line killer m
 - Don't add web servers, databases, or hosted services to a library.
 - Don't expand `core`'s public API casually.
 - Don't claim regulatory compliance anywhere.
+- Don't add a `Co-Authored-By` trailer to git commits.
