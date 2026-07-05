@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.0.1] — 2026-07-05
+### Changed
+- Repository moved to `github.com/cendorhq/cendor-libs`; `[project.urls]` updated. No API or behavior change.
+
 ## [1.0.0] — 2026-07-03
 ### Added
 - First release of `cendor-squeeze` — shrink verbose context (JSON, logs, code, prose) without throwing anything away: `compress()` returns a *handle* and `expand()` restores the original byte-for-byte. Content-aware, deterministic, no LLM and no model download.

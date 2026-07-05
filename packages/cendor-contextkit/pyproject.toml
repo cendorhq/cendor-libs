@@ -1,6 +1,6 @@
 [project]
 name = "cendor-contextkit"
-version = "1.0.0"
+version = "1.0.1"
 description = "Assemble: declare prioritized, pinnable context blocks; pack them to a token budget with an inspectable receipt."
 requires-python = ">=3.11"
 license = "Apache-2.0"

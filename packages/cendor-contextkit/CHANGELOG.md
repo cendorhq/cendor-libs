@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.0.1] — 2026-07-05
+### Changed
+- Repository moved to `github.com/cendorhq/cendor-libs`; `[project.urls]` updated. No API or behavior change.
+
 ## [1.0.0] — 2026-07-03
 ### Added
 - First release of `cendor-contextkit` — treat the context window like a packed suitcase, not a string you concatenate: declare prioritized, pinnable blocks with eviction rules, pack them to a token budget, and get a receipt of exactly what was kept, shrunk, and dropped.

@@ -193,7 +193,7 @@ provides-extras = ["ner"]
 
 [[package]]
 name = "cendor-cassette"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/cendor-cassette" }
 dependencies = [
     { name = "cendor-core" },
@@ -213,7 +213,7 @@ provides-extras = ["embeddings"]
 
 [[package]]
 name = "cendor-contextkit"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/cendor-contextkit" }
 dependencies = [
     { name = "cendor-core" },
@@ -290,7 +290,7 @@ requires-dist = [
 
 [[package]]
 name = "cendor-squeeze"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/cendor-squeeze" }
 dependencies = [
     { name = "cendor-core" },
