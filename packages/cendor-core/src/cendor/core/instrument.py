@@ -141,6 +141,10 @@ def instrument(client: T) -> T:
       (model read from the object's ``model_name``) **and** the current ``google-genai`` SDK
       ``client.models.generate_content`` / ``client.aio.models.generate_content`` (model from the
       ``model=`` kwarg).
+    * **Hugging Face** — ``huggingface_hub`` ``InferenceClient.chat_completion`` (an
+      OpenAI-shaped response; the client also exposes an OpenAI-compatible
+      ``chat.completions.create``, but binding to ``chat_completion`` attributes the call to
+      ``huggingface`` rather than ``openai``).
     * **Ollama** — ``chat`` (a callable on the client itself).
 
     Unknown clients are returned untouched. Wrapping is idempotent (re-wrapping is a no-op) and
@@ -173,6 +177,12 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
     ``LLMCall.provider`` is still ``"openai"`` (see :func:`_public_provider`).
     """
     targets: list[tuple[Any, str, str]] = []
+    # Hugging Face InferenceClient exposes chat_completion(...) as a method on the client itself
+    # (it also has an OpenAI-compatible chat.completions.create). Bind to chat_completion first —
+    # before the OpenAI check below matches that compat namespace — so the LLMCall is attributed to
+    # "huggingface". The response is OpenAI-shaped, so usage/parse reuse the OpenAI path.
+    if callable(getattr(client, "chat_completion", None)):
+        return [(client, "chat_completion", "huggingface")]
     chat = getattr(client, "chat", None)
     completions = getattr(chat, "completions", None) if chat is not None else None
     if completions is not None and callable(getattr(completions, "create", None)):
@@ -719,7 +729,7 @@ def _stream_text(chunk: Any, provider: str) -> str:
             if _get(chunk, "type") == "response.output_text.delta":
                 return str(_get(chunk, "delta", "") or "")
             return ""
-        if provider == "openai":
+        if provider in ("openai", "huggingface"):  # both stream Chat Completions-shaped chunks
             choices = _get(chunk, "choices") or []
             return "".join(str(_get(_get(c, "delta"), "content", "") or "") for c in choices)
         if provider == "anthropic":
@@ -762,10 +772,11 @@ def _extract_usage(response: Any, provider: str) -> Usage | None:
         u = _get(response, "usage")
         if u is None:
             return None
-        if provider in ("openai", "openai_responses"):
+        if provider in ("openai", "openai_responses", "huggingface"):
             # Dual-shape: Chat Completions uses prompt_tokens/completion_tokens (+ details); the
             # Responses API uses input_tokens/output_tokens (+ input/output_tokens_details). Read
-            # whichever the response carries so one branch covers both entrypoints.
+            # whichever the response carries so one branch covers both entrypoints. Hugging Face's
+            # chat_completion returns the Chat Completions shape (prompt_tokens/completion_tokens).
             inp = _get(u, "prompt_tokens")
             if inp is None:
                 inp = _get(u, "input_tokens")
