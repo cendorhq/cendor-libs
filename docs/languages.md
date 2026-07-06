@@ -69,9 +69,9 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Event bus | ✅ | ✅ | subscribe/emit/unsubscribe; error isolation |
 | Price table + `estimate()` | ✅ | ✅ | same bundled snapshot; `refresh()` async in TS |
 | Token counting | ✅ | ✅ | `tiktoken` ↔ `js-tiktoken` — exact counts match |
-| `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | 🚧 OpenAI + Anthropic on npm; HuggingFace / google-genai / Bedrock / Ollama detection ship with the next `@cendor/core` release | Bedrock JS matches a boto-shaped `converse()`; aws-sdk-v3 rides the SDK provider |
+| `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | Bedrock JS auto-detects a boto-shaped `converse()`; aws-sdk-v3 rides the SDK provider |
 | `instrument()` streaming / interceptors | ✅ | ✅ | |
-| core `otel` spans / `ingest()` | ✅ | 🚧 | implemented in `@cendor/core`; ships on npm with the next core release (`@opentelemetry/api` optional peer) |
+| core `otel` spans / `ingest()` | ✅ | ✅ | `span()` + `ingest()`; `@opentelemetry/api` optional peer — span is a no-op without it |
 | LangChain `CendorCallbackHandler` | ✅ | **Py-only** | LangChain.js handler not ported (lands by demand) |
 | `trace()` correlation | ✅ contextvars | ✅ AsyncLocalStorage | |
 | **tokenguard** budgets / track / report / sinks | ✅ | ✅ | SQLite / Queue / OTel sinks in both |
@@ -88,7 +88,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Capability | Python | TypeScript |
 |---|---|---|
 | `Agent` / `tool` / `run` / `Result` | ✅ | ✅ (zod tool schemas) |
-| Providers | ✅ ten paths | ✅ ten paths (OpenAI, Anthropic, HuggingFace, Azure chat + responses, Foundry Local, Ollama, Gemini, Bedrock) — HF/Ollama/Gemini/Bedrock usage capture rides the next `@cendor/core` release |
+| Providers | ✅ ten paths | ✅ ten paths (OpenAI, Anthropic, HuggingFace, Azure chat + responses, Foundry Local, Ollama, Gemini, Bedrock) — HF/Ollama/Gemini/Bedrock usage capture rides `@cendor/core`'s provider detection |
 | Sessions & memory | ✅ (+ SQLite store) | ✅ (better-sqlite3 + memory adapters) |
 | Handoff / supervisor / pipelines | ✅ | ✅ |
 | Structured output | ✅ | ✅ |
@@ -120,10 +120,6 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 
 - **Versions are independent across languages.** Python and TypeScript release on their own
   cadence; this page — not matching version numbers — is the parity contract.
-- **Shipping next in `@cendor/core`** — the `otel` span/ingest module and HuggingFace / google-genai /
-  Bedrock / Ollama `instrument()` detection are implemented and land on npm with the next core release;
-  SDK usage capture for HuggingFace / Ollama / Gemini / Bedrock rides that detection. Until then those
-  rows show the Python tab.
 - **A few surfaces remain Python-only** — the LangChain callback handler, keyless Microsoft Entra ID
   auth for Azure (in TS, pass a bearer token as the key), and cassette's bundled
   `local_embedding_scorer` (bring your own `embedFn` in TS). AWS Bedrock auto-detection matches a

@@ -30,10 +30,12 @@ wraps **every** entrypoint it finds, so whichever API your code calls is capture
 
 ## Per-provider setup
 
-> **TypeScript coverage.** `@cendor/core`'s `instrument()` ships **OpenAI (Chat + Responses) and
-> Anthropic** today — the sections below carry tabs for those two. Bedrock, Gemini, Ollama, the
-> OpenTelemetry ingestion path, and the LangChain handler are **Python-only** for now; the seam is
-> identical, so they land per the [parity matrix](languages.md).
+> **TypeScript coverage.** `@cendor/core`'s `instrument()` now ships detection for **OpenAI (Chat +
+> Responses), Anthropic, google-genai, Ollama, HuggingFace, and Bedrock**, plus the OpenTelemetry
+> ingestion path — the sections below carry TypeScript tabs. Two things stay Python-only: the
+> **LangChain** callback handler, and aws-sdk-v3 Bedrock (`instrument()` matches a boto-shaped
+> `converse()`; the `send(ConverseCommand)` client rides the SDK provider). See the
+> [parity matrix](languages.md).
 
 ### OpenAI (Chat Completions + Responses API)
 `instrument()` wraps both entrypoints; the Responses API reports usage differently, and it's all
@@ -142,8 +144,13 @@ model.generate_content("…")     # model id read from the GenerativeModel, so t
 
 <!-- tab: TypeScript -->
 
-> **Python only (for now).** Gemini detection isn't yet in `@cendor/core`'s `instrument()` — see
-> the [parity matrix](languages.md).
+```ts
+// Current SDK (@google/genai) — the model rides the `model` kwarg:
+import { GoogleGenAI } from '@google/genai';
+import { instrument } from '@cendor/core';
+const client = instrument(new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY }));
+await client.models.generateContent({ model: 'gemini-2.0-flash', contents: '…' });  // detected as google
+```
 
 <!-- /tabs -->
 
@@ -161,8 +168,12 @@ client.converse(modelId="anthropic.claude-…",
 
 <!-- tab: TypeScript -->
 
-> **Python only (for now).** Bedrock detection isn't yet in `@cendor/core`'s `instrument()` —
-> see the [parity matrix](languages.md).
+> **Bedrock in TypeScript.** `@cendor/core`'s `instrument()` **ships** Bedrock detection — it matches a
+> **boto-shaped `converse()`** method, so a wrapper client that exposes `converse(...)` directly is
+> captured. The official `@aws-sdk/client-bedrock-runtime` v3 has **no such method**: it issues calls
+> generically as `client.send(new ConverseCommand(...))`, and `send` is shared by every AWS command, so it
+> can't be duck-typed. aws-sdk-v3 Bedrock is therefore captured via the **SDK provider** (`@cendor/sdk`
+> wraps the client directly), not `instrument()`. See the [parity matrix](languages.md).
 
 <!-- /tabs -->
 
@@ -179,8 +190,12 @@ client.chat(model="llama3", messages=[...])   # no key
 
 <!-- tab: TypeScript -->
 
-> **Python only (for now).** Ollama detection isn't yet in `@cendor/core`'s `instrument()` — see
-> the [parity matrix](languages.md).
+```ts
+import { Ollama } from 'ollama';
+import { instrument } from '@cendor/core';
+const client = instrument(new Ollama());
+await client.chat({ model: 'llama3.2', messages: [{ role: 'user', content: '…' }] });   // no key
+```
 
 <!-- /tabs -->
 
@@ -205,8 +220,15 @@ otel.ingest({
 
 <!-- tab: TypeScript -->
 
-> **Python only (for now).** `otel.ingest()` isn't yet in `@cendor/core` — see the
-> [parity matrix](languages.md).
+```ts
+import { otel } from '@cendor/core';
+otel.ingest({
+  'gen_ai.system': 'azure_ai_foundry',
+  'gen_ai.request.model': 'gpt-4o',
+  'gen_ai.usage.input_tokens': 1000,
+  'gen_ai.usage.output_tokens': 500,
+});   // -> emits a normalized LLMCall
+```
 
 <!-- /tabs -->
 

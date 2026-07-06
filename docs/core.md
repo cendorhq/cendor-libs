@@ -231,8 +231,15 @@ otel.ingest({"gen_ai.system": "azure_ai_foundry", "gen_ai.request.model": "gpt-4
 
 <!-- tab: TypeScript -->
 
-> **Python only (for now).** OpenTelemetry emission and `ingest()` aren't yet in `@cendor/core`
-> — see the [parity matrix](languages.md). (The SDK's `spanTree`/`liveSpans` **are** ported.)
+```ts
+import { otel } from '@cendor/core';
+
+otel.span('gpt-4o', { provider: 'openai' }, (span) => {   // gen_ai.* span if OTel installed, else no-op
+  // ... your model call; `span` is null when @opentelemetry/api isn't installed
+});
+otel.ingest({ 'gen_ai.system': 'azure_ai_foundry', 'gen_ai.request.model': 'gpt-4o',
+              'gen_ai.usage.input_tokens': 1000, 'gen_ai.usage.output_tokens': 500 });  // -> bus event
+```
 
 <!-- /tabs -->
 
