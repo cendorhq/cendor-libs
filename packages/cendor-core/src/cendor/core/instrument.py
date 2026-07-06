@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from . import bus, prices, tokens
 from .types import LLMCall, Money, ToolCall, Usage
@@ -480,7 +480,7 @@ class _ProxyStream:
             enter()  # run the SDK stream's own setup, but keep *this* wrapper as the bound value
         return self
 
-    def __exit__(self, *exc: object) -> bool:
+    def __exit__(self, *exc: object) -> Literal[False]:
         try:
             exit_ = getattr(self._stream, "__exit__", None)
             if exit_ is not None:
@@ -560,7 +560,7 @@ class _AProxyStream:
             await aenter()  # SDK stream's own async setup; keep this wrapper as the bound value
         return self
 
-    async def __aexit__(self, *exc: object) -> bool:
+    async def __aexit__(self, *exc: object) -> Literal[False]:
         try:
             aexit = getattr(self._stream, "__aexit__", None)
             if aexit is not None:
