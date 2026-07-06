@@ -4,7 +4,8 @@ Cendor ships in two languages: **Python** (`cendor.*`, the reference implementat
 **TypeScript/JavaScript** (`@cendor/*`, on npm — ESM-only, Node LTS first, edge runtimes
 supported). Both are implementations of the same versioned [format specs](https://github.com/cendorhq/cendor-libs/tree/main/docs/specs),
 so the artifacts that matter — cassettes, audit chains, price tables, bus events — are
-**byte-for-byte interoperable** and enforced by conformance vectors committed to both CIs.
+**byte-for-byte interoperable**, checked by committed conformance vectors (replayed in the
+TypeScript CI today; Python-side replay of JS-written artifacts lands with JS-6).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -67,13 +68,16 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Event bus | ✅ | ✅ | subscribe/emit/unsubscribe; error isolation |
 | Price table + `estimate()` | ✅ | ✅ | same bundled snapshot; `refresh()` async in TS |
 | Token counting | ✅ | ✅ | `tiktoken` ↔ `js-tiktoken` — exact counts match |
-| `instrument()` providers | ✅ 6 providers | 🚧 OpenAI (Chat + Responses) + Anthropic | same seam; more land by demand |
+| `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | 🚧 OpenAI (Chat + Responses) + Anthropic | HuggingFace / google-genai / Bedrock / Ollama detection are **Py-only** today; same seam |
 | `instrument()` streaming / interceptors | ✅ | ✅ | |
+| core `otel` spans / `ingest()` | ✅ | **Py-only** | OTel *export* ships via tokenguard's `OTelSink` in both langs; core's `otel.span()` / `ingest()` module is Py-only for now |
+| LangChain `CendorCallbackHandler` | ✅ | **Py-only** | LangChain.js handler not ported (lands by demand) |
 | `trace()` correlation | ✅ contextvars | ✅ AsyncLocalStorage | |
 | **tokenguard** budgets / track / report / sinks | ✅ | ✅ | SQLite / Queue / OTel sinks in both |
 | **contextkit** assemble / evict / order | ✅ | ✅ | TS collapses sync+async into one `async assemble()` |
 | **squeeze** compress / decompress | ✅ | ✅ | deterministic; handle ids match |
 | **cassette** record / replay | ✅ | ✅ | cross-language replay, vector-verified |
+| cassette `local_embedding_scorer` | ✅ | **Py-only** | TS ships a declared stub; the static-embedding scorer is Py-only for now |
 | cassette storage | fs | fs + memory (+ IndexedDB-shaped) | pluggable adapters |
 | **acttrace** chain / verify / sign | ✅ | ✅ | cross-language verify (HMAC + `_meta`) |
 | acttrace detectors | ✅ regex **+ Presidio NER** | ✅ regex/pattern (20 detectors) | **NER is Py-only** — `ner_available()` → `false` in TS |
@@ -86,7 +90,8 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Providers | ✅ ten paths | 🚧 OpenAI (Chat + Responses) + Anthropic first |
 | Sessions & memory | ✅ (+ SQLite store) | ✅ (better-sqlite3 + memory adapters) |
 | Handoff / supervisor / pipelines | ✅ | ✅ |
-| Structured output / streaming | ✅ | ✅ |
+| Structured output | ✅ | ✅ |
+| Streaming | ✅ | 🚧 buffered today (incremental + multi-agent streaming land in JS-6) |
 | Governance re-exports | ✅ | ✅ (the real `@cendor/*` objects) |
 | Live progress / prompt caching / live OTel spans | ✅ | ✅ |
 
@@ -99,7 +104,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | `@cendor/tokenguard` | ✅ | ✅ | ⚠️ advisory only — enforcement is server-side |
 | `@cendor/cassette` | ✅ (fs) | ✅ (adapter) | ⚠️ memory/IndexedDB adapter |
 | `@cendor/acttrace` | ✅ | ✅ | ❌ never — signing keys can't live in a client |
-| `@cendor/sdk` | ✅ | ✅ (HTTP/SSE transports; MCP stdio is Node-only) | ❌ keys-in-browser anti-pattern |
+| `@cendor/sdk` | ✅ | ✅ (HTTP/SSE transports; **MCP is Py-only for now**) | ❌ keys-in-browser anti-pattern |
 
 > **Governance is only real where the user can't tamper with it.** Budgets-as-enforcement,
 > audit-as-evidence, and redaction-as-guarantee are server-side by definition — in every
@@ -112,6 +117,9 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
   cadence; this page — not matching version numbers — is the parity contract.
 - **The TS provider surface is narrower today** (OpenAI + Anthropic). The seam is identical, so
   breadth is a porting exercise, not a design one.
+- **Some TS surfaces are still catching up** — tracked row-by-row above: SDK streaming is
+  buffered today (incremental in progress), and core `otel`, the LangChain handler, SDK MCP,
+  and HuggingFace / google-genai / Bedrock / Ollama detection are **Python-only for now**.
 - **No Presidio NER in TypeScript** — regex/pattern detectors only, and
   `ner_available()` says so at runtime.
 - **Docs code samples default to Python** where a tab pair isn't shown; the mapping rules above
