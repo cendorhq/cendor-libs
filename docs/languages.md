@@ -4,8 +4,9 @@ Cendor ships in two languages: **Python** (`cendor.*`, the reference implementat
 **TypeScript/JavaScript** (`@cendor/*`, on npm — ESM-only, Node LTS first, edge runtimes
 supported). Both are implementations of the same versioned [format specs](https://github.com/cendorhq/cendor-libs/tree/main/docs/specs),
 so the artifacts that matter — cassettes, audit chains, price tables, bus events — are
-**byte-for-byte interoperable**, checked by committed conformance vectors (replayed in the
-TypeScript CI today; Python-side replay of JS-written artifacts lands with JS-6).
+**byte-for-byte interoperable**, checked by committed conformance vectors in both CIs — each
+language verifies artifacts written by the other (the TypeScript CI replays Python-written
+fixtures; the Python CI verifies a JS-written audit chain).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
