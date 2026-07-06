@@ -69,9 +69,9 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Event bus | ✅ | ✅ | subscribe/emit/unsubscribe; error isolation |
 | Price table + `estimate()` | ✅ | ✅ | same bundled snapshot; `refresh()` async in TS |
 | Token counting | ✅ | ✅ | `tiktoken` ↔ `js-tiktoken` — exact counts match |
-| `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | 🚧 OpenAI (Chat + Responses) + Anthropic | HuggingFace / google-genai / Bedrock / Ollama detection are **Py-only** today; same seam |
+| `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | 🚧 OpenAI + Anthropic on npm; HuggingFace / google-genai / Bedrock / Ollama detection ship with the next `@cendor/core` release | Bedrock JS matches a boto-shaped `converse()`; aws-sdk-v3 rides the SDK provider |
 | `instrument()` streaming / interceptors | ✅ | ✅ | |
-| core `otel` spans / `ingest()` | ✅ | **Py-only** | OTel *export* ships via tokenguard's `OTelSink` in both langs; core's `otel.span()` / `ingest()` module is Py-only for now |
+| core `otel` spans / `ingest()` | ✅ | 🚧 | implemented in `@cendor/core`; ships on npm with the next core release (`@opentelemetry/api` optional peer) |
 | LangChain `CendorCallbackHandler` | ✅ | **Py-only** | LangChain.js handler not ported (lands by demand) |
 | `trace()` correlation | ✅ contextvars | ✅ AsyncLocalStorage | |
 | **tokenguard** budgets / track / report / sinks | ✅ | ✅ | SQLite / Queue / OTel sinks in both |
@@ -88,13 +88,17 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Capability | Python | TypeScript |
 |---|---|---|
 | `Agent` / `tool` / `run` / `Result` | ✅ | ✅ (zod tool schemas) |
-| Providers | ✅ ten paths | 🚧 OpenAI (Chat + Responses) + Anthropic first |
+| Providers | ✅ ten paths | ✅ ten paths (OpenAI, Anthropic, HuggingFace, Azure chat + responses, Foundry Local, Ollama, Gemini, Bedrock) — HF/Ollama/Gemini/Bedrock usage capture rides the next `@cendor/core` release |
 | Sessions & memory | ✅ (+ SQLite store) | ✅ (better-sqlite3 + memory adapters) |
 | Handoff / supervisor / pipelines | ✅ | ✅ |
 | Structured output | ✅ | ✅ |
-| Streaming | ✅ | 🚧 buffered today (incremental + multi-agent streaming land in JS-6) |
+| Streaming | ✅ | ✅ (incremental single-agent + multi-agent) |
 | Governance re-exports | ✅ | ✅ (the real `@cendor/*` objects) |
 | Live progress / prompt caching / live OTel spans | ✅ | ✅ |
+| MCP client (tools / prompts / resources) | ✅ | ✅ (`@modelcontextprotocol/sdk` optional peer) |
+| Checkpoint / resume | ✅ | ✅ (atomic JSON; single + multi-agent) |
+| A2A server / client | ✅ | ✅ (JSON-RPC; `serve()` on node:http) |
+| Foundry / Bot-Framework adapter | ✅ | ✅ |
 
 ## Runtime targets (TypeScript)
 
@@ -105,7 +109,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | `@cendor/tokenguard` | ✅ | ✅ | ⚠️ advisory only — enforcement is server-side |
 | `@cendor/cassette` | ✅ (fs) | ✅ (adapter) | ⚠️ memory/IndexedDB adapter |
 | `@cendor/acttrace` | ✅ | ✅ | ❌ never — signing keys can't live in a client |
-| `@cendor/sdk` | ✅ | ✅ (HTTP/SSE transports; **MCP is Py-only for now**) | ❌ keys-in-browser anti-pattern |
+| `@cendor/sdk` | ✅ | ✅ (HTTP/SSE transports; MCP via `@modelcontextprotocol/sdk`, Node) | ❌ keys-in-browser anti-pattern |
 
 > **Governance is only real where the user can't tamper with it.** Budgets-as-enforcement,
 > audit-as-evidence, and redaction-as-guarantee are server-side by definition — in every
@@ -116,11 +120,15 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 
 - **Versions are independent across languages.** Python and TypeScript release on their own
   cadence; this page — not matching version numbers — is the parity contract.
-- **The TS provider surface is narrower today** (OpenAI + Anthropic). The seam is identical, so
-  breadth is a porting exercise, not a design one.
-- **Some TS surfaces are still catching up** — tracked row-by-row above: SDK streaming is
-  buffered today (incremental in progress), and core `otel`, the LangChain handler, SDK MCP,
-  and HuggingFace / google-genai / Bedrock / Ollama detection are **Python-only for now**.
+- **Shipping next in `@cendor/core`** — the `otel` span/ingest module and HuggingFace / google-genai /
+  Bedrock / Ollama `instrument()` detection are implemented and land on npm with the next core release;
+  SDK usage capture for HuggingFace / Ollama / Gemini / Bedrock rides that detection. Until then those
+  rows show the Python tab.
+- **A few surfaces remain Python-only** — the LangChain callback handler, keyless Microsoft Entra ID
+  auth for Azure (in TS, pass a bearer token as the key), and cassette's bundled
+  `local_embedding_scorer` (bring your own `embedFn` in TS). AWS Bedrock auto-detection matches a
+  boto-shaped `converse()`; aws-sdk-v3's `send(ConverseCommand)` is captured via the SDK provider rather
+  than `instrument()`.
 - **No Presidio NER in TypeScript** — regex/pattern detectors only, and
   `ner_available()` says so at runtime.
 - **Docs code samples default to Python** where a tab pair isn't shown; the mapping rules above
