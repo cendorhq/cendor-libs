@@ -4,11 +4,25 @@ Stop runaway LLM bills, and get per-feature / per-user cost attribution for free
 decorator caps a unit of work; one context manager tags its spend. No dashboard, no account,
 no infrastructure.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```bash
 pip install cendor-tokenguard
 ```
 
+<!-- tab: TypeScript -->
+
+```bash
+npm i @cendor/tokenguard
+```
+
+<!-- /tabs -->
+
 ## Quickstart
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from cendor.core import instrument
@@ -25,6 +39,28 @@ def answer(q: str) -> str:
 for row in report(group_by=["feature", "user_id"]):
     print(row["tags"], row["usd"], row["tokens"], row["calls"])
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { instrument } from '@cendor/core';
+import { budget, track, report } from '@cendor/tokenguard';
+
+const client = instrument(openaiClient);
+
+const answer = budget({ usd: 0.50, onExceed: 'downgrade', downgrade: { 'gpt-4o': 'gpt-4o-mini' } })(
+  (q: string) => track({ feature: 'support_bot', userId: 'alice' }, async () => {
+    const resp = await client.chat.completions.create({
+      model: 'gpt-4o', messages: [{ role: 'user', content: q }] });
+    return resp.choices[0].message.content;
+  }));
+
+for (const row of report(['feature', 'userId'])) {
+  console.log(row.tags, row.usd.toString(), row.tokens, row.calls);
+}
+```
+
+<!-- /tabs -->
 
 > **See it in the stack.** The connected support-agent recipe (budget + context + audit) is in
 > the [Cookbook](/cookbook).
@@ -90,10 +126,23 @@ prefer a `tokens=` cap (or add a rate via `core.prices`) for a model that isn't 
 A decorator **and** context manager that caps a unit of work. Budgets nest — the tightest
 applicable cap wins, and an inner `downgrade`/`clamp` never masks an outer hard cap.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 budget(usd=None, tokens=None, on_exceed="raise", scope=None,
        downgrade=None, output_reserve=256, reasoning_reserve=0)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+budget({ usd, tokens, onExceed = 'raise', scope,
+         downgrade, outputReserve = 256, reasoningReserve = 0 })(fn)   // decorator form
+await withBudget({ usd: 0.25, onExceed: 'block' }, () => { /* ... */ });  // scoped form
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|
@@ -120,11 +169,26 @@ Config is validated **eagerly**: a missing cap, an unknown `on_exceed`, `"downgr
 map/`usd` cap, or `"clamp"` without a `tokens=` cap raises `ValueError` — no silent no-op budgets.
 
 ### `track()` & `estimate()`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 with track(feature="support", user_id="alice"):   # tag ambient spend (contextvars)
     ...
 estimate(model, messages, max_output_tokens=0)     # price a call WITHOUT making it -> Money
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+await track({ feature: 'support', userId: 'alice' }, async () => {  // tag ambient spend (ALS)
+  /* ... */
+});
+estimate(model, messages, 0);                      // price a call WITHOUT making it -> Money
+```
+
+<!-- /tabs -->
 
 ### `report()`
 Aggregates recorded spend into rows of `{tags, usd, tokens, input_tokens, output_tokens,
@@ -150,6 +214,9 @@ latency to *every* model call. On a long or high-throughput run that's a latency
 sink in `sinks.QueueSink` to move that I/O onto a background thread — `write()` enqueues and
 returns immediately, and a single worker drains it into the inner sink **in order**:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from cendor.tokenguard import use_sink
 from cendor.tokenguard.sinks import QueueSink, SQLiteSink
@@ -160,6 +227,21 @@ use_sink(sink)
 sink.flush()     # block until the queue is drained (e.g. at a checkpoint)
 sink.close()     # flush + stop the worker + close the inner sink (or use `with QueueSink(...)`)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { useSink } from '@cendor/tokenguard';
+import { QueueSink, SQLiteSink } from '@cendor/tokenguard/sinks';
+
+const sink = new QueueSink(new SQLiteSink('spend.db'));  // durable logging, off the hot path
+useSink(sink);
+// … the run: model calls no longer pay the sink's I/O latency …
+await sink.flush();  // resolve once the queue is drained (e.g. at a checkpoint)
+await sink.close();  // flush + stop the drain loop + close the inner sink
+```
+
+<!-- /tabs -->
 
 - **Ordering preserved** (single FIFO worker); `max_queue=N` applies back-pressure when full (a row
   is never silently dropped) — `None` (default) is unbounded.

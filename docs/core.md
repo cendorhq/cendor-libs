@@ -4,14 +4,29 @@ The shared vocabulary every other tool rides: one set of types, one tokenizer, o
 table, one instrumentation seam, one event bus. It's small and stable on purpose — it's the
 dependency of the whole stack. You rarely install it directly; it arrives transitively.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```bash
 pip install cendor-core                # or any tool that depends on it
 pip install "cendor-core[tiktoken]"    # exact OpenAI token counts (optional)
 ```
 
+<!-- tab: TypeScript -->
+
+```bash
+npm i @cendor/core                     # or any tool that depends on it
+# token counting via js-tiktoken is bundled — exact counts match Python
+```
+
+<!-- /tabs -->
+
 ## Quickstart
 
 Everything below runs offline — token counting and pricing ship bundled, no key, no network:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from cendor.core import tokens, prices
@@ -20,6 +35,18 @@ n = tokens.count([{"role": "user", "content": "Summarize this in 3 bullets."}], 
 cost = prices.estimate("claude-opus-4-8", input_tokens=n, output_tokens=200)
 print(n, cost, tokens.method("claude-opus-4-8"))   # e.g. 13  0.005065 USD  bpe-estimate
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { tokens, prices } from '@cendor/core';
+
+const n = tokens.count([{ role: 'user', content: 'Summarize this in 3 bullets.' }], 'claude-opus-4-8');
+const cost = prices.estimate('claude-opus-4-8', n, { outputTokens: 200 });
+console.log(n, cost.toString(), tokens.method('claude-opus-4-8'));  // e.g. 13  0.005065 USD  bpe-estimate
+```
+
+<!-- /tabs -->
 
 > **See it in the stack.** The one-wrap-then-every-tool-subscribes flow is walked end to end
 > in [Architecture](architecture.md) and the [Cookbook](/cookbook).
@@ -98,12 +125,29 @@ when a runtime owns the call loop.
 ## Functions & classes
 
 ### `instrument()` / `instrument_tool()`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 client = instrument(openai_client)     # OpenAI · Anthropic · Bedrock · Gemini · Ollama
 
 @instrument_tool("search")             # wrap a tool so ToolCall events join the stream
 def search(q): ...
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { instrument, instrumentTool } from '@cendor/core';
+
+const client = instrument(new OpenAI());       // OpenAI (Chat + Responses) · Anthropic — more landing
+
+const search = instrumentTool('search')(       // wrap a tool so ToolCall events join the stream
+  (q) => { /* ... */ });
+```
+
+<!-- /tabs -->
 Detects the client by **shape** (not model name, so new models work the day they ship), wraps
 its call entrypoint(s), runs the real call (sync, async, **and streaming**), fills
 `usage`/`cost`/`latency`, and emits an `LLMCall`. Idempotent and additive; an unrecognized
@@ -119,10 +163,23 @@ per provider and the [streaming](#streaming) note below.
 | `tokens.register(family, fn)` | — | Plug a precise counter in for a family. |
 
 ### `prices`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 prices.estimate("gpt-4o", input_tokens=1000, output_tokens=300, cached_tokens=200)  # -> Money
 prices.refresh(source="litellm")       # or "openrouter" | "azure" | a static-JSON URL
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+prices.estimate('gpt-4o', 1000, { outputTokens: 300, cachedTokens: 200 });  // -> Money
+await prices.refresh(undefined, { source: 'litellm' });  // or 'openrouter' | 'azure' | a URL
+```
+
+<!-- /tabs -->
 
 | Call | Returns | What it does |
 |---|---|---|
@@ -138,13 +195,33 @@ to bare keys (`openai/gpt-4o` → `gpt-4o`). See [Providers → Live pricing](pr
 for which sources expose rates.
 
 ### `bus`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 bus.subscribe(fn)     # idempotent; fn receives each emitted LLMCall / ToolCall
 bus.unsubscribe(fn)   # no error if absent
 bus.emit(event)       # synchronous dispatch to all subscribers
 ```
 
+<!-- tab: TypeScript -->
+
+```ts
+import { bus } from '@cendor/core';
+
+bus.subscribe(fn);    // idempotent; fn receives each emitted LLMCall / ToolCall
+bus.unsubscribe(fn);  // no error if absent
+bus.emit(event);      // synchronous dispatch to all subscribers
+```
+
+<!-- /tabs -->
+
 ### `otel`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 with otel.span("gpt-4o", provider="openai"):   # gen_ai.* span if OTel installed, else no-op
     ...
@@ -152,13 +229,35 @@ otel.ingest({"gen_ai.system": "azure_ai_foundry", "gen_ai.request.model": "gpt-4
              "gen_ai.usage.input_tokens": 1000, "gen_ai.usage.output_tokens": 500})  # -> bus event
 ```
 
+<!-- tab: TypeScript -->
+
+> **Python only (for now).** OpenTelemetry emission and `ingest()` aren't yet in `@cendor/core`
+> — see the [parity matrix](languages.md). (The SDK's `spanTree`/`liveSpans` **are** ported.)
+
+<!-- /tabs -->
+
 ### Types
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from cendor.core.types import LLMCall, ToolCall, Usage, Money
 
 Usage(input_tokens=1200, output_tokens=300, cached_tokens=0, reasoning_tokens=0, cache_write=0)  # frozen
 Money(0.0135)   # Decimal-backed; +, -, *, comparisons; Money.zero()
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { LLMCall, ToolCall, Usage, Money } from '@cendor/core';
+
+new Usage({ inputTokens: 1200, outputTokens: 300, cachedTokens: 0, reasoningTokens: 0, cacheWrite: 0 });
+new Money(0.0135);   // decimal.js-backed; value-equal with Python's Decimal; Money.zero()
+```
+
+<!-- /tabs -->
 - `LLMCall` (`id`, `provider`, `model`, `messages`, `usage`, `cost`, `latency_ms`, `trace_id`,
   `ts`, `metadata`) is the normalized record emitted for every call.
 - In `Usage`, `cached_tokens ⊆ input_tokens` and `reasoning_tokens ⊆ output_tokens` (breakdowns,
@@ -227,6 +326,9 @@ Streamed calls carry `metadata["streamed"] = True`, and the collected chunks are
 The streamed value is **both an iterator and a context manager** — exactly like the provider
 SDK's own stream object — so both usage forms work and finalize (emit) exactly once:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 stream = client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True)
 for chunk in stream:            # iterate…
@@ -237,6 +339,17 @@ with client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True) 
         ...
 # async: `async for chunk in stream` and `async with … as stream:` likewise
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+const stream = await client.chat.completions.create({ model: 'gpt-4o', messages: msgs, stream: true });
+for await (const chunk of stream) {
+  // ... usage accumulates in the background;
+}    // the LLMCall is emitted once the stream completes (or is closed early)
+```
+
+<!-- /tabs -->
 
 This context-manager surface is required by frameworks such as `langchain_openai`, which consume
 a streamed completion via `with client…create(stream=True) as response:`. Unknown attributes
@@ -250,11 +363,24 @@ Set an ambient one with `with core.trace("run-id"):` to group a unit of work —
 loop, a request — so its calls share an id downstream (`acttrace`, your own subscribers). It's a
 `contextvars` binding (nests, works across sync/async); `core.current_trace_id()` reads it.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from cendor.core import trace
 with trace("session-42"):
     client.chat.completions.create(...)      # emitted LLMCall.trace_id == "session-42"
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { trace } from '@cendor/core';
+await trace('session-42', () =>
+  client.chat.completions.create({ /* ... */ }));  // emitted LLMCall.traceId === 'session-42'
+```
+
+<!-- /tabs -->
 
 This is a **hook, not an orchestrator** (see [architecture.md](architecture.md)): cendor stamps the
 id you set, it never invents a run graph. The LangChain/LangGraph callback path

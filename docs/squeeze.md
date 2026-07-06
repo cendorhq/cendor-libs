@@ -4,11 +4,25 @@ Shrink verbose context — JSON, logs, code, prose — without throwing anything
 Compression returns a **handle**, and the original is always restorable byte-for-byte. It's
 content-aware: each type is routed to a purpose-built, deterministic compressor. No LLM.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```bash
 pip install cendor-squeeze
 ```
 
+<!-- tab: TypeScript -->
+
+```bash
+npm i @cendor/squeeze
+```
+
+<!-- /tabs -->
+
 ## Quickstart
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from cendor.squeeze import compress
@@ -18,6 +32,19 @@ small, handle = compress(source_code, kind="code", fidelity="aggressive")
 small, handle = compress(logs, kind="logs", target_tokens=400)    # compress to a budget
 original = handle.expand()                                        # restore, byte-for-byte
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { compress } from '@cendor/squeeze';
+
+let [small, handle] = compress(hugeJson, { kind: 'auto' });                      // detect + route
+[small, handle] = compress(sourceCode, { kind: 'code', fidelity: 'aggressive' });
+[small, handle] = compress(logs, { kind: 'logs', targetTokens: 400 });           // compress to a budget
+const original = handle.expand();                                                // restore, byte-for-byte
+```
+
+<!-- /tabs -->
 
 > **See it in the stack.** `contextkit` calls `squeeze` for you on any `Block(evict="compress")` —
 > the connected example is in the [Cookbook](/cookbook).
@@ -52,6 +79,9 @@ pluggable via `use_store(...)`.
 The default store is an in-memory one, so to restore after a process restart you persist the
 **handle** next to a durable store:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 data = handle.to_dict()                 # {id, kind, original_ref, restore_map} — not the original
 # ...next process, with the same SQLiteStore active...
@@ -59,12 +89,36 @@ from cendor.squeeze import Handle
 original = Handle.from_dict(data).expand()
 ```
 
+<!-- tab: TypeScript -->
+
+```ts
+const data = handle.toDict();           // {id, kind, original_ref, restore_map} — not the original
+// ...next process, with the same SQLiteStore active...
+import { Handle } from '@cendor/squeeze';
+const original = Handle.fromDict(data).expand();
+```
+
+<!-- /tabs -->
+
 ## Functions & classes
 
 ### `compress()`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 compress(content, kind="auto", target_tokens=None, model="gpt-4o", fidelity="balanced")  # -> (small, handle)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+compress(content, { kind = 'auto', targetTokens = null,
+                    model = 'gpt-4o', fidelity = 'balanced' })   // -> [small, handle]
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|
@@ -84,6 +138,9 @@ compress(content, kind="auto", target_tokens=None, model="gpt-4o", fidelity="bal
 | `use_store` | `use_store(store)` | Swap the content-addressed store backend. |
 
 ### Store backends
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from cendor.squeeze import use_store
 from cendor.squeeze.store import MemoryStore, SQLiteStore
@@ -91,6 +148,17 @@ from cendor.squeeze.store import MemoryStore, SQLiteStore
 use_store(SQLiteStore("ccr.db"))        # originals persist across processes
 use_store(MemoryStore(max_items=1000))  # bounded in-memory (LRU eviction)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { useStore, MemoryStore, SQLiteStore } from '@cendor/squeeze';
+
+useStore(new SQLiteStore('ccr.db'));    // originals persist across processes (better-sqlite3)
+useStore(new MemoryStore(1000));        // bounded in-memory (LRU eviction)
+```
+
+<!-- /tabs -->
 The default is an unbounded `MemoryStore`. `SQLiteStore` opens with `check_same_thread=False`,
 so one store can serve a threaded server (writes are idempotent). A bounded store can evict an
 original; expanding an evicted handle raises `KeyError` — the documented trade-off of a capped

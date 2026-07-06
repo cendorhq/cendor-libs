@@ -5,12 +5,27 @@ Treat the context window like a packed suitcase, not a string you concatenate. D
 budget deterministically and hands back a **receipt** of exactly what it kept, shrank, and
 dropped.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```bash
 pip install cendor-contextkit
 pip install "cendor-contextkit[squeeze]"   # enable evict="compress"
 ```
 
+<!-- tab: TypeScript -->
+
+```bash
+npm i @cendor/contextkit
+npm i @cendor/squeeze                      # enable evict: "compress" (optional peer)
+```
+
+<!-- /tabs -->
+
 ## Quickstart
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from cendor.contextkit import Context, Block
@@ -24,6 +39,24 @@ ctx.add(Block(user_msg, priority=9, pin=True, role="user"))
 messages = ctx.assemble()          # provider-ready messages, guaranteed within budget
 print(ctx.report())                # the receipt: kept / truncated / dropped + token math
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { Context, Block } from '@cendor/contextkit';
+
+const ctx = new Context({ budgetTokens: 8000, model: 'claude-opus-4-8',
+                          reserveOutput: 1000, order: 'attention' });
+ctx.add(new Block(systemPrompt, { priority: 10, pin: true, role: 'system' }));
+ctx.add(new Block(retrievedDocs, { priority: 5, evict: 'compress' }));            // @cendor/squeeze if installed
+ctx.add(new Block({ messages: chatHistory, priority: 3, evict: 'drop_oldest' })); // peels OLDEST turns
+ctx.add(new Block(userMsg, { priority: 9, pin: true, role: 'user' }));
+
+const messages = await ctx.assemble();  // one async assemble() (sync + async collapsed)
+console.log(ctx.report());              // the receipt: kept / truncated / dropped + token math
+```
+
+<!-- /tabs -->
 
 > **See it in the stack.** The full support-agent recipe that assembles, compresses, budgets,
 > and audits together is in the [Cookbook](/cookbook).
@@ -85,9 +118,22 @@ still works, and the reversible `Handle` is surfaced on `BlockDecision.handle`.
 ## Functions & classes
 
 ### `Context()`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 Context(budget_tokens, model, reserve_output=0, compressor=None, order="default", image_tokens=0)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+new Context({ budgetTokens, model, reserveOutput = 0, compressor = null,
+              order = 'default', imageTokens = 0 })
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|
@@ -104,10 +150,24 @@ Methods: `add(block)`, `assemble()` → provider-ready messages, `report()` → 
 roles to what each API accepts).
 
 ### `Block()`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 Block(content=None, priority=0, pin=False, evict="drop_oldest",
       role="user", summarizer=None, keep="head", messages=None)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+new Block(content, { priority = 0, pin = false, evict = 'drop_oldest',
+                     role = 'user', summarizer = null, keep = 'head' })
+new Block({ messages, priority, evict })   // a chat-history block
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|

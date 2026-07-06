@@ -2,8 +2,10 @@
 
 **Production plumbing for LLM applications.**
 
-Composable Python primitives for context, cost, testing, and governance — the layer beneath your
-LLM app. Framework-agnostic · local-first · offline by default · Apache-2.0.
+Composable primitives for context, cost, testing, and governance — the layer beneath your
+LLM app. Framework-agnostic · local-first · offline by default · Apache-2.0. Available for
+**Python** (`cendor.*` on PyPI) and **TypeScript/JavaScript** (`@cendor/*` on npm) — see
+[Languages & parity](languages.md).
 
 ## The problem
 
@@ -26,10 +28,22 @@ client change. Calling a provider SDK directly? One `instrument()` wrap adds the
 
 ## The fix: wrap your client once, every tool plugs in
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from cendor.core import instrument
 client = instrument(OpenAI())   # ← the one line you change
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { instrument } from '@cendor/core';
+const client = instrument(new OpenAI());   // ← the one line you change
+```
+
+<!-- /tabs -->
 
 That single wrap publishes every LLM and tool call onto an in-process **event bus**. Each library
 *subscribes* — none patches your client, none imports another — so you add budgeting, recording, or
@@ -90,9 +104,15 @@ contextkit  →  squeeze  →  tokenguard  →  cassette  →  acttrace
  assemble       compress      budget         test         audit
 ```
 
-All six are **published on PyPI** and green in CI (offline tests · ruff · mypy).
+All six are **published on PyPI** (Python) and as **`@cendor/*` on npm** (TypeScript/JS), green
+in CI in both languages. Cross-language artifacts interoperate byte-for-byte — a cassette
+recorded in Python replays in TypeScript, an audit chain written in TypeScript verifies in
+Python. The full feature split is in [Languages & parity](languages.md).
 
 ## Install
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```bash
 pip install cendor-libs       # the whole stack (`cendor` is an alias)
@@ -100,6 +120,28 @@ pip install cendor-tokenguard # or any single tool (pulls cendor-core transitive
 ```
 
 Every package imports under the `cendor.*` namespace.
+
+<!-- tab: TypeScript -->
+
+```bash
+npm i @cendor/libs            # the whole stack (umbrella)
+npm i @cendor/tokenguard      # or any single tool (pulls @cendor/core transitively)
+```
+
+Every package lives under the `@cendor/*` npm scope. ESM-only; Node LTS first, edge runtimes
+supported.
+
+<!-- /tabs -->
+
+## Libraries or the SDK?
+
+These docs cover the six libraries — the door for teams that already have a loop (LangChain,
+LlamaIndex, or direct provider-SDK calls) and want governance **beneath** it. Cendor's second
+door is [**cendor-sdk**](/docs/sdk): a governed agent loop (`Agent`, `tool`, `run`) built *on*
+these six libraries, for teams starting fresh. Both doors expose the same primitives — `budget`,
+`guard`, `Policy`, `AuditLog`, `trace` are the same objects — so you can mix them in one process
+and move between them without a migration. Unsure which fits?
+[FAQ → libraries or SDK](/docs/sdk/faq).
 
 > **Prefer to read code?** The [Cookbook](/cookbook) has the full-stack support agent — one
 > `instrument()` call, all six tools cooperating — as one copy-paste block.
@@ -110,5 +152,7 @@ Every package imports under the `cendor.*` namespace.
 - **[Architecture](architecture.md)** — the layers, the `instrument()` seam, the event bus, and the dependency graph.
 - **[Providers & Integration](providers.md)** — OpenAI / Anthropic / Bedrock / Gemini / Ollama, managed runtimes via OpenTelemetry, and LangChain / LangGraph via a callback handler.
 - **[Guides & Recipes](guides.md)** — copy-paste recipes, including the full-stack support agent.
+- **[Languages & parity](languages.md)** — Python ↔ TypeScript: what's ported, what's Python-only.
 - **[Benchmarks](benchmarks.md)** — reproducible, offline numbers for every package.
 - **[FAQ](faq.md)** — common questions.
+- **[The SDK docs](/docs/sdk)** — the second door: a governed agent loop built on these libraries.

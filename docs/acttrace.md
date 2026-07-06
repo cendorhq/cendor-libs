@@ -8,11 +8,25 @@ chain you can verify offline, not from a server: no database, no infrastructure,
 > record-keeping and human-oversight obligations) — it is not a compliance guarantee, and the
 > bundled control mappings are starting templates for your compliance team to adjust.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```bash
 pip install cendor-acttrace
 ```
 
+<!-- tab: TypeScript -->
+
+```bash
+npm i @cendor/acttrace
+```
+
+<!-- /tabs -->
+
 ## Quickstart
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from cendor.core import instrument
@@ -28,6 +42,26 @@ with audit.decision(input=application, actor="agent") as d:
 
 audit.export("evidence_q3.jsonl", framework="eu_ai_act")     # evidence pack
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { instrument } from '@cendor/core';
+import { AuditLog } from '@cendor/acttrace';
+
+const client = instrument(new OpenAI());
+const audit = new AuditLog('loan_triage', { riskTier: 'high', signingKey: '…' });  // auto-subscribes
+
+await audit.decision(async (d) => {
+  const resp = await client.chat.completions.create({ model: 'gpt-4o', messages: msgs }); // auto-logged
+  d.record({ model: 'gpt-4o', prompt_id: 'triage@v3' });     // cost/context captured for free
+  d.humanOversight('ops@bank', 'approved', 'manual check');
+}, { input: application, actor: 'agent' });
+
+audit.export('evidence_q3.jsonl', 'eu_ai_act');              // evidence pack
+```
+
+<!-- /tabs -->
 
 ```bash
 acttrace verify evidence_q3.jsonl --key "…"   # re-walks the chain + signatures; non-zero if broken
@@ -96,6 +130,9 @@ left untouched.
 
 **`scan` / `redact` — pure, no side effects.** Use them anywhere, independent of the chain:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from cendor.acttrace import scan, redact, Policy
 
@@ -106,6 +143,21 @@ scan("card 4111 1111 1111 1111 for alice@example.com")
 cleaned, findings = redact({"note": "ping alice@example.com"}, Policy.default())
 # cleaned == {"note": "ping <redacted>"}   — findings report counts, never the raw value
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { scan, redact, Policy } from '@cendor/acttrace';
+
+scan('card 4111 1111 1111 1111 for alice@example.com');
+// [Finding(credit_card · financial · critical · flag · 1),
+//  Finding(email · pii · warning · redact · 1)]
+
+const [cleaned, findings] = redact({ note: 'ping alice@example.com' }, Policy.default());
+// cleaned == { note: 'ping <redacted>' }   — findings report counts, never the raw value
+```
+
+<!-- /tabs -->
 
 `scan()` reports **counts only** — the raw offending value is never returned, so you can't
 accidentally chain a secret. `redact()` scrubs only the `redact`/`block` categories and returns
@@ -177,10 +229,23 @@ Construct it once; it auto-subscribes to the bus and every instrumented call the
 becomes an entry. Usable as a context manager (auto-`detach()` on exit); `log.head` is the
 current chain head, `log.detach()` stops subscribing.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 AuditLog(system, risk_tier="limited", path=None, signing_key=None,
          redact=True, redactor=None, flag_on_redact=True, policy=None, max_entries=None)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+new AuditLog(system, { riskTier = 'limited', path = null, signingKey = null,
+                       redact = true, redactor = null, flagOnRedact = true,
+                       policy = null, maxEntries = null })
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|
@@ -276,9 +341,20 @@ Re-walks the chain offline and returns `(ok, detail)`; with `key`, also verifies
 signatures. Never raises on a missing/corrupt file. See
 [the trust boundary](#signing-and-the-trust-boundary) for when `_meta` is authoritative.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 verify(path, key=None, expected_head=None, expect_entries=None) -> tuple[bool, str]
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+verify(path, { key, expectedHead, expectEntries })   // -> [ok, detail]
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|
@@ -355,6 +431,9 @@ guard on `core`'s interceptor seam (the same seam `tokenguard` uses to block). `
 you that guard in one line: it reuses the same `scan()` engine, enforces the policy's action per
 category, and records each decision on your `AuditLog`.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from cendor.core.instrument import add_interceptor
 from cendor.acttrace import AuditLog, Policy, guard
@@ -362,6 +441,19 @@ from cendor.acttrace import AuditLog, Policy, guard
 log = AuditLog(system="support_bot", risk_tier="high", path="audit.jsonl", signing_key="ops-key")
 add_interceptor(guard(Policy.gdpr(), audit=log))   # enforce + record — block / warn / redact
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { addInterceptor } from '@cendor/core';
+import { AuditLog, Policy, guard } from '@cendor/acttrace';
+
+const log = new AuditLog('support_bot', { riskTier: 'high', path: 'audit.jsonl',
+                                          signingKey: 'ops-key' });
+addInterceptor(guard(Policy.gdpr(), log));   // enforce + record — block / warn / redact
+```
+
+<!-- /tabs -->
 
 Per outbound call (inspecting `call.messages` for an LLM, `call.arguments` for a tool), the
 policy resolves each detected category to an action:
@@ -412,6 +504,9 @@ key="ops-key")` confirms the chain (including that flag) offline.
 **Rolling your own.** `guard()` is a thin wrapper over the seam; you can write the interceptor
 by hand for a bespoke rule — return `MISS` to proceed, `audit.flag(...)` then `raise` to block:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 import re
 from cendor.core.instrument import add_interceptor, MISS
@@ -430,6 +525,28 @@ def block_pii(call):
 
 add_interceptor(block_pii)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { addInterceptor, MISS, LLMCall } from '@cendor/core';
+import { PolicyViolation } from '@cendor/acttrace';
+
+const SSN = /\b\d{3}-\d{2}-\d{4}\b/;         // YOUR bespoke rule
+
+addInterceptor((call) => {
+  if (call instanceof LLMCall) {
+    const text = call.messages.map((m) => (typeof m.content === 'string' ? m.content : '')).join(' ');
+    if (SSN.test(text)) {
+      log.flag('SSN in prompt', { action: 'blocked', severity: 'critical', data: 'us_ssn' }); // record
+      throw new PolicyViolation('PII must not be sent to the model');                         // enforce
+    }
+  }
+  return MISS;
+});
+```
+
+<!-- /tabs -->
 
 ## Plugs into the stack
 

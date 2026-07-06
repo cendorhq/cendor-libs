@@ -4,11 +4,25 @@ Record an agent run once; replay it forever — deterministic, offline, and free
 (HTTP-only), it captures the *whole* run: every LLM call **and** tool call, in order. The
 fixture layer beneath your eval platform.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```bash
 pip install cendor-cassette
 ```
 
+<!-- tab: TypeScript -->
+
+```bash
+npm i @cendor/cassette
+```
+
+<!-- /tabs -->
+
 ## Quickstart
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from cendor.core import instrument
@@ -22,6 +36,24 @@ def test_triage():
     assert "refund" in result.tools_called
     assert cassette.semantic_match(result.answer, "offers a refund")
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { instrument } from '@cendor/core';
+import * as cassette from '@cendor/cassette';
+
+const client = instrument(new OpenAI());   // the same instrumented seam you run in production
+
+test('triage happy path', () =>
+  cassette.using('triage_happy_path.json', async () => {  // record first run, replay after (auto)
+    const result = await myAgent.run('My card was charged twice');
+    expect(result.toolsCalled).toContain('refund');
+    expect(cassette.semanticMatch(result.answer, 'offers a refund')).toBe(true);
+  }));
+```
+
+<!-- /tabs -->
 
 > **See it in the stack.** The full agent-under-test recipe is in the [Cookbook](/cookbook).
 
@@ -60,10 +92,23 @@ path (e.g. keyed on `PYTEST_XDIST_WORKER`).
 ## Functions & classes
 
 ### `@cassette.use()` / `cassette.using()`
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 @cassette.use(path, mode="auto", normalizer=None, redact=True)     # decorator
 with cassette.using(path, mode="auto", normalizer=None, redact=True): ...   # context manager
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+const wrapped = cassette.use(path, { mode: 'auto', normalizer, redact: true })(fn);  // wrapper form
+await cassette.using(path, { mode: 'auto' }, async () => { /* ... */ });             // scoped form
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|
@@ -75,9 +120,20 @@ with cassette.using(path, mode="auto", normalizer=None, redact=True): ...   # co
 ### `semantic_match()`
 Assert *meaning*, not bytes — for output that won't be byte-identical.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 semantic_match(actual, expected, threshold=0.6, scorer=None)  # -> bool
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+cassette.semanticMatch(actual, expected, 0.6, scorer)   // -> boolean
+```
+
+<!-- /tabs -->
 
 The default `lexical_score` is offline, deterministic, and recall-oriented (it tolerates extra
 text but accepts negations/supersets). Pass a `scorer` for negation-sensitive checks — see

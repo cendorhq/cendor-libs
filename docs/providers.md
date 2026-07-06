@@ -30,9 +30,17 @@ wraps **every** entrypoint it finds, so whichever API your code calls is capture
 
 ## Per-provider setup
 
+> **TypeScript coverage.** `@cendor/core`'s `instrument()` ships **OpenAI (Chat + Responses) and
+> Anthropic** today — the sections below carry tabs for those two. Bedrock, Gemini, Ollama, the
+> OpenTelemetry ingestion path, and the LangChain handler are **Python-only** for now; the seam is
+> identical, so they land per the [parity matrix](languages.md).
+
 ### OpenAI (Chat Completions + Responses API)
 `instrument()` wraps both entrypoints; the Responses API reports usage differently, and it's all
 normalized into the same `Usage`.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from openai import OpenAI
@@ -41,20 +49,50 @@ client = instrument(OpenAI())                       # env: OPENAI_API_KEY
 client.chat.completions.create(model="gpt-4o", messages=[...])   # Chat Completions
 client.responses.create(model="gpt-4o", input="…")               # Responses API (also captured)
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import OpenAI from 'openai';
+import { instrument } from '@cendor/core';
+const client = instrument(new OpenAI());            // env: OPENAI_API_KEY
+await client.chat.completions.create({ model: 'gpt-4o', messages: [/* ... */] });  // Chat Completions
+await client.responses.create({ model: 'gpt-4o', input: '…' });                    // Responses API (also captured)
+```
+
+<!-- /tabs -->
 The Responses API (default for new OpenAI apps and the Agents SDK) reports `input_tokens`/
 `output_tokens`, with cached tokens under `input_tokens_details.cached_tokens` and reasoning under
 `output_tokens_details.reasoning_tokens` — all normalized.
 
 ### Anthropic
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from anthropic import Anthropic
 client = instrument(Anthropic())                    # env: ANTHROPIC_API_KEY
 client.messages.create(model="claude-sonnet-4-6", max_tokens=256, messages=[...])
 ```
 
+<!-- tab: TypeScript -->
+
+```ts
+import Anthropic from '@anthropic-ai/sdk';
+import { instrument } from '@cendor/core';
+const client = instrument(new Anthropic());         // env: ANTHROPIC_API_KEY
+await client.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 256, messages: [/* ... */] });
+```
+
+<!-- /tabs -->
+
 ### Azure AI Foundry (models via the OpenAI SDK)
 Detected as `openai` (same SDK shape). For the Foundry **Agent Service** (server-side loop), don't
 `instrument()` — ingest its telemetry (see [Managed runtimes](#managed-runtimes-opentelemetry-ingestion)).
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from openai import AzureOpenAI
@@ -65,9 +103,27 @@ client = instrument(AzureOpenAI(
 client.chat.completions.create(model="<your-deployment-name>", messages=[...])  # detected as openai
 ```
 
+<!-- tab: TypeScript -->
+
+```ts
+import { AzureOpenAI } from 'openai';
+import { instrument } from '@cendor/core';
+// AzureOpenAI has the same chat.completions.create shape, so it's detected as openai:
+const client = instrument(new AzureOpenAI({
+  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+  apiKey: process.env.AZURE_OPENAI_API_KEY,
+  apiVersion: '2024-10-21' }));
+await client.chat.completions.create({ model: '<your-deployment-name>', messages: [/* ... */] });
+```
+
+<!-- /tabs -->
+
 ### Google Gemini
 Both SDKs are detected — the current `google-genai` (model from the kwarg) and the legacy
 `google-generativeai` (model read from the `GenerativeModel` object).
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 # Current SDK (google-genai) — the recommended shape:
@@ -84,7 +140,18 @@ model = instrument(genai.GenerativeModel("gemini-1.5-pro"))
 model.generate_content("…")     # model id read from the GenerativeModel, so the call is priced
 ```
 
+<!-- tab: TypeScript -->
+
+> **Python only (for now).** Gemini detection isn't yet in `@cendor/core`'s `instrument()` — see
+> the [parity matrix](languages.md).
+
+<!-- /tabs -->
+
 ### AWS Bedrock (Converse API)
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 import boto3
 client = instrument(boto3.client("bedrock-runtime", region_name="us-east-1"))
@@ -92,18 +159,39 @@ client.converse(modelId="anthropic.claude-…",
                 messages=[{"role": "user", "content": [{"text": "…"}]}])   # AWS credentials
 ```
 
+<!-- tab: TypeScript -->
+
+> **Python only (for now).** Bedrock detection isn't yet in `@cendor/core`'s `instrument()` —
+> see the [parity matrix](languages.md).
+
+<!-- /tabs -->
+
 ### Ollama (local, free)
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 import ollama
 client = instrument(ollama.Client())
 client.chat(model="llama3", messages=[...])   # no key
 ```
 
+<!-- tab: TypeScript -->
+
+> **Python only (for now).** Ollama detection isn't yet in `@cendor/core`'s `instrument()` — see
+> the [parity matrix](languages.md).
+
+<!-- /tabs -->
+
 ## Managed runtimes (OpenTelemetry ingestion)
 
 When a runtime owns the agent loop server-side and only emits `gen_ai.*` spans, feed the span
 attributes to `core.otel.ingest(...)` so the call still lands on the bus — and `tokenguard` /
 `acttrace` consume it as usual:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 from cendor.core import otel
@@ -115,6 +203,13 @@ otel.ingest({
 })   # -> emits a normalized LLMCall
 ```
 
+<!-- tab: TypeScript -->
+
+> **Python only (for now).** `otel.ingest()` isn't yet in `@cendor/core` — see the
+> [parity matrix](languages.md).
+
+<!-- /tabs -->
+
 `contextkit` / `squeeze` apply only when **you** assemble the prompt; if a managed runtime owns
 context internally, those two have nothing to shape while the other three still work.
 
@@ -125,6 +220,9 @@ wrapping. `langchain_openai` calls `client.with_raw_response.create().parse()` (
 `instrument()` sees a usage-less `LegacyAPIResponse`) and consumes streams via a context manager —
 so **instrumenting LangChain's inner client is unsupported** (usage is lost; older builds even
 crashed on streaming). Use the callback handler instead:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
 
 ```python
 pip install "cendor-core[langchain]"
@@ -141,6 +239,13 @@ llm.invoke("hi")
 # LangGraph: attach once via config — it propagates to every node + tool, correlated by run:
 agent.invoke({"messages": [...]}, config={"callbacks": [handler]})
 ```
+
+<!-- tab: TypeScript -->
+
+> **Python only (for now).** A LangChain.js callback handler isn't yet in `@cendor/core` — see
+> the [parity matrix](languages.md). Calling a provider SDK directly? `instrument()` it instead.
+
+<!-- /tabs -->
 
 The handler reads LangChain's own `usage_metadata` (which carries **reasoning** and **cached**
 tokens), prices each call offline, emits normalized `LLMCall`/`ToolCall`, and stamps a
