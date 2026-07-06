@@ -113,6 +113,8 @@ compress(content, kind="auto", target_tokens=None, model="gpt-4o", fidelity="bal
 
 <!-- tab: TypeScript -->
 
+<!-- ts-check: skip -->
+
 ```ts
 compress(content, { kind = 'auto', targetTokens = null,
                     model = 'gpt-4o', fidelity = 'balanced' })   // -> [small, handle]

@@ -103,6 +103,8 @@ with cassette.using(path, mode="auto", normalizer=None, redact=True): ...   # co
 
 <!-- tab: TypeScript -->
 
+<!-- ts-check: skip -->
+
 ```ts
 const wrapped = cassette.use(path, { mode: 'auto', normalizer, redact: true })(fn);  // wrapper form
 await cassette.using(path, { mode: 'auto' }, async () => { /* ... */ });             // scoped form

@@ -239,6 +239,8 @@ AuditLog(system, risk_tier="limited", path=None, signing_key=None,
 
 <!-- tab: TypeScript -->
 
+<!-- ts-check: skip -->
+
 ```ts
 new AuditLog(system, { riskTier = 'limited', path = null, signingKey = null,
                        redact = true, redactor = null, flagOnRedact = true,
@@ -349,6 +351,8 @@ verify(path, key=None, expected_head=None, expect_entries=None) -> tuple[bool, s
 ```
 
 <!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
 
 ```ts
 verify(path, { key, expectedHead, expectEntries })   // -> [ok, detail]

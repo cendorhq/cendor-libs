@@ -75,7 +75,8 @@ const handle = budget({ usd: 0.30, onExceed: 'downgrade', downgrade: { 'gpt-4o':
     ctx.add(new Block(docs, { priority: 5, evict: 'compress' }));  // @cendor/squeeze shrinks if oversized
     ctx.add(new Block(userMsg, { priority: 9, pin: true, role: 'user' }));
     return audit.decision(async (d) => {
-      const messages = await ctx.assemble();
+      // contextkit returns provider-ready messages; cast for openai's strict param type
+      const messages = (await ctx.assemble()) as OpenAI.Chat.ChatCompletionMessageParam[];
       const resp = await track({ feature: 'support_bot', userId: 'alice' }, () =>
         client.chat.completions.create({ model: 'gpt-4o', messages }));
       d.record({ model: 'gpt-4o', prompt_id: 'support@v2' });

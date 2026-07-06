@@ -136,6 +136,8 @@ budget(usd=None, tokens=None, on_exceed="raise", scope=None,
 
 <!-- tab: TypeScript -->
 
+<!-- ts-check: skip -->
+
 ```ts
 budget({ usd, tokens, onExceed = 'raise', scope,
          downgrade, outputReserve = 256, reasoningReserve = 0 })(fn)   // decorator form

@@ -128,6 +128,8 @@ Context(budget_tokens, model, reserve_output=0, compressor=None, order="default"
 
 <!-- tab: TypeScript -->
 
+<!-- ts-check: skip -->
+
 ```ts
 new Context({ budgetTokens, model, reserveOutput = 0, compressor = null,
               order = 'default', imageTokens = 0 })
@@ -160,6 +162,8 @@ Block(content=None, priority=0, pin=False, evict="drop_oldest",
 ```
 
 <!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
 
 ```ts
 new Block(content, { priority = 0, pin = false, evict = 'drop_oldest',
