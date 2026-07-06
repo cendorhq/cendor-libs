@@ -6,7 +6,7 @@
 [project]
 name = "cendor"
 version = "1.1.0"
-description = "Brand alias for the Cendor stack — installs cendor-libs (the full suite). Prefer `pip install cendor-libs`."
+description = "Brand alias that installs the full Cendor stack (cendor-libs). Prefer: pip install cendor-libs."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 readme = "README.md"

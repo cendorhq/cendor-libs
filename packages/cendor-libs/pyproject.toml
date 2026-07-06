@@ -5,7 +5,7 @@
 [project]
 name = "cendor-libs"
 version = "1.0.0"
-description = "The Cendor stack — installs the full suite of composable AI-engineering primitives."
+description = "All six Cendor libraries in one install — plain building blocks for LLM apps: context, cost, compression, testing, and a tamper-evident audit trail."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 readme = "README.md"

@@ -1,7 +1,7 @@
 [project]
 name = "cendor-acttrace"
 version = "1.2.1"
-description = "Audit: a tamper-evident, hash-chained, auto-populated record of every AI decision — verifiable offline. Evidence, not a compliance guarantee."
+description = "An automatic, tamper-evident log of your AI's decisions — every model and tool call is recorded and can be verified offline; change any past entry and the check fails."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "Raghav Mishra" }]

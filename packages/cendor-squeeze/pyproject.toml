@@ -1,7 +1,7 @@
 [project]
 name = "cendor-squeeze"
 version = "1.0.1"
-description = "Compress: shrink verbose context (JSON/logs/prose) 60-90% — reversibly. compress() returns a handle; expand() restores the original."
+description = "Shrink long prompts to hit a token budget and expand them back exactly — the same input always produces the same output."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "Raghav Mishra" }]

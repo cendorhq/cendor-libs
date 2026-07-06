@@ -1,7 +1,7 @@
 [project]
 name = "cendor-tokenguard"
 version = "1.1.1"
-description = "Budget: pre-flight cost caps, spend attribution, and circuit-breakers for LLM calls."
+description = "Spending limits for LLM calls: stop a call before it runs if it would blow the budget, and see cost broken down per feature."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "Raghav Mishra" }]
