@@ -231,10 +231,26 @@ non-deterministic — reach for it only when Tiers 1–3 can't express the check
 byte-for-byte, so a `rerecord` flags *everything* — noise. `semantic_drift(threshold=0.8,
 scorer=None)` re-scores each divergence and keeps only those genuinely different in meaning:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 real = cassette.semantic_drift(threshold=0.8, scorer=cassette.local_embedding_scorer())
 assert not real, f"meaningful regressions: {real}"   # cosmetic rewording is ignored
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { semanticDrift } from '@cendor/cassette';
+
+// default lexical scorer; pass a BYO embedding scorer for meaning-aware drift (no bundled scorer in TS)
+const real = semanticDrift(0.8);
+if (real.length) throw new Error(`meaningful regressions: ${JSON.stringify(real)}`);   // cosmetic rewording ignored
+```
+
+<!-- /tabs -->
+
 
 ## Plugs into the stack
 

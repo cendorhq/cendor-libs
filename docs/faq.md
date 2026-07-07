@@ -1,8 +1,9 @@
 # FAQ
 
 ### Is this a web service / does it need a server or account?
-No. These are **plain Python libraries** that run in your process — no server, no hosted account, no
-network by default. "API" in the docs means the *Python interface* you import and call.
+No. These are **plain libraries** (Python and TypeScript) that run in your process — no server, no
+hosted account, no network by default. "API" in the docs means the *interface* you import and call,
+not a web endpoint.
 
 ### Does it work offline / without API keys?
 Yes for everything that doesn't call a model: token counting, pricing, context assembly, compression,
@@ -10,9 +11,9 @@ the audit hash chain, and spend reports all run offline. Only actual provider ca
 counts are local; prices ship in a bundled snapshot.
 
 ### Which providers are supported?
-`instrument()` supports **OpenAI, Anthropic, AWS Bedrock, Google Gemini, and Ollama** directly, plus
-an OpenTelemetry **ingestion** path (`core.otel.ingest`) for managed runtimes (Foundry Agent Service,
-OpenAI Assistants) where you don't own the loop. OpenAI wraps both Chat Completions and the Responses
+`instrument()` supports **OpenAI, Anthropic, Hugging Face, AWS Bedrock, Google Gemini, and Ollama**
+directly, plus an OpenTelemetry **ingestion** path (`core.otel.ingest`) for managed runtimes (Foundry
+Agent Service, OpenAI Assistants) where you don't own the loop. OpenAI wraps both Chat Completions and the Responses
 API; Gemini detects both the current `google-genai` SDK and the legacy `google-generativeai`. See
 [Providers & Integration](providers.md).
 

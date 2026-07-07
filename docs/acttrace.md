@@ -279,12 +279,28 @@ the retained window — so eviction never touches the chain. Every entry is stil
 and `verify(path, …)` re-walks the *full* chain from the file; `export()` likewise reads the file
 when memory has been bounded, so the evidence pack stays complete.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 log = AuditLog(system="agent", path="audit.jsonl", max_entries=10_000)   # bound + path
 # … a long run: log.entries holds ≤ 10_000; the file holds all of them …
 log.evicted_from_memory          # how many left memory (never silent; 0 when unbounded)
 verify("audit.jsonl", expected_head=log.head)   # validates the complete on-disk chain
 ```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { AuditLog, verify } from '@cendor/acttrace';
+
+const log = new AuditLog('agent', { path: 'audit.jsonl', maxEntries: 10_000 });   // bound + path
+// … a long run: log.entries holds ≤ 10_000; the file holds all of them …
+log.evictedFromMemory;            // how many left memory (never silent; 0 when unbounded)
+verify('audit.jsonl', { expectedHead: log.head });   // validates the complete on-disk chain
+```
+
+<!-- /tabs -->
 
 - **Always pair `max_entries` with `path=`.** Bounding without a file discards evicted entries
   entirely (there's nowhere to keep them) — acttrace raises a `BoundedMemoryWithoutPathWarning`.
@@ -302,11 +318,27 @@ verify("audit.jsonl", expected_head=log.head)   # validates the complete on-disk
 A context manager that groups a unit of work; auto-captured calls inside it are tagged to
 the decision. Yields a handle `d`.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 with audit.decision(input=application, actor="agent") as d:
     d.record(model="gpt-4o", prompt_id="triage@v3")            # decision metadata
     d.human_oversight(reviewer="ops@bank", action="approved", note="manual check")  # Art. 14
 ```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+await audit.decision(async (d) => {
+  d.record({ model: 'gpt-4o', prompt_id: 'triage@v3' });         // decision metadata
+  d.humanOversight('ops@bank', 'approved', 'manual check');      // Art. 14
+}, { input: application, actor: 'agent' });
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|
@@ -323,9 +355,22 @@ the flag; your guard makes and enforces the decision (see
 [Enforcing a policy](#enforcing-a-policy-with-guard)). Both forms **return** the
 chained `AuditEntry`.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 flag(reason, *, action="flagged", severity="warning", data=None, **fields)
 ```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+flag(reason, { action = 'flagged', severity = 'warning', data = null })   // -> AuditEntry
+```
+
+<!-- /tabs -->
 
 | Param | Type | Default | What it does |
 |---|---|---|---|
@@ -340,9 +385,22 @@ flag(reason, *, action="flagged", severity="warning", data=None, **fields)
 Writes the chain as a JSONL evidence pack; with a `framework`, annotates each entry with
 control IDs and writes the `_meta` summary a reviewer scans first.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 export(path, framework=None)   # framework: "eu_ai_act" | "iso_42001" | "gdpr" | "nist_rmf"
 ```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+audit.export(path, framework)   // framework: 'eu_ai_act' | 'iso_42001' | 'gdpr' | 'nist_rmf' | null
+```
+
+<!-- /tabs -->
 
 ### `verify()`
 Re-walks the chain offline and returns `(ok, detail)`; with `key`, also verifies HMAC

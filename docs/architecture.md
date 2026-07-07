@@ -129,6 +129,9 @@ The tools wrap *around and inside* your existing loop, at four points in a call'
 - **Wrap-around** (they ride the instrumented call): `tokenguard` (pre-flight cost check, post-flight
   record), `cassette` (record/replay, test-time), `acttrace` (append to the audit log).
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
 ```python
 from openai import OpenAI
 from cendor.core import instrument
@@ -149,6 +152,35 @@ def handle(user_msg: str) -> str:
         resp = client.chat.completions.create(model="gpt-4o", messages=ctx.assemble())
     return resp.choices[0].message.content
 ```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import OpenAI from 'openai';
+import { instrument } from '@cendor/core';
+import { Context, Block } from '@cendor/contextkit';
+import { budget, track } from '@cendor/tokenguard';
+import { AuditLog } from '@cendor/acttrace';
+
+const client = instrument(new OpenAI());                       // wrap once, at startup
+const audit  = new AuditLog('support_bot', { riskTier: 'limited' });   // auto-subscribes
+
+const handle = budget({ usd: 0.30, onExceed: 'downgrade', downgrade: { 'gpt-4o': 'gpt-4o-mini' } })(
+  async (userMsg: string) => {
+    const ctx = new Context({ budgetTokens: 8000, model: 'gpt-4o', reserveOutput: 500 });
+    ctx.add(new Block(SYSTEM_PROMPT, { priority: 10, pin: true, role: 'system' }));
+    ctx.add(new Block(retrievedDocs, { priority: 5, evict: 'compress' }));   // squeeze runs here
+    ctx.add(new Block(userMsg, { priority: 9, pin: true, role: 'user' }));
+    return track({ feature: 'support_bot', userId: 'alice' }, async () => {
+      const resp = await client.chat.completions.create({ model: 'gpt-4o', messages: await ctx.assemble() });
+      return resp.choices[0].message.content;
+    });
+  });
+```
+
+<!-- /tabs -->
 
 The same `Context`/`tokenguard` code is identical across providers, because they operate on messages
 and on the instrumented call, not on a vendor SDK.

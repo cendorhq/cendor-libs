@@ -1,8 +1,9 @@
 # Providers & Integration
 
 `instrument()` identifies a client by its **shape**, not by model name — so new models from a
-provider work the day they ship. It supports five providers directly, an OpenTelemetry ingestion
-path for managed runtimes, and a callback handler for **LangChain / LangGraph** (see
+provider work the day they ship. It supports six providers directly — **OpenAI, Anthropic, Hugging
+Face, Google Gemini, AWS Bedrock, and Ollama** — an OpenTelemetry ingestion path for managed
+runtimes, and a callback handler for **LangChain / LangGraph** (see
 [Frameworks](#frameworks-langchain--langgraph)).
 
 ## How detection works
@@ -11,6 +12,7 @@ path for managed runtimes, and a callback handler for **LangChain / LangGraph** 
 %%{init: {"flowchart": {"htmlLabels": false}} }%%
 graph TD
     A["instrument(client)"] --> B{"client has…"}
+    B -->|"chat_completion (InferenceClient)"| HF["huggingface"]
     B -->|"chat.completions.create"| OAI["openai"]
     B -->|"responses.create"| OAI
     B -->|"messages.create"| ANT["anthropic"]
@@ -195,6 +197,38 @@ import { Ollama } from 'ollama';
 import { instrument } from '@cendor/core';
 const client = instrument(new Ollama());
 await client.chat({ model: 'llama3.2', messages: [{ role: 'user', content: '…' }] });   // no key
+```
+
+<!-- /tabs -->
+
+### Hugging Face
+`huggingface_hub`'s `InferenceClient` exposes `chat_completion(...)`, whose response is
+OpenAI-shaped. `instrument()` binds to it **before** the client's OpenAI-compatible
+`chat.completions.create`, so the call is attributed to `huggingface` rather than `openai`. The
+model is a Hub id or an Inference Endpoint URL.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from huggingface_hub import InferenceClient
+client = instrument(InferenceClient())          # env: HF_TOKEN / HUGGINGFACEHUB_API_TOKEN
+client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "…"}])   # OpenAI-shaped; attributed to huggingface
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { InferenceClient } from '@huggingface/inference';
+import { instrument } from '@cendor/core';
+const client = instrument(new InferenceClient(process.env.HF_TOKEN));   // env: HF_TOKEN
+await client.chatCompletion({
+  model: 'meta-llama/Llama-3.1-8B-Instruct',
+  messages: [{ role: 'user', content: '…' }] });   // OpenAI-shaped; attributed to huggingface
 ```
 
 <!-- /tabs -->
