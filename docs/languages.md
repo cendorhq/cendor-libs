@@ -81,7 +81,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | cassette `local_embedding_scorer` | ✅ | **Py-only** | TS ships a declared stub; the static-embedding scorer is Py-only for now |
 | cassette storage | fs | fs + memory (+ IndexedDB-shaped) | pluggable adapters |
 | **acttrace** chain / verify / sign | ✅ | ✅ | cross-language verify (HMAC + `_meta`) |
-| acttrace detectors | ✅ regex **+ Presidio NER** | ✅ regex/pattern (20 detectors) | **NER is Py-only** — `ner_available()` → `false` in TS |
+| acttrace detectors | ✅ regex **+ Presidio NER** | ✅ regex/pattern (20 detectors) **+ NER** | 🚧 NER via optional `compromise` (English-only, lighter than Presidio — not parity); `nerAvailable()` reports presence |
 
 ## Parity matrix — SDK
 
@@ -125,7 +125,10 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
   boto-shaped `converse()`; aws-sdk-v3's `send(ConverseCommand)` is captured via the SDK provider rather
   than `instrument()`. (Keyless Entra-ID auth for Azure is supported in both languages — TS via the
   `azureADTokenProvider` option.)
-- **No Presidio NER in TypeScript** — regex/pattern detectors only, and
-  `ner_available()` says so at runtime.
+- **NER backends differ by language, and it's not parity.** Python uses Microsoft Presidio (spaCy
+  transformer models); TypeScript uses the optional `compromise` engine (`npm install compromise`) —
+  synchronous (acttrace's tamper-evident append is sync, so an async transformer NER can't plug in),
+  English-only, and with lower recall/precision. Treat the TS NER as an extra layer, not a sole PII
+  control. `nerAvailable()` reports whether the backend is installed.
 - **Docs code samples default to Python** where a tab pair isn't shown; the mapping rules above
   translate mechanically.

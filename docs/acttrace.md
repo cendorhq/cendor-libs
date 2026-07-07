@@ -198,11 +198,12 @@ defaults** — you turn each on explicitly:
   `high_entropy_secret` detector for opaque generic secrets the anchored patterns miss. It is
   **noisy** by nature (hashes, base64, long random ids look high-entropy), which is why it ships
   off by default — enable it only where the recall is worth the false positives.
-- **NER-backed redaction** (`pip install "cendor-acttrace[ner]"`) — regex can't catch free-text
-  **names/addresses**; `ner_redactor(...)` plugs [Microsoft Presidio](https://microsoft.github.io/presidio/)
-  in as a `redactor=` for `AuditLog`. `ner_available()` reports whether the extra is installed;
-  `ner_redactor()` raises a clear `ImportError` (with the install hint) when it isn't. Presidio runs
-  locally — still no network.
+- **NER-backed redaction** — regex can't catch free-text **names/addresses**; `ner_redactor(...)`
+  plugs a local NER engine in as a `redactor=` for `AuditLog`. `ner_available()` reports whether the
+  optional backend is installed; `ner_redactor()` raises a clear error (with the install hint) when it
+  isn't. The backend runs locally — still no network. **Different engine per language:** Python uses
+  [Microsoft Presidio](https://microsoft.github.io/presidio/) (`pip install "cendor-acttrace[ner]"`);
+  TypeScript uses the optional [`compromise`](https://compromise.cool) engine (`npm install compromise`).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -218,15 +219,20 @@ audit = AuditLog(system="intake",
 <!-- tab: TypeScript -->
 
 ```ts
-import { AuditLog, enableLocalePack } from '@cendor/acttrace';
+import { AuditLog, defaultRedactor, enableLocalePack, nerRedactor } from '@cendor/acttrace';
 
 enableLocalePack('uk', 'in');            // + UK NINO, India Aadhaar detectors (regex + validators)
-const audit = new AuditLog('intake');
+const audit = new AuditLog('intake', {
+  // regex scrub first (compose), then NER names/places — needs `npm install compromise`
+  redactor: nerRedactor(['PERSON', 'LOCATION'], 'en', defaultRedactor),
+});
 ```
 
-> **NER is Python-only (for now).** Locale gov-ID packs work in TypeScript (above); NER-backed
-> redaction (Microsoft Presidio names/addresses) ships only in Python. See the
-> [parity matrix](/docs/languages).
+> **Honest coverage — the NER backends differ.** Python's Presidio (spaCy transformer models) has
+> higher recall/precision than TypeScript's `compromise` (a lightweight, synchronous, English-only
+> rule-plus-lexicon engine, chosen because acttrace's tamper-evident append path is synchronous and a
+> transformer NER would be async + heavy). Treat the TS NER as a **useful extra layer, not a sole PII
+> control**. See the [parity matrix](/docs/languages).
 
 <!-- /tabs -->
 
