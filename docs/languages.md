@@ -78,7 +78,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | **contextkit** assemble / evict / order | ✅ | ✅ | TS collapses sync+async into one `async assemble()` |
 | **squeeze** compress / decompress | ✅ | ✅ | deterministic; handle ids match |
 | **cassette** record / replay | ✅ | ✅ | cross-language replay, vector-verified |
-| cassette `local_embedding_scorer` | ✅ | **Py-only** | TS ships a declared stub; the static-embedding scorer is Py-only for now |
+| cassette `local_embedding_scorer` (bundled model2vec) | ✅ | **Py-only** | no JS static-embedding package exists; TS uses the BYO `embeddingScorer(embedFn)` / `openaiEmbeddingScorer` seam instead |
 | cassette storage | fs | fs + memory (+ IndexedDB-shaped) | pluggable adapters |
 | **acttrace** chain / verify / sign | ✅ | ✅ | cross-language verify (HMAC + `_meta`) |
 | acttrace detectors | ✅ regex **+ Presidio NER** | ✅ regex/pattern (20 detectors) | **NER is Py-only** — `ner_available()` → `false` in TS |

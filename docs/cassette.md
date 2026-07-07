@@ -213,8 +213,20 @@ assert cassette.semantic_match(result.answer, "offers a refund", scorer=score)
 assert not cassette.semantic_match("we will not offer a refund", "offers a refund", scorer=score)
 ```
 <!-- tab: TypeScript -->
-> **Python only (for now).** `local_embedding_scorer` (model2vec static embeddings) ships in Python;
-> `semanticMatch` in TypeScript takes a BYO scorer. See the [parity matrix](/docs/languages).
+
+> **The bundled Tier-2 model is Python-only; TypeScript uses the Tier-3 BYO seam.** There is no
+> model2vec/static-embedding package for JS, so `localEmbeddingScorer` stays a stub. Instead wrap any
+> embedder with `embeddingScorer(embedFn)` (or `openaiEmbeddingScorer(client)`) — the same
+> deterministic cosine scoring, your model. See the [parity matrix](/docs/languages).
+
+```ts
+import { embeddingScorer, semanticMatch } from '@cendor/cassette';
+
+// Bring your own embedder — wrap a local or hosted model (embedFn: (texts) => number[][]):
+const score = embeddingScorer((texts) => texts.map((t) => client.embed(t) as number[]));
+semanticMatch(result.answer, 'offers a refund', 0.6, score);      // meaning-aware, offline if your model is
+```
+
 <!-- /tabs -->
 
 **Tier 3 (BYO).** `embedding_scorer(embed_fn)` turns any embedder into a scorer;
