@@ -7,7 +7,7 @@ license = "Apache-2.0"
 authors = [{ name = "Raghav Mishra (PowerAI Labs)" }]
 keywords = ["llm", "ai", "agents", "llm", "compression", "context", "tokens", "prompt"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
