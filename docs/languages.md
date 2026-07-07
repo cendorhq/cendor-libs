@@ -120,11 +120,11 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 
 - **Versions are independent across languages.** Python and TypeScript release on their own
   cadence; this page — not matching version numbers — is the parity contract.
-- **A few surfaces remain Python-only** — the LangChain callback handler, keyless Microsoft Entra ID
-  auth for Azure (in TS, pass a bearer token as the key), and cassette's bundled
+- **A few surfaces remain Python-only** — the LangChain callback handler and cassette's bundled
   `local_embedding_scorer` (bring your own `embedFn` in TS). AWS Bedrock auto-detection matches a
   boto-shaped `converse()`; aws-sdk-v3's `send(ConverseCommand)` is captured via the SDK provider rather
-  than `instrument()`.
+  than `instrument()`. (Keyless Entra-ID auth for Azure is supported in both languages — TS via the
+  `azureADTokenProvider` option.)
 - **No Presidio NER in TypeScript** — regex/pattern detectors only, and
   `ner_available()` says so at runtime.
 - **Docs code samples default to Python** where a tab pair isn't shown; the mapping rules above

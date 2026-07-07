@@ -206,6 +206,7 @@ defaults** — you turn each on explicitly:
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
+
 ```python
 from cendor.acttrace import AuditLog, enable_locale_pack, ner_redactor, default_redactor
 
@@ -213,9 +214,20 @@ enable_locale_pack("uk", "in")                         # + UK NINO, India Aadhaa
 audit = AuditLog(system="intake",
                  redactor=ner_redactor(compose=default_redactor))   # regex + NER names/addresses
 ```
+
 <!-- tab: TypeScript -->
-> **Python only (for now).** NER-backed redaction (Microsoft Presidio) and locale packs ship in
-> Python; TypeScript has the regex detectors today. See the [parity matrix](/docs/languages).
+
+```ts
+import { AuditLog, enableLocalePack } from '@cendor/acttrace';
+
+enableLocalePack('uk', 'in');            // + UK NINO, India Aadhaar detectors (regex + validators)
+const audit = new AuditLog('intake');
+```
+
+> **NER is Python-only (for now).** Locale gov-ID packs work in TypeScript (above); NER-backed
+> redaction (Microsoft Presidio names/addresses) ships only in Python. See the
+> [parity matrix](/docs/languages).
+
 <!-- /tabs -->
 
 > Extras never become hard dependencies and never touch the defaults: a zero-extra install detects
