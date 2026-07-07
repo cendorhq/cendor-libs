@@ -9,7 +9,7 @@
 
 Composable Python primitives for context, cost, testing, and governance — the layer beneath your LLM app.
 
-![PyPI](https://img.shields.io/pypi/v/cendor-libs) ![Python](https://img.shields.io/badge/python-3.11+-blue) ![License](https://img.shields.io/badge/license-Apache_2.0-blue) [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) ![types: mypy](https://img.shields.io/badge/types-mypy-blue)
+![PyPI](https://img.shields.io/pypi/v/cendor-libs) [![CI](https://github.com/cendorhq/cendor-libs/actions/workflows/ci.yml/badge.svg)](https://github.com/cendorhq/cendor-libs/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/python-3.11+-blue) ![License](https://img.shields.io/badge/license-Apache_2.0-blue) [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) ![types: mypy](https://img.shields.io/badge/types-mypy-blue)
 
 [**Install**](#install) · [**The libraries**](#the-libraries-in-depth) · [**See it compose**](#see-it-all-compose) · [**Docs**](docs/) · [**Benchmarks**](docs/benchmarks.md)
 
