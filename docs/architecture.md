@@ -43,10 +43,19 @@ The layering is what lets each tool stand alone *and* compose.
 `tokenguard`, `cassette`, and `acttrace` all need to *observe* LLM and tool calls. Rather than each
 patching the provider client (and fighting each other), `core` owns a single interception point:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
 ```python
 from cendor.core import instrument
-client = instrument(openai_client)   # also Anthropic, Bedrock, Gemini, Ollama
+client = instrument(openai_client)   # also Anthropic, Hugging Face, Bedrock, Gemini, Ollama
 ```
+<!-- tab: TypeScript -->
+```ts
+import OpenAI from 'openai';
+import { instrument } from '@cendor/core';
+const client = instrument(new OpenAI());   // also Anthropic, Hugging Face, Bedrock, Gemini, Ollama
+```
+<!-- /tabs -->
 
 `instrument()` wraps the client once, publishes a normalized `LLMCall` onto the in-process **event
 bus**, and optionally emits an OpenTelemetry span. Each sibling tool *subscribes* instead of

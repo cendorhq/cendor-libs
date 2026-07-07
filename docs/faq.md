@@ -63,11 +63,18 @@ spend through a `tokenguard` sink rather than the in-memory aggregate.
 budget/tags (context is copied at task creation), but a plain `threading.Thread` you start does not.
 To carry them into a thread, copy the context:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
 ```python
 import contextvars, threading
 ctx = contextvars.copy_context()          # captures the active budget + tags
 threading.Thread(target=lambda: ctx.run(do_work)).start()   # do_work runs inside them
 ```
+<!-- tab: TypeScript -->
+> **Node is single-threaded**, so there's no cross-thread copy to worry about — the active budget
+> and tags follow the async call scope via `AsyncLocalStorage`. Just `await` your work inside the
+> `withBudget(...)` / `track(...)` callback.
+<!-- /tabs -->
 
 ### Does it send my data or prompts anywhere?
 No. There's no telemetry and no implicit network. OpenTelemetry export is opt-in. The only outbound
