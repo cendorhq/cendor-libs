@@ -202,14 +202,20 @@ cassette binds no model and adds no dependency unless you ask.
 scorer backed by [model2vec](https://github.com/MinishLab/model2vec) static embeddings —
 numpy-only, no torch, offline and deterministic once cached. Behind the `[embeddings]` extra:
 
-```python
+```bash
 pip install 'cendor-cassette[embeddings]'
 ```
+<!-- tabs: lang -->
+<!-- tab: Python -->
 ```python
 score = cassette.local_embedding_scorer()   # downloads/caches the model once, then offline
 assert cassette.semantic_match(result.answer, "offers a refund", scorer=score)
 assert not cassette.semantic_match("we will not offer a refund", "offers a refund", scorer=score)
 ```
+<!-- tab: TypeScript -->
+> **Python only (for now).** `local_embedding_scorer` (model2vec static embeddings) ships in Python;
+> `semanticMatch` in TypeScript takes a BYO scorer. See the [parity matrix](/docs/languages).
+<!-- /tabs -->
 
 **Tier 3 (BYO).** `embedding_scorer(embed_fn)` turns any embedder into a scorer;
 `embed_fn(texts) -> list[list[float]]` can wrap any provider. `openai_embedding_scorer(client,

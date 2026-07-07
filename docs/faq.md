@@ -82,11 +82,17 @@ Yes — via the framework's **callback system**, which is the SDK-aligned integr
 inner-client wrapping: LangChain calls the client through `with_raw_response`, so instrumenting it
 loses usage). Install `cendor-core[langchain]` and attach `CendorCallbackHandler`:
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
 ```python
 from cendor.core.langchain import CendorCallbackHandler
 llm = ChatOpenAI(model="gpt-4o", callbacks=[CendorCallbackHandler()])
 # LangGraph: agent.invoke(..., config={"callbacks": [CendorCallbackHandler()]})
 ```
+<!-- tab: TypeScript -->
+> **Python only (for now).** The LangChain callback handler ships in Python; in TypeScript, wrap the
+> provider client with `instrument()` directly. See the [parity matrix](/docs/languages).
+<!-- /tabs -->
 
 It records usage + **reasoning** + cost + tool calls, and stamps a root-run `trace_id` so every
 call of one `agent.invoke` is correlated. It is **recording-only** — pre-flight enforcement

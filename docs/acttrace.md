@@ -204,6 +204,8 @@ defaults** — you turn each on explicitly:
   `ner_redactor()` raises a clear `ImportError` (with the install hint) when it isn't. Presidio runs
   locally — still no network.
 
+<!-- tabs: lang -->
+<!-- tab: Python -->
 ```python
 from cendor.acttrace import AuditLog, enable_locale_pack, ner_redactor, default_redactor
 
@@ -211,6 +213,10 @@ enable_locale_pack("uk", "in")                         # + UK NINO, India Aadhaa
 audit = AuditLog(system="intake",
                  redactor=ner_redactor(compose=default_redactor))   # regex + NER names/addresses
 ```
+<!-- tab: TypeScript -->
+> **Python only (for now).** NER-backed redaction (Microsoft Presidio) and locale packs ship in
+> Python; TypeScript has the regex detectors today. See the [parity matrix](/docs/languages).
+<!-- /tabs -->
 
 > Extras never become hard dependencies and never touch the defaults: a zero-extra install detects
 > exactly the built-in categories, and `default_redactor` is unchanged.
