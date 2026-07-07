@@ -17,7 +17,7 @@ status, and how-to-run.
 
 | Layer | What it proves | Where | Runs in CI | Status |
 |---|---|---|---|---|
-| **A. Unit** | logic is correct (mocked, offline) | `packages/*/tests/` | ✅ yes | ✅ in place (290 tests) |
+| **A. Unit** | logic is correct (mocked, offline) | `packages/*/tests/` | ✅ yes | ✅ in place (430+ tests) |
 | **B. Install / import smoke** | the wheels + PEP 420 namespace import for a real user | clean venv (matrix 3.11–3.13) | ✅ yes | ✅ in place (`smoke` job) |
 | **C. Cookbook integration** | documented usage runs against installed packages | `cendor-cookbook` (separate public repo) | n/a here | ⏳ in the cookbook |
 | **D. Real-provider fixtures** | `instrument()` parses *actual* OpenAI/Anthropic/Bedrock/Gemini/Ollama responses | recorded cassettes | gated | ⏳ planned (record-once → replay) |
@@ -48,12 +48,12 @@ find packages -path '*/src/cendor/__init__.py' -print
 
 | Package | Tests | Covers |
 |---|---:|---|
-| `core` | 102 | `Money`/Decimal arithmetic & `Usage` (incl. cached-token pricing + `cache_write`); golden token counts + family detection + register + native-vs-fallback `method()`; `prices.estimate`/cached/unknown-model/`refresh` (undatable) fallback; `instrument` sync+async+idempotent+unpriced; **Responses API + google-genai** shapes; streaming (all providers); `instrument_tool`; interceptor replay + `Reroute`; `otel.ingest` (+ cached/reasoning); thread-safe bus; protocol shapes |
-| `tokenguard` | 45 | `@budget` raise / block / truncate / token cap / callable / nested / **downgrade** / **clamp**; unpriced-model warnings + `on_unpriced`; `max_tokens=0`; `track` + `report(group_by)` + `assert_under` + `unpriced_calls`; streaming-timing; `SQLiteSink`/`OTelSink` + cross-thread; concurrent-record eviction; async |
+| `core` | 124 | `Money`/Decimal arithmetic & `Usage` (incl. cached-token pricing + `cache_write`); golden token counts + family detection + register + native-vs-fallback `method()`; `prices.estimate`/cached/unknown-model/`refresh` (undatable) fallback; `instrument` sync+async+idempotent+unpriced; **Responses API + google-genai** shapes; streaming (all providers); `instrument_tool`; interceptor replay + `Reroute`; `otel.ingest` (+ cached/reasoning); thread-safe bus; protocol shapes |
+| `tokenguard` | 54 | `@budget` raise / block / truncate / token cap / callable / nested / **downgrade** / **clamp**; unpriced-model warnings + `on_unpriced`; `max_tokens=0`; `track` + `report(group_by)` + `assert_under` + `unpriced_calls`; streaming-timing; `SQLiteSink`/`OTelSink` + cross-thread; concurrent-record eviction; async |
 | `contextkit` | 45 | budgeted `assemble` + every eviction strategy; pinned-overflow `BudgetError`; `report` receipt (+ squeeze `handle`); `whatif`; `order="attention"/"cache"`; adapters (anthropic/gemini/bedrock) + role coercion; multimodal `image_tokens`; async summarizer; compressor model-forwarding; determinism |
 | `squeeze` | 32 | `detect`; JSON/logs/prose/**code** compression + exact reversibility; structural JSON fit; length-normalized prose + abbreviation splitting; log IP/hex/int normalization; `fidelity`; `Compressor` protocol; CCR dedup + `SQLiteStore` + **LRU** `MemoryStore`; deterministic `Handle.id`; contextkit↔squeeze |
 | `cassette` | 29 | record→replay (LLM + tools); dict-vs-object replay; streaming record→replay (sync+async); `stream` in the hash + v1 compat; version check; ContextVar parallel-safety; redaction (modern secret formats); `promote` (incl. tools); `rerecord` + `drift`; `semantic_match` + pluggable scorer |
-| `acttrace` | 37 | auto-population from the bus; hash-chain verify + tamper/reorder detection; forged/stripped/unauthenticated `_meta`; missing/corrupt-file handling; context-assembly capture; EU AI Act + NIST export; redaction (modern formats) + auto-flag; HMAC signing + `verify(key=)`; concurrent-emit chain integrity; `acttrace verify` CLI |
+| `acttrace` | 150 | auto-population from the bus; hash-chain verify + tamper/reorder detection; forged/stripped/unauthenticated `_meta`; missing/corrupt-file handling; context-assembly capture; EU AI Act + NIST export; redaction (modern formats) + auto-flag; HMAC signing + `verify(key=)`; concurrent-emit chain integrity; `acttrace verify` CLI |
 
 ### Layer B — Install / import smoke *(implemented)*
 Layer A runs against the *editable source*; this layer builds the **wheels** and installs them into a

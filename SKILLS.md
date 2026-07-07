@@ -11,4 +11,4 @@ Reusable playbooks for recurring work in this repo. Full skill files live in `.c
 | **package-readme** | creating/updating a package README | writes the house-style README (killer metric, example, badge) | auto / `/package-readme` |
 | **release-package** | checking work into `main` and publishing to PyPI | full flow: green-gate → bump/changelog → **merge to main** → push **tags** (≤3/push, core first) → verify on PyPI → record. Covers the merge step and tag-only-triggers-release gotcha that trip sessions up | **manual only** (`/release-package`) |
 
-Add new skills as recurring tasks emerge — e.g. a `benchmark` skill to produce the token-reduction / cost-savings numbers used in launch posts.
+Add new skills as recurring tasks emerge — e.g. a `benchmark` skill to produce the token-reduction / cost-savings numbers.

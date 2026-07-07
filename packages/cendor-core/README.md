@@ -26,7 +26,7 @@ client = instrument(openai_or_anthropic_client)   # idempotent, additive · sync
 
 ## Highlights
 
-- **`instrument()`** — wrap any client once: **OpenAI** (Chat Completions + Responses API) **· Anthropic · AWS Bedrock · Google Gemini** (`google-genai` + legacy `google-generativeai`) **· Ollama**, detected by *shape*; sync, async, **and streaming**; idempotent + additive. `instrument_tool()` does the same for tools.
+- **`instrument()`** — wrap any client once: **OpenAI** (Chat Completions + Responses API) **· Anthropic · Hugging Face** (`InferenceClient`) **· AWS Bedrock · Google Gemini** (`google-genai` + legacy `google-generativeai`) **· Ollama**, detected by *shape*; sync, async, **and streaming**; idempotent + additive. `instrument_tool()` does the same for tools.
 - **Streaming is a context manager *and* an iterator** — the streamed value supports both `for chunk in stream` / `async for` **and** `with client…create(stream=True) as stream:` / `async with`, matching the SDK's own stream and unbreaking frameworks (e.g. LangChain) that consume streams via `with`. Usage/cost finalize exactly once.
 - **Event bus** — `subscribe` / `emit`; **thread-safe within a process**; one failing subscriber never starves another.
 - **Interceptor seam** — `add_interceptor` + `Reroute` / `MISS` powers replay (cassette) and reroute / block (tokenguard) **without a second patch point**.

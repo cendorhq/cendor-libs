@@ -3,7 +3,7 @@
 Record an agent run once; replay it forever — deterministic, offline, and free. Unlike `vcrpy`
 (HTTP-only), it captures the *whole* run: every LLM call and tool call, in order.
 
-**Agent tests that run in 0.2s with no API key.**
+**Agent tests with no API key — a recorded run replays in microseconds per call, offline.**
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-cassette) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-cassette`
 

@@ -3,7 +3,7 @@
 Stop runaway LLM bills, and get per-feature / per-user cost attribution for free. One decorator,
 one context manager. No dashboard, no account, no infra.
 
-**Caught a $40 runaway loop before it ran away — and told you which feature spent the rest.**
+**Cap a runaway loop *before* it overspends — and see which feature or user spent the rest.**
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-tokenguard) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-tokenguard`
 
