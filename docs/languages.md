@@ -72,7 +72,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | Bedrock JS auto-detects a boto-shaped `converse()`; aws-sdk-v3 rides the SDK provider |
 | `instrument()` streaming / interceptors | ✅ | ✅ | |
 | core `otel` spans / `ingest()` | ✅ | ✅ | `span()` + `ingest()`; `@opentelemetry/api` optional peer — span is a no-op without it |
-| LangChain `CendorCallbackHandler` | ✅ | **Py-only** | LangChain.js handler not ported (lands by demand) |
+| LangChain `CendorCallbackHandler` | ✅ | ✅ | `@cendor/core/langchain`; recording-only in both; reads `usage_metadata`, correlates by root-run `traceId` |
 | `trace()` correlation | ✅ contextvars | ✅ AsyncLocalStorage | |
 | **tokenguard** budgets / track / report / sinks | ✅ | ✅ | SQLite / Queue / OTel sinks in both |
 | **contextkit** assemble / evict / order | ✅ | ✅ | TS collapses sync+async into one `async assemble()` |
@@ -120,10 +120,11 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 
 - **Versions are independent across languages.** Python and TypeScript release on their own
   cadence; this page — not matching version numbers — is the parity contract.
-- **A few surfaces remain Python-only** — the LangChain callback handler and cassette's bundled
-  `local_embedding_scorer` (bring your own `embedFn` in TS). AWS Bedrock auto-detection matches a
-  boto-shaped `converse()`; aws-sdk-v3's `send(ConverseCommand)` is captured via the SDK provider rather
-  than `instrument()`. (Keyless Entra-ID auth for Azure is supported in both languages — TS via the
+- **A couple of surfaces remain Python-only** — cassette's bundled `local_embedding_scorer` (bring
+  your own `embedFn` in TS). AWS Bedrock auto-detection matches a boto-shaped `converse()`;
+  aws-sdk-v3's `send(ConverseCommand)` is captured via the SDK provider rather than `instrument()`.
+  (The LangChain / LangGraph callback handler is now in both languages — TS via
+  `@cendor/core/langchain`; keyless Entra-ID auth for Azure is in both too — TS via the
   `azureADTokenProvider` option.)
 - **No Presidio NER in TypeScript** — regex/pattern detectors only, and
   `ner_available()` says so at runtime.
