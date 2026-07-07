@@ -62,18 +62,21 @@ def run() -> list[Result]:
     )
 
     with tempfile.TemporaryDirectory() as tmp:
-        # File-backed append throughput.
+        # File-backed append throughput. AuditLog keeps its append handle open for durability, so
+        # each file-backed log is detach()ed once measured — otherwise Windows can't remove the
+        # TemporaryDirectory (a file open in this process can't be deleted).
         with isolated():
             fpath = str(Path(tmp) / "audit.jsonl")
-            AuditLog(system="bench", path=fpath)
+            audit = AuditLog(system="bench", path=fpath)
             rows.append(
                 Result(
                     "acttrace",
                     "Append throughput (file-backed)",
                     per_s(rate(lambda: bus.emit(call)), "entries"),
-                    "appends a JSONL line per entry (open/write/close)",
+                    "flush + fsync a JSONL line per entry on a kept-open handle",
                 )
             )
+            audit.detach()  # release the kept-open file handle
 
         # verify() throughput over a real chain.
         with isolated():
@@ -83,6 +86,7 @@ def run() -> list[Result]:
                 bus.emit(call)
             n = len(vaudit.entries)
             spc = timed(lambda: verify(str(vpath)))
+            vaudit.detach()
             rows.append(
                 Result(
                     "acttrace",
@@ -95,10 +99,11 @@ def run() -> list[Result]:
         # Tamper detection: flip one byte in a payload and confirm verify() fails.
         with isolated():
             tpath = Path(tmp) / "tamper.jsonl"
-            AuditLog(system="bench", path=str(tpath))
+            taudit = AuditLog(system="bench", path=str(tpath))
             for _ in range(5):
                 bus.emit(call)
             ok_before, _ = verify(str(tpath))
+            taudit.detach()  # close the handle before rewriting the file on disk
             # Tamper a field acttrace actually records (it logs provider/model/usage/cost, not
             # prompt text): flip one character of the model id in the first llm_call entry.
             text = tpath.read_text(encoding="utf-8")
