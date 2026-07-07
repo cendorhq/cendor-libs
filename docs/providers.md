@@ -32,12 +32,11 @@ wraps **every** entrypoint it finds, so whichever API your code calls is capture
 
 ## Per-provider setup
 
-> **TypeScript coverage.** `@cendor/core`'s `instrument()` now ships detection for **OpenAI (Chat +
-> Responses), Anthropic, google-genai, Ollama, HuggingFace, and Bedrock**, plus the OpenTelemetry
-> ingestion path — the sections below carry TypeScript tabs. Two things stay Python-only: the
-> **LangChain** callback handler, and aws-sdk-v3 Bedrock (`instrument()` matches a boto-shaped
-> `converse()`; the `send(ConverseCommand)` client rides the SDK provider). See the
-> [parity matrix](languages.md).
+> **TypeScript.** `instrument()` detects all six providers in both languages — **OpenAI (Chat +
+> Responses), Anthropic, Hugging Face, google-genai, Bedrock, and Ollama** — plus the OpenTelemetry
+> ingestion path. Two things stay Python-only: the **LangChain** callback handler, and aws-sdk-v3
+> Bedrock (`instrument()` matches a boto-shaped `converse()`; the `send(ConverseCommand)` client rides
+> the SDK provider). See the [parity matrix](languages.md).
 
 ### OpenAI (Chat Completions + Responses API)
 `instrument()` wraps both entrypoints; the Responses API reports usage differently, and it's all
