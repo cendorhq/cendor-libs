@@ -34,9 +34,10 @@ wraps **every** entrypoint it finds, so whichever API your code calls is capture
 
 > **TypeScript.** `instrument()` detects all six providers in both languages — **OpenAI (Chat +
 > Responses), Anthropic, Hugging Face, google-genai, Bedrock, and Ollama** — plus the OpenTelemetry
-> ingestion path. Two things stay Python-only: the **LangChain** callback handler, and aws-sdk-v3
-> Bedrock (`instrument()` matches a boto-shaped `converse()`; the `send(ConverseCommand)` client rides
-> the SDK provider). See the [parity matrix](languages.md).
+> ingestion path. The **LangChain / LangGraph** callback handler now ships in both languages too
+> (`@cendor/core/langchain`). One thing stays Python-only: aws-sdk-v3 Bedrock (`instrument()` matches
+> a boto-shaped `converse()`; the `send(ConverseCommand)` client rides the SDK provider). See the
+> [parity matrix](languages.md).
 
 ### OpenAI (Chat Completions + Responses API)
 `instrument()` wraps both entrypoints; the Responses API reports usage differently, and it's all
@@ -297,8 +298,25 @@ agent.invoke({"messages": [...]}, config={"callbacks": [handler]})
 
 <!-- tab: TypeScript -->
 
-> **Python only (for now).** A LangChain.js callback handler isn't yet in `@cendor/core` — see
-> the [parity matrix](languages.md). Calling a provider SDK directly? `instrument()` it instead.
+```bash
+npm install @langchain/core
+```
+
+<!-- ts-check: skip -->
+
+```ts
+import { CendorCallbackHandler } from '@cendor/core/langchain';
+import { ChatOpenAI } from '@langchain/openai';
+
+const handler = new CendorCallbackHandler();
+const llm = new ChatOpenAI({ model: 'gpt-4o', callbacks: [handler] });  // every call recorded onto the bus
+await llm.invoke('hi');
+
+// LangGraph: attach once via config — it propagates to every node + tool, correlated by run:
+await agent.invoke({ messages: [...] }, { callbacks: [handler] });
+```
+
+> **Recording-only in TypeScript too**, exactly as in Python: it observes, it never enforces.
 
 <!-- /tabs -->
 

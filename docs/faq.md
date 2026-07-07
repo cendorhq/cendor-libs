@@ -98,8 +98,12 @@ llm = ChatOpenAI(model="gpt-4o", callbacks=[CendorCallbackHandler()])
 # LangGraph: agent.invoke(..., config={"callbacks": [CendorCallbackHandler()]})
 ```
 <!-- tab: TypeScript -->
-> **Python only (for now).** The LangChain callback handler ships in Python; in TypeScript, wrap the
-> provider client with `instrument()` directly. See the [parity matrix](/docs/languages).
+<!-- ts-check: skip -->
+```ts
+import { CendorCallbackHandler } from '@cendor/core/langchain';
+const llm = new ChatOpenAI({ model: 'gpt-4o', callbacks: [new CendorCallbackHandler()] });
+// LangGraph: agent.invoke(..., { callbacks: [new CendorCallbackHandler()] })
+```
 <!-- /tabs -->
 
 It records usage + **reasoning** + cost + tool calls, and stamps a root-run `trace_id` so every
