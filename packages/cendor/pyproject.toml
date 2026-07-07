@@ -2,7 +2,7 @@
 # NEVER add a src/ directory or a cendor/__init__.py here — it would break the namespace.
 # Its ONLY dependency is `cendor-libs` (the canonical umbrella). This keeps the `cendor` name a
 # permanent, intuition-proof, zero-maintenance pointer — brand protected, but not the documented
-# default (`pip install cendor-libs` is). See PLAN §4.2.
+# default (`pip install cendor-libs` is).
 [project]
 name = "cendor"
 version = "1.1.0"
@@ -10,13 +10,24 @@ description = "Brand alias that installs the full Cendor stack (cendor-libs). Pr
 requires-python = ">=3.11"
 license = "Apache-2.0"
 readme = "README.md"
-authors = [{ name = "Raghav Mishra" }]
+authors = [{ name = "Raghav Mishra (PowerAI Labs)" }]
+keywords = ["llm", "ai", "agents", "libraries", "governance", "testing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = [
   "cendor-libs>=1.0,<2.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/cendorhq/cendor-libs"
+Documentation = "https://cendor.ai/docs"
 Repository = "https://github.com/cendorhq/cendor-libs"
 
 [build-system]

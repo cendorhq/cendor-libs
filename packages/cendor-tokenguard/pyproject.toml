@@ -4,12 +4,23 @@ version = "1.1.1"
 description = "Spending limits for LLM calls: stop a call before it runs if it would blow the budget, and see cost broken down per feature."
 requires-python = ">=3.11"
 license = "Apache-2.0"
-authors = [{ name = "Raghav Mishra" }]
+authors = [{ name = "Raghav Mishra (PowerAI Labs)" }]
+keywords = ["llm", "ai", "agents", "llm", "cost", "budget", "token-limit", "cost-attribution"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 readme = "README.md"
 dependencies = ["cendor-core>=1.0,<2.0"]
 
 [project.urls]
 Homepage = "https://github.com/cendorhq/cendor-libs"
+Documentation = "https://cendor.ai/docs/tokenguard"
 Repository = "https://github.com/cendorhq/cendor-libs"
 
 [build-system]

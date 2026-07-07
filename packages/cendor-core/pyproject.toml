@@ -4,12 +4,23 @@ version = "1.3.1"
 description = "Wrap your LLM client once and capture exact token counts and cost on every call — the shared foundation the other Cendor tools build on."
 requires-python = ">=3.11"
 license = "Apache-2.0"
-authors = [{ name = "Raghav Mishra" }]
+authors = [{ name = "Raghav Mishra (PowerAI Labs)" }]
+keywords = ["llm", "ai", "agents", "llm", "tokens", "cost", "pricing", "instrumentation", "observability"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 readme = "README.md"
 dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/cendorhq/cendor-libs"
+Documentation = "https://cendor.ai/docs/core"
 Repository = "https://github.com/cendorhq/cendor-libs"
 
 [project.optional-dependencies]
