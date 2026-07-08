@@ -410,11 +410,58 @@ class AuditLog:
         # concurrent bus emits can't corrupt the chain.
         self._lock = threading.RLock()
         self._fh: Any = None  # kept-open append handle: durable, and avoids reopen-per-entry cost
+        # Resume an existing on-disk chain rather than truncate it (retention). A non-empty file is
+        # reopened in APPEND mode and its chain state — head hash, next seq, in-memory ring — is
+        # rehydrated from the entries already on disk; a fresh audit_open is NOT emitted (a pure
+        # resume: the existing entries and the hash chain continue unbroken). A missing/empty file
+        # (or no path) starts a new chain with an audit_open. Opening "a" on a new/empty file is
+        # equivalent to "w", so the open mode is unconditional; only the resume vs. audit_open
+        # branch differs. A corrupt file raises (never a silent restart-from-GENESIS — the bug this
+        # fixes), because that would discard the prior chain.
+        prior = self._read_existing_entries() if self.path is not None else []
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._fh = self.path.open("w", encoding="utf-8")  # truncate, then hold the handle open
-        self._append("audit_open", {"system": system, "risk_tier": risk_tier})
+            self._fh = self.path.open("a", encoding="utf-8")  # append: never truncate prior entries
+        if prior:
+            last = prior[-1]
+            self._seq = last.seq + 1  # continue the monotonic sequence
+            self._head = last.hash  # continue the hash chain from the last on-disk entry
+            self.entries.extend(prior)  # deque(maxlen) keeps only the tail; a list keeps all
+            # Count what did NOT fit the in-memory ring so export()/_entries_for_export re-read the
+            # full file (the file is the source of truth for the complete chain).
+            self._evicted_from_memory = len(prior) - len(self.entries)
+        else:
+            self._append("audit_open", {"system": system, "risk_tier": risk_tier})
         bus.subscribe(self._on_event)
+
+    def _read_existing_entries(self) -> list[AuditEntry]:
+        """Parse the entries already on disk so a reopened log resumes the chain instead of
+        truncating it. Returns ``[]`` for a missing/empty file (⇒ fresh chain + ``audit_open``).
+
+        Skips ``_meta`` header lines exactly as :meth:`_entries_for_export` / :func:`verify` do.
+        Raises :class:`ValueError` on a corrupt/unparseable line — refusing to silently restart from
+        ``GENESIS`` (which would wipe the prior chain, the retention bug this resume path fixes)."""
+        assert self.path is not None
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            return []
+        entries: list[AuditEntry] = []
+        try:
+            with self.path.open(encoding="utf-8") as fh:
+                for raw in fh:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    row = json.loads(line)
+                    if "_meta" in row:  # a header from a previous export in the same file — skip
+                        continue
+                    entries.append(AuditEntry(**row))
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError) as e:
+            raise ValueError(
+                f"cannot resume audit log at {self.path}: file is corrupt or unparseable ({e}). "
+                "Refusing to reopen — the existing chain must never be discarded; fix or move the "
+                "file instead of letting the log restart from genesis."
+            ) from e
+        return entries
 
     @property
     def head(self) -> str:

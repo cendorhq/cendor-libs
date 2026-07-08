@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.2.2] — 2026-07-08
+### Fixed
+- **`AuditLog(path=…)` no longer truncates an existing log on construction.** Reopening a log now opens the file in append mode and **resumes the hash chain** from the last on-disk entry (continuing `head` and the sequence counter) instead of restarting from genesis and overwriting the prior entries — a silent data-loss bug that broke long-term retention (EU AI Act Art. 19, HIPAA). A reopen is a **pure resume**: no new `audit_open` marker is emitted, existing entries are preserved, and `verify()` spans the full pre- and post-reopen chain. A fresh/empty log is unchanged (still seeds `audit_open` at seq 0). A corrupt or unparseable tail now raises instead of silently restarting from genesis.
+
 ## [1.2.1] — 2026-07-05
 ### Changed
 - Repository moved to `github.com/cendorhq/cendor-libs`; `[project.urls]` updated. No API or behavior change.
