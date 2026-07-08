@@ -34,11 +34,12 @@ Three layers, two of them future-proof:
   `prices.refresh(...)` — no library release needed.
 
 ### How accurate is token counting?
-Three tiers, picked automatically — call `tokens.method(model)` to see which is active. With
-`[tiktoken]`, **OpenAI is exact** and **Claude/Gemini use tiktoken's `o200k` BPE as a close estimate**.
-With no tokenizer installed, a character/subword heuristic is the fallback — rough by nature, so
-install `[tiktoken]` for accuracy or `tokens.register(family, fn)` for a precise counter. `Money` is
-always exact (`Decimal`, never float). Details in [core → Token counting](core.md#token-counting-three-tiers).
+Three tiers, picked automatically — call `tokens.method(model)` to see which is active. By default
+**OpenAI is exact** and **Claude/Gemini use tiktoken's `o200k` BPE as a close estimate**, because
+`tiktoken` is a required dependency of `cendor-core` — exact counting is not an opt-in. A
+character/subword heuristic remains only as a defensive fallback if `tiktoken` ever fails to import
+(a broken install); `tokens.register(family, fn)` plugs in a precise counter for any family. `Money`
+is always exact (`Decimal`, never float). Details in [core → Token counting](core.md#token-counting-three-tiers).
 
 ### Can I get live / up-to-date prices?
 Yes. A **dated snapshot ships bundled** so pricing works offline, and

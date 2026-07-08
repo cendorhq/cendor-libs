@@ -8,8 +8,7 @@ dependency of the whole stack. You rarely install it directly; it arrives transi
 <!-- tab: Python -->
 
 ```bash
-pip install cendor-core                # or any tool that depends on it
-pip install "cendor-core[tiktoken]"    # exact OpenAI token counts (optional)
+pip install cendor-core                # exact token counts by default — tiktoken ships with it
 ```
 
 <!-- tab: TypeScript -->
@@ -74,12 +73,13 @@ you which path is active:
 
 | Tier | When | Accuracy |
 |---|---|---|
-| `exact` | `[tiktoken]` installed **and** a model-native OpenAI encoding exists | exact |
-| `bpe-estimate` | `[tiktoken]` installed, non-native model (Claude/Gemini, or unknown OpenAI id) | close — real BPE (`o200k`), not native |
+| `exact` | a model-native OpenAI encoding exists (the default — `tiktoken` ships with `cendor-core`) | exact |
+| `bpe-estimate` | non-native model (Claude/Gemini, or unknown OpenAI id) | close — real BPE (`o200k`), not native |
 | `registered` | you plugged a counter in via `tokens.register(family, fn)` | as good as your counter |
-| `heuristic` | no tokenizer installed | rough (~3–6 chars/token by content) |
+| `heuristic` | `tiktoken` failed to import (a broken/partial install) — a defensive fallback, never the default | rough (~3–6 chars/token by content) |
 
-Install `[tiktoken]` for accuracy, or `register()` a precise counter for a family.
+Exact counting is the default (`tiktoken` is a required dependency), because truthful token counts
+are the product. `register()` a precise counter to override a family.
 
 ### Prices: offline-first, refreshable
 A dated `prices.json` ships in the wheel, so `estimate()` works with no network — the offline
@@ -408,8 +408,10 @@ one another. That's what keeps `core` the whole stack's small, stable blast radi
 
 ## Honest limits
 
-- **Token counts are best-effort** across providers — install `[tiktoken]` for exact OpenAI
-  counts or `register()` a precise counter. Money is always exact (`Decimal`).
+- **Token counts are exact for OpenAI by default** — `tiktoken` is a required dependency, so a
+  normal install counts exactly (no opt-in). Claude/Gemini use tiktoken's `o200k` BPE as a close
+  cross-tokenizer proxy (not their native tokenizer); `register()` a precise counter to override a
+  family. Money is always exact (`Decimal`).
 - **Capture is best-effort, not a billing guarantee.** A call that *raises* before returning
   emits no `usage`/`cost`; a streamed response whose provider reports no usage is priced from
   an offline estimate (flagged `usage_estimated`). Bedrock's separate `converse_stream`
@@ -417,5 +419,7 @@ one another. That's what keeps `core` the whole stack's small, stable blast radi
 - **`refresh()` never reaches a running service or needs an account** — it fetches static JSON
   over http(s), maps it in memory, and falls back to the bundled snapshot. AWS/GCP catalogs
   need credentials/SDKs and are intentionally out of core (bring your own `mapper=`).
-- Provider SDKs and OpenTelemetry are **optional extras** (`[openai]`, `[anthropic]`, `[otel]`,
-  `[tiktoken]`) — never hard dependencies.
+- Provider SDKs and OpenTelemetry are **optional extras** (`[openai]`, `[anthropic]`, `[otel]`) —
+  never hard dependencies. `tiktoken`, by contrast, **is** a required dependency: exact token
+  counts are not optional. (It is fully offline — no network or account — so this keeps the
+  local-first guarantee.)

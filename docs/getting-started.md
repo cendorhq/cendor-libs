@@ -15,10 +15,10 @@ pip install cendor-libs         # the whole stack (umbrella; `cendor` is an alia
 pip install cendor-tokenguard cendor-contextkit
 ```
 
-Optional extras (provider SDKs and precise tokenizers are never required):
+Exact token counting ships by default (`tiktoken` is a required dependency of `cendor-core`).
+Optional extras (provider SDKs and OpenTelemetry are never required):
 
 ```bash
-pip install "cendor-core[tiktoken]"        # exact OpenAI token counts
 pip install "cendor-core[otel]"            # emit OpenTelemetry gen_ai.* spans
 pip install "cendor-contextkit[squeeze]"   # enable Block(evict="compress")
 ```

@@ -1,12 +1,14 @@
 """Provider-aware token counting. docs/core.md §4, §8.
 
-Accurate when a real tokenizer is available, best-effort otherwise — always offline-capable,
+Exact by default — ``tiktoken`` is a required dependency of ``cendor-core``, because truthful token
+counts (and therefore truthful cost/budget numbers) are the whole point. Always offline-capable,
 deterministic, and network-free. Three tiers, picked automatically (see :func:`method`):
 
-* **exact** — OpenAI with ``tiktoken`` installed (``pip install cendor-core[tiktoken]``).
-* **bpe-estimate** — Claude/Gemini with ``tiktoken`` installed: tiktoken's ``o200k`` BPE is used as
-  a close cross-tokenizer proxy (far better than a character heuristic; not the native tokenizer).
-* **heuristic** — no tokenizer installed: a character/subword fallback, rough by design.
+* **exact** — OpenAI with a model-native ``tiktoken`` encoding (the default path).
+* **bpe-estimate** — Claude/Gemini: tiktoken's ``o200k`` BPE is used as a close cross-tokenizer proxy
+  (far better than a character heuristic; not the native tokenizer).
+* **heuristic** — a character/subword fallback, rough by design. Only reached if ``tiktoken`` somehow
+  fails to import at runtime (a broken/partial install); never the default a normal install lands on.
 
 :func:`register` plugs a precise counter in for any family, overriding all of the above.
 """
@@ -23,9 +25,9 @@ from typing import Any
 _MESSAGE_OVERHEAD = 4
 _PRIMING = 3
 
-# Approximate characters-per-token by family — the offline fallback used ONLY when no real
-# tokenizer (tiktoken) is installed. Rough by nature (modern BPE tokenizers vary 3-6 chars/token
-# by content): install the [tiktoken] extra for accuracy, or register() a precise counter.
+# Approximate characters-per-token by family — a defensive fallback reached ONLY if tiktoken (a
+# required dependency) somehow fails to import at runtime. Rough by nature (modern BPE tokenizers
+# vary 3-6 chars/token by content); a normal install counts exactly and never lands here.
 _CHARS_PER_TOKEN: dict[str, float] = {
     "openai": 4.0,
     "default": 4.0,

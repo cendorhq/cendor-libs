@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.4.0] — 2026-07-08
+### Changed
+- **`tiktoken` is now a required dependency** (was the optional `[tiktoken]` extra), so a plain
+  `pip install cendor-core` counts OpenAI tokens **exactly** out of the box — and therefore reports
+  truthful cost/budget numbers by default. Truthful token counts are the product, not an opt-in; this
+  brings Python in line with `@cendor/core`, which already hard-deps `js-tiktoken`. The character/
+  subword heuristic remains in the code **only as a defensive fallback** if `tiktoken` ever fails to
+  import (a broken/partial install) — it is no longer the path a normal install silently lands on.
+  `tiktoken` is fully offline (no network, no account), so this preserves the local-first guarantee.
+  The `[tiktoken]` extra is kept as a back-compat no-op so existing `cendor-core[tiktoken]` pins keep
+  resolving. No API change: `tokens.count`/`method`/`register` are unchanged.
+
 ## [1.3.1] — 2026-07-05
 ### Changed
 - Repository moved to `github.com/cendorhq/cendor-libs`; `[project.urls]` and the offline price-snapshot refresh URL (`prices.SNAPSHOT_URL`) now point at the new location. No API or behavior change.

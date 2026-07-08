@@ -1,6 +1,6 @@
 [project]
 name = "cendor-core"
-version = "1.3.1"
+version = "1.4.0"
 description = "Wrap your LLM client once and capture exact token counts and cost on every call — the shared foundation the other Cendor tools build on."
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -16,7 +16,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 readme = "README.md"
-dependencies = []
+# tiktoken is a REQUIRED dependency: exact, truthful token counts are the product, not an add-on.
+# (The char/subword heuristic remains in code only as a defensive fallback if tiktoken ever fails to
+# import — never the default a normal install lands on. This mirrors @cendor/core, which hard-deps
+# js-tiktoken.) tiktoken is offline (no network/account), so this keeps the local-first guarantee.
+dependencies = ["tiktoken>=0.7"]
 
 [project.urls]
 Homepage = "https://github.com/cendorhq/cendor-libs"
@@ -27,7 +31,7 @@ Repository = "https://github.com/cendorhq/cendor-libs"
 openai = ["openai>=1.0"]
 anthropic = ["anthropic>=0.30"]
 otel = ["opentelemetry-api>=1.25", "opentelemetry-sdk>=1.25"]
-tiktoken = ["tiktoken>=0.7"]   # optional: exact OpenAI token counts (heuristic fallback otherwise)
+tiktoken = []                  # back-compat no-op: tiktoken is now a REQUIRED dependency (above)
 # optional: the CendorCallbackHandler for LangChain/LangGraph (cendor.core.langchain). The handler
 # reads only usage_metadata + run ids — a far more stable surface than client internals.
 langchain = ["langchain-core>=0.3"]

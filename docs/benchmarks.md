@@ -29,9 +29,9 @@ One `instrument()` seam, provider-aware token counting, and offline pricing — 
 | Offline heuristic error vs tiktoken — prose | **35.8%** | heuristic 163 vs exact 120 tokens |
 | Offline heuristic error vs tiktoken — code | **8.4%** | heuristic 103 vs exact 95 tokens |
 | Offline heuristic error vs tiktoken — json | **18.4%** | heuristic 62 vs exact 76 tokens |
-| Exact mode error (with [tiktoken] extra) | **0.0%** | OpenAI counts are exact when tiktoken is installed |
-| Offline subword fallback vs o200k (Claude/Gemini) | **33.2%** | the no-tiktoken path; WITH [tiktoken], Claude/Gemini use o200k directly |
-| Counting path with [tiktoken] installed | **OpenAI=exact, Claude=bpe-estimate** | method() picks exact / bpe-estimate automatically; heuristic without the extra |
+| Exact mode error (default) | **0.0%** | OpenAI counts are exact out of the box — `tiktoken` is a required dependency |
+| Offline subword fallback vs o200k (Claude/Gemini) | **33.2%** | the defensive no-tiktoken fallback; by default Claude/Gemini use o200k directly |
+| Counting path (default) | **OpenAI=exact, Claude=bpe-estimate** | method() picks exact / bpe-estimate automatically; heuristic only if tiktoken fails to import |
 | tokens.count throughput — OpenAI heuristic | **1.24M ops/s** | on a 1.4 KB string |
 | tokens.count throughput — subword estimate | **14.6K ops/s** | on a 1.4 KB string |
 | tokens.count throughput — tiktoken exact | **9.7K ops/s** | on a 1.4 KB string |
@@ -99,7 +99,7 @@ A tamper-evident hash chain with no server: append/verify throughput, signing co
 ## Method & caveats
 
 - **No network, no keys.** Every model call is a fake client matching the provider's shape; usage and responses are synthetic but realistic.
-- **Token accuracy** compares the offline heuristic to `tiktoken` (the real OpenAI tokenizer). With the `[tiktoken]` extra installed, OpenAI counts are exact (0% error); the heuristic is the zero-dependency fallback. Claude/Gemini have no offline native tokenizer, so that row is a cross-tokenizer ballpark, not ground truth.
+- **Token accuracy** compares the (defensive) offline heuristic to `tiktoken` (the real OpenAI tokenizer). OpenAI counts are exact **by default** (0% error) — `tiktoken` is a required dependency; the heuristic is only reached if it fails to import. Claude/Gemini have no offline native tokenizer, so that row is a cross-tokenizer ballpark, not ground truth.
 - **Cassette speedup** models a real call with a fake client that sleeps a few milliseconds; production LLM calls are 100×–1000× slower, so the real-world speedup is far larger than shown here.
 - **Compression ratios** depend heavily on input shape and repetition (described per row). The log rows report **both** a repetition-heavy sample (~55% identical heartbeat lines, as much production log traffic is) and a mixed-entropy sample (~15% heartbeats, the rest distinct) — the mixed row is the honest lower bound. Inputs are typical verbose payloads, not adversarially chosen to flatter the compressors, but the headline log ratio is repetition-driven; read the mixed-entropy row for less repetitive logs.
 - Throughput numbers are single-machine and relative; they vary with hardware. Re-run locally for your own figures.
