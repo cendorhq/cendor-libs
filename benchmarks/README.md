@@ -41,7 +41,7 @@ uv run python benchmarks/bench_squeeze.py
 ## Method & caveats
 
 - **Fake clients.** Each "LLM call" is a fake object matching the provider's shape (`chat.completions.create`, …) with synthetic-but-realistic usage. The stack rides one `instrument()` seam, so this exercises the real code paths without a network.
-- **Token accuracy** uses `tiktoken` as ground truth for the OpenAI family — with the `[tiktoken]` extra installed, core's counts are exact (0% error); the heuristic is the zero-dependency fallback. Claude/Gemini have no offline native tokenizer, so that row is a cross-tokenizer ballpark only.
+- **Token accuracy** uses `tiktoken` as ground truth for the OpenAI family — core's counts are exact (0% error) **by default** (`tiktoken` is a required dependency); the heuristic is only a defensive fallback if it fails to import. Claude/Gemini have no offline native tokenizer, so that row is a cross-tokenizer ballpark only.
 - **Cassette speedup** models a real call with a few-millisecond sleep; production LLM calls are far slower, so the real speedup is much larger than reported.
 - **Throughput** numbers are single-machine and hardware-dependent — treat them as relative, and re-run locally for your own figures.
 
