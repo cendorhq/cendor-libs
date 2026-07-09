@@ -220,7 +220,8 @@ class AuditEntry:
 
     seq: int
     ts: str
-    type: str  # decision | llm_call | tool_call | human_oversight | context_assembly | ...
+    # decision | llm_call | tool_call | human_oversight | context_assembly | guardrail_decision | …
+    type: str
     payload: dict
     prev_hash: str
     hash: str
@@ -575,6 +576,21 @@ class AuditLog:
                     "budget": event.budget,
                     "used": getattr(event, "used", None),
                     "decisions": _jsonable(event.decisions),
+                },
+            )
+        elif (
+            hasattr(event, "guardrail") and hasattr(event, "stage") and hasattr(event, "action")
+        ):  # cendor-guardrails GuardrailDecision — duck-typed, no import (see contextkit above)
+            self._append(
+                "guardrail_decision",
+                {
+                    "decision_id": did,
+                    "guardrail": event.guardrail,
+                    "stage": event.stage,
+                    "action": event.action,
+                    "reason": getattr(event, "reason", ""),
+                    "agent": getattr(event, "agent", ""),
+                    "tool": getattr(event, "tool", ""),
                 },
             )
 
