@@ -88,6 +88,12 @@ jobs:
                    cendor-squeeze cendor-cassette cendor-acttrace cendor-guardrails cendor-libs cendor; do
             uv build --package "$p"
           done
+      - name: Vendor third-party runtime deps into the wheelhouse
+        # cendor-core now hard-depends on tiktoken (exact token counts are the product, not an
+        # add-on). Fetch tiktoken + its transitive deps into the same wheelhouse so the install
+        # step below stays genuinely offline (--no-index) yet has everything the wheels need.
+        # tiktoken is the only third-party runtime dependency across the stack.
+        run: python -m pip download --dest dist tiktoken
       - name: Install from local wheels (offline) and import the namespace
         run: |
           python -m venv .smoke
