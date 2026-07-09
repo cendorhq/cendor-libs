@@ -2,7 +2,7 @@
 
 The umbrella meta-package for the **Cendor** stack — *production plumbing for LLM applications*.
 Installing it pulls the whole suite of composable Python primitives for context, cost,
-testing, and governance.
+guardrails, testing, and governance.
 
 **One install, the entire stack — `pip install cendor-libs`.** (The brand alias `pip install cendor`
 also works — it depends solely on this package.)
@@ -18,6 +18,7 @@ share the `cendor.*` import namespace:
 | `cendor-contextkit` | `cendor.contextkit` | assemble context within a budget |
 | `cendor-squeeze` | `cendor.squeeze` | reversible, content-aware compression |
 | `cendor-tokenguard` | `cendor.tokenguard` | pre-flight cost caps + attribution |
+| `cendor-guardrails` | `cendor.guardrails` | deterministic gate: block / redact / flag |
 | `cendor-cassette` | `cendor.cassette` | record/replay agent runs |
 | `cendor-acttrace` | `cendor.acttrace` | tamper-evident audit log |
 

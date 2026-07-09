@@ -4,12 +4,12 @@ How the Cendor tools work, how they connect, and how they plug into your agent.
 
 ## The mental model
 
-Five small libraries, one shared foundation, one brand. Each is useful alone; installed together
+Six small libraries, one shared foundation, one brand. Each is useful alone; installed together
 they cover the lifecycle of a production LLM call:
 
 ```
-contextkit  →  squeeze  →  tokenguard  →  cassette  →  acttrace
- assemble       compress      budget         test         audit
+contextkit  →  squeeze  →  tokenguard  →  guardrails  →  cassette  →  acttrace
+ assemble       compress      budget         gate          test         audit
 ```
 
 Everything ships under the `cendor.*` import namespace. The foundation, `cendor-core`, defines the
@@ -22,6 +22,7 @@ common vocabulary — what an "LLM call" is, how tokens are counted and priced, 
 | Assemble | `cendor-contextkit` | `cendor.contextkit` |
 | Compress | `cendor-squeeze` | `cendor.squeeze` |
 | Budget | `cendor-tokenguard` | `cendor.tokenguard` |
+| Gate | `cendor-guardrails` | `cendor.guardrails` |
 | Test | `cendor-cassette` | `cendor.cassette` |
 | Audit | `cendor-acttrace` | `cendor.acttrace` |
 | Umbrella (meta) | `cendor` | *(installs them all)* |
@@ -102,20 +103,23 @@ graph TD
     ck["cendor-contextkit"]
     sq["cendor-squeeze"]
     tg["cendor-tokenguard"]
+    gr["cendor-guardrails"]
     cs["cendor-cassette"]
     at["cendor-acttrace"]
-    core --> ck & sq & tg & cs & at
+    core --> ck & sq & tg & gr & cs & at
     sq -. "satisfies Compressor (contextkit[squeeze])" .-> ck
     tg -. "cost via the bus" .-> at
     ck -. "assembly decisions via the bus" .-> at
+    gr -. "guardrail decisions via the bus" .-> at
 
     classDef co fill:#94A3BB,color:#0F172A,stroke:#64748B;
     classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
     classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
     classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
+    classDef gr fill:#F59E0B,color:#111827,stroke:#D97706;
     classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
     classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
-    class core co; class ck ck; class sq sq; class tg tg; class cs cs; class at at;
+    class core co; class ck ck; class sq sq; class tg tg; class gr gr; class cs cs; class at at;
 ```
 
 Solid arrows = package dependency. Dotted = runtime cooperation (no import required).
@@ -127,7 +131,8 @@ The tools wrap *around and inside* your existing loop, at four points in a call'
 - **Inbound** (as you build the request): `contextkit` (assemble messages within a budget) and
   `squeeze` (compress oversized blocks — usually invoked *by* contextkit).
 - **Wrap-around** (they ride the instrumented call): `tokenguard` (pre-flight cost check, post-flight
-  record), `cassette` (record/replay, test-time), `acttrace` (append to the audit log).
+  record), `guardrails` (pre-flight gate on input / tool calls, post-flight on output), `cassette`
+  (record/replay, test-time), `acttrace` (append to the audit log).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -206,9 +211,9 @@ and on the instrumented call, not on a vendor SDK.
 
 **Recording vs. enforcement — align to the SDK.** cendor's guiding rule is *align to the behaviour
 of what it wraps*: add no failure mode the SDK lacks (no crashes, no leaks, no latency cliffs), and
-claim no scope the SDK doesn't. **Enforcement** (pre-flight `tokenguard` caps, `acttrace`'s
-`guard()` redact-before-send) lives on the `instrument()` seam — it can refuse or rewrite a call
-*before it runs*. The framework **callback path is recording-only** (post-call): it observes
+claim no scope the SDK doesn't. **Enforcement** (pre-flight `tokenguard` caps, `guardrails`' input /
+tool-call gate, `acttrace`'s `guard()` redact-before-send) lives on the `instrument()` seam — it can
+refuse or rewrite a call *before it runs*. The framework **callback path is recording-only** (post-call): it observes
 usage/cost/tools/correlation but cannot enforce, because it never touches the client. Choose the
 direct-SDK seam when you need enforcement; use callbacks to observe a framework you don't want to
 wrap.

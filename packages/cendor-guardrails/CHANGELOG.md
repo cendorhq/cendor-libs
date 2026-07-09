@@ -1,0 +1,13 @@
+# Changelog — cendor-guardrails
+
+All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
+
+## [1.0.0] — 2026-07-09
+### Added
+- First release of `cendor-guardrails` — the **Gate** in the Cendor pipeline (`contextkit → squeeze → tokenguard → guardrails → cassette → acttrace`). Define a deterministic check and attach it to one of four intervention points — `input`, `tool_call`, `tool_output`, `output` — matching Azure Foundry's intervention points and OpenAI's four decorator types.
+- **The abstraction** — `Guardrail(name, stages, check)`, the `@guardrail(stage=…)` decorator, and a `check(payload, ctx) -> Verdict | None` contract (sync **or** async). A `Verdict` trips with `action="block" | "redact" | "flag"` and an optional `replacement`; `None` passes. `block` is fail-closed (raises `GuardrailTripped`); `redact` replaces the payload and continues; `flag` records and continues.
+- **Deterministic built-in rules** (`cendor.guardrails.rules`) — `keyword_deny`, `regex_rule`, `url_allowlist` / `url_deny`, `length_bounds` (char + exact token bounds via `cendor.core.tokens`), `json_schema` (a minimal `type`/`required`/`properties`/`items` validator, no heavy dependency), and `custom`. Regex/arithmetic only: microseconds, offline, $0.
+- **Evidence, not just enforcement** — every trip or flag emits a `GuardrailDecision` on the `cendor.core` bus. `acttrace` chains it as a tamper-evident `guardrail_decision` entry with no import in either direction (duck-typed, like contextkit's `AssemblyReport`). The decision carries the guardrail name, stage, action, and a short reason — never the raw payload.
+- **Three ways to use it, all offline** — pure `apply()` / `evaluate()` to gate a payload directly; `install()` to register **one** `cendor.core` interceptor so every instrumented client call is gated under any framework (input → block/redact-via-`Reroute`; tool_call → block/record; output → post-flight subscriber); and, via `cendor-sdk`, `Agent(guardrails=[…])` for all four in-loop stages.
+- **`llm_judge`** ships as an adapter *contract* only — you supply the model call; cendor ships no classifier. Its extra-call latency and cost are stated honestly in the docs.
+- **Honest limits** — deterministic checks do **not** stop a novel adversarial attack. There are no jailbreak-detection or PII-catch-rate claims here; PII/secret detection stays in `acttrace`'s detector catalogue (`guard(Policy…)`) so there is one detection engine, not two.

@@ -86,14 +86,14 @@ def run() -> list[Result]:
                     )
                 )
 
-            # Exact mode: with the [tiktoken] extra, core IS tiktoken for OpenAI -> 0% error.
+            # Exact mode: tiktoken is a required dependency, so core IS tiktoken for OpenAI -> 0%.
             exact_ok = all(tokens.count(t, "gpt-4o") == len(enc.encode(t)) for t in corpus.values())
             rows.append(
                 Result(
                     "core",
-                    "Exact mode error (with [tiktoken] extra)",
+                    "Exact mode error (default)",
                     pct(0.0, 1) if exact_ok else "mismatch",
-                    "OpenAI counts are exact when tiktoken is installed",
+                    "OpenAI counts are exact out of the box — `tiktoken` is a required dependency",
                 )
             )
 
@@ -108,15 +108,16 @@ def run() -> list[Result]:
                     "core",
                     "Offline subword fallback vs o200k (Claude/Gemini)",
                     pct(sum(cerrs) / len(cerrs), 1),
-                    "the no-tiktoken path; WITH [tiktoken], Claude/Gemini use o200k directly",
+                    "the defensive no-tiktoken fallback; by default Claude/Gemini use o200k directly",
                 )
             )
             rows.append(
                 Result(
                     "core",
-                    "Counting path with [tiktoken] installed",
+                    "Counting path (default)",
                     f"OpenAI={tokens.method('gpt-4o')}, Claude={tokens.method('claude-opus-4-8')}",
-                    "method() picks exact / bpe-estimate automatically; heuristic without the extra",
+                    "method() picks exact / bpe-estimate automatically; heuristic only if tiktoken "
+                    "fails to import",
                 )
             )
         else:

@@ -39,7 +39,7 @@ Plus the static gates:
 ```bash
 uv run ruff check . && uv run ruff format --check .
 uv run mypy -p cendor.core -p cendor.tokenguard -p cendor.contextkit \
-            -p cendor.squeeze -p cendor.cassette -p cendor.acttrace
+            -p cendor.squeeze -p cendor.cassette -p cendor.acttrace -p cendor.guardrails
 # namespace invariant — must print nothing:
 find packages -path '*/src/cendor/__init__.py' -print
 ```
@@ -53,7 +53,8 @@ find packages -path '*/src/cendor/__init__.py' -print
 | `contextkit` | 45 | budgeted `assemble` + every eviction strategy; pinned-overflow `BudgetError`; `report` receipt (+ squeeze `handle`); `whatif`; `order="attention"/"cache"`; adapters (anthropic/gemini/bedrock) + role coercion; multimodal `image_tokens`; async summarizer; compressor model-forwarding; determinism |
 | `squeeze` | 32 | `detect`; JSON/logs/prose/**code** compression + exact reversibility; structural JSON fit; length-normalized prose + abbreviation splitting; log IP/hex/int normalization; `fidelity`; `Compressor` protocol; CCR dedup + `SQLiteStore` + **LRU** `MemoryStore`; deterministic `Handle.id`; contextkit↔squeeze |
 | `cassette` | 29 | record→replay (LLM + tools); dict-vs-object replay; streaming record→replay (sync+async); `stream` in the hash + v1 compat; version check; ContextVar parallel-safety; redaction (modern secret formats); `promote` (incl. tools); `rerecord` + `drift`; `semantic_match` + pluggable scorer |
-| `acttrace` | 150 | auto-population from the bus; hash-chain verify + tamper/reorder detection; forged/stripped/unauthenticated `_meta`; missing/corrupt-file handling; context-assembly capture; EU AI Act + NIST export; redaction (modern formats) + auto-flag; HMAC signing + `verify(key=)`; concurrent-emit chain integrity; `acttrace verify` CLI |
+| `acttrace` | 152 | auto-population from the bus; hash-chain verify + tamper/reorder detection; forged/stripped/unauthenticated `_meta`; missing/corrupt-file handling; context-assembly + **guardrail-decision** capture (duck-typed); EU AI Act + NIST export; redaction (modern formats) + auto-flag; HMAC signing + `verify(key=)`; concurrent-emit chain integrity; `acttrace verify` CLI |
+| `guardrails` | 73 | the `Guardrail`/`Verdict`/`Context` abstraction + `@guardrail` decorator + stage validation; every built-in rule (`keyword_deny`/`regex_rule`/`url_allowlist`/`url_deny`/`length_bounds`/`json_schema`/`custom`); block/redact/flag across the four stages; `apply`/`evaluate` (sync) + `apply_async`/`evaluate_async`; decision emission + context propagation + ambient trace-id; `install()` interceptor (block pre-spend, redact reroute, pass MISS, tool_call block, output post-flight) + `uninstall` |
 
 ### Layer B — Install / import smoke *(implemented)*
 Layer A runs against the *editable source*; this layer builds the **wheels** and installs them into a
@@ -63,9 +64,9 @@ packaging / namespace / metadata breakage a user would hit. It's the `smoke` job
 
 ```bash
 for p in cendor-core cendor-tokenguard cendor-contextkit \
-         cendor-squeeze cendor-cassette cendor-acttrace cendor-libs cendor; do uv build --package "$p"; done
+         cendor-squeeze cendor-cassette cendor-acttrace cendor-guardrails cendor-libs cendor; do uv build --package "$p"; done
 python -m venv .smoke && .smoke/bin/pip install --no-index --find-links dist cendor-libs
-.smoke/bin/python -c "import cendor.core, cendor.tokenguard, cendor.contextkit, cendor.squeeze, cendor.cassette, cendor.acttrace; print('ok')"
+.smoke/bin/python -c "import cendor.core, cendor.tokenguard, cendor.contextkit, cendor.squeeze, cendor.cassette, cendor.acttrace, cendor.guardrails; print('ok')"
 ```
 
 ### Layer C — Cookbook integration *(in the cookbook repo)*

@@ -1,19 +1,21 @@
 # Cendor
 
-> Production plumbing for LLM apps — context, cost, testing, and governance — six small, composable,
-> framework-agnostic Python libraries that sit *beneath* your agent framework. Local-first, offline
-> by default, Apache-2.0. You wrap your provider client once with `instrument()`, and every tool
-> observes the call through a shared in-process event bus — tools never import each other.
+> Production plumbing for LLM apps — context, cost, guardrails, testing, and governance — seven
+> small, composable, framework-agnostic Python libraries that sit *beneath* your agent framework.
+> Local-first, offline by default, Apache-2.0. You wrap your provider client once with
+> `instrument()`, and every tool observes the call through a shared in-process event bus — tools
+> never import each other.
 
 The stack covers a production LLM call end to end: contextkit (assemble) → squeeze (compress) →
-tokenguard (budget) → cassette (test) → acttrace (audit), all on `cendor-core`. Each library
-also works on its own. Python ≥ 3.11.
+tokenguard (budget) → guardrails (gate) → cassette (test) → acttrace (audit), all on `cendor-core`.
+Each library also works on its own. Python ≥ 3.11.
 
 ## Packages
 - [cendor-core](packages/cendor-core/README.md): the foundation — shared types, provider-aware token counting (exact/estimate/heuristic), offline Decimal prices, the `instrument()` seam (OpenAI/Anthropic/Hugging Face/Bedrock/Gemini/Ollama; sync, async, streaming), a thread-safe event bus, OpenTelemetry, and structural protocols.
 - [cendor-contextkit](packages/cendor-contextkit/README.md): assemble context into a token budget with pin/priority/eviction rules and an inspectable receipt; attention/cache ordering; provider adapters; multimodal.
 - [cendor-squeeze](packages/cendor-squeeze/README.md): reversible, content-aware compression (JSON/logs/code/prose); compress to a token budget; a content-addressed store gives byte-exact restore.
 - [cendor-tokenguard](packages/cendor-tokenguard/README.md): pre-flight budget caps (block/downgrade), post-flight enforcement, and per-feature/user cost attribution; pluggable sinks; bounded in-memory buffer.
+- [cendor-guardrails](packages/cendor-guardrails/README.md): a deterministic gate at four stages (input/tool_call/tool_output/output) — keyword/regex/URL/length/JSON-schema rules that block/redact/flag; every decision emits on the bus as tamper-evident evidence for acttrace; offline, microseconds, no ML deps.
 - [cendor-cassette](packages/cendor-cassette/README.md): record a whole agent run once (every LLM and tool call) and replay it offline; modes auto/record/replay/rerecord; semantic matching; promote a trace to a cassette.
 - [cendor-acttrace](packages/cendor-acttrace/README.md): tamper-evident, offline-verifiable hash-chained audit log; policy flags for refused input; EU AI Act / ISO 42001 / GDPR / NIST evidence packs.
 
@@ -23,6 +25,7 @@ also works on its own. Python ≥ 3.11.
 - [contextkit](docs/contextkit.md): the assembly algorithm, eviction strategies, ordering, provider adapters.
 - [squeeze](docs/squeeze.md): the four compressors, the content-addressed store, reversibility.
 - [tokenguard](docs/tokenguard.md): budget modes, cost attribution, sinks, the bounded buffer.
+- [guardrails](docs/guardrails.md): the four stages, verdicts (block/redact/flag), built-in rules, apply/evaluate/install, the guardrail_decision bus event.
 - [cassette](docs/cassette.md): record/replay, modes, semantic_match, promote.
 - [acttrace](docs/acttrace.md): the hash chain, verify, HMAC signing, decisions, policy flags, evidence packs.
 - [Benchmarks](docs/benchmarks.md): reproducible, offline benchmarks (compression ratios, token accuracy, throughput, per-call overhead).

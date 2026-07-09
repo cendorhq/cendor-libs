@@ -134,6 +134,7 @@ _PACKAGES = [
     "cendor-contextkit",
     "cendor-squeeze",
     "cendor-tokenguard",
+    "cendor-guardrails",
     "cendor-cassette",
     "cendor-acttrace",
 ]

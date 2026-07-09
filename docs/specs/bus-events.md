@@ -75,6 +75,29 @@ acttrace specs for exactly what each persists).
 | `ts` | timestamp \| null | `null` | runtime. |
 | `metadata` | object | `{}` | free-form. |
 
+### `GuardrailDecision` (emitted by `cendor-guardrails`, not `instrument()`)
+
+A third bus event, emitted by the `guardrails` tool whenever a guardrail trips or flags. Unlike
+`LLMCall`/`ToolCall` (emitted by `core`'s `instrument()`), this one is produced by a sibling library
+— but it rides the same bus, and `acttrace` chains it as a `guardrail_decision` entry by **duck
+typing** (`guardrail`/`stage`/`action` present), with no import in either direction. Documented here
+because it is part of the cross-language bus vocabulary a port must match.
+
+| field | type | default | notes |
+|---|---|---|---|
+| `guardrail` | string | — | the guardrail's name. |
+| `stage` | string | — | one of `input` \| `tool_call` \| `tool_output` \| `output`. |
+| `action` | string | — | `block` \| `redact` \| `flag` (mirrors acttrace's action vocabulary). |
+| `reason` | string | `""` | short, human-readable; **never** the raw payload. |
+| `agent` | string | `""` | agent name (SDK), when known. |
+| `tool` | string | `""` | tool name for the tool stages, when known. |
+| `trace_id` | string | `""` | correlation id set by `trace()`; `""` = uncorrelated. |
+| `ts` | timestamp | now | when the decision was made. |
+| `metadata` | object | `{}` | free-form. |
+
+A port must emit the same field names/conventions (`snake_case` ↔ `camelCase`) so an audit chain
+written in one language records byte-identical `guardrail_decision` entries as the other.
+
 ## Serialization notes for ports
 
 - These are in-memory event shapes; the **wire** formats that must interoperate are defined by the

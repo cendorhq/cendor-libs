@@ -54,6 +54,16 @@ OpenRouter's `usage.cost`), `instrument()` prefers it and labels it `cost_report
 prices from the snapshot and labels it `cost_estimated`. Either way the **token usage is the
 provider's real billed count**, and all money math is exact `Decimal`.
 
+### Can it block or redact unsafe input / output (guardrails)?
+Yes — [`cendor-guardrails`](guardrails.md) is the **Gate** in the stack. Define a deterministic
+check (`keyword_deny`, `regex_rule`, `url_allowlist` / `url_deny`, `length_bounds`, `json_schema`, or
+`custom`) and attach it to one of four stages — input, tool call, tool output, output. `block` fails
+closed (nothing spends), `redact` scrubs the payload and continues, `flag` records and continues.
+Every decision emits on the bus, so `acttrace` chains it as tamper-evident evidence. The checks are
+regex/arithmetic — microseconds, offline, $0 — so they **do not** stop a novel jailbreak they were
+never told about; pair them with a bring-your-own model judge (`rules.llm_judge`) for open-ended
+risk, and use `acttrace`'s `guard(Policy…)` for PII/secret detection (one detection engine, not two).
+
 ### Can I use it in a server? Is it thread-safe?
 Yes, within a process. These shared structures are lock-guarded: `core`'s event bus and interceptor
 registry, its price-table load/`refresh()` swap and the `instrument()` install; `tokenguard`'s spend

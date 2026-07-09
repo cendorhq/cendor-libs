@@ -75,6 +75,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | LangChain `CendorCallbackHandler` | ✅ | ✅ | `@cendor/core/langchain`; recording-only in both; reads `usage_metadata`, correlates by root-run `traceId` |
 | `trace()` correlation | ✅ contextvars | ✅ AsyncLocalStorage | |
 | **tokenguard** budgets / track / report / sinks | ✅ | ✅ | SQLite / Queue / OTel sinks in both |
+| **guardrails** rules / stages / install | ✅ | 🚧 | deterministic gate at 4 stages (input / tool_call / tool_output / output); block / redact / flag → `guardrail_decision` on the bus. TS port ships with `@cendor/guardrails` in this release (flips to ✅ at publish) |
 | **contextkit** assemble / evict / order | ✅ | ✅ | TS collapses sync+async into one `async assemble()` |
 | **squeeze** compress / decompress | ✅ | ✅ | deterministic; handle ids match |
 | **cassette** record / replay | ✅ | ✅ | cross-language replay, vector-verified |

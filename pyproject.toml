@@ -18,6 +18,7 @@ cendor-contextkit = { workspace = true }
 cendor-squeeze = { workspace = true }
 cendor-cassette = { workspace = true }
 cendor-acttrace = { workspace = true }
+cendor-guardrails = { workspace = true }
 # The umbrella `cendor-libs` (pins the six) and the brand alias `cendor` (depends on cendor-libs)
 # are also workspace members; the alias's dep on cendor-libs must resolve to the workspace copy.
 cendor-libs = { workspace = true }
@@ -45,6 +46,7 @@ dev = [
   "cendor-squeeze",
   "cendor-cassette",
   "cendor-acttrace",
+  "cendor-guardrails",
 ]
 
 [tool.ruff]

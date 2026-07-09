@@ -17,8 +17,8 @@ uv run --with tiktoken python benchmarks/run_all.py   # adds exact-token accurac
 | Platform | Windows-11-10.0.26200-SP0 |
 | Processor | Intel64 Family 6 Model 154 Stepping 3, GenuineIntel |
 | Token counting | tiktoken (exact OpenAI) |
-| Package versions | core 1.3.1, contextkit 1.0.1, squeeze 1.0.1, tokenguard 1.1.1, cassette 1.0.1, acttrace 1.2.1 |
-| Generated | 2026-07-07 |
+| Package versions | core 1.4.0, contextkit 1.0.1, squeeze 1.0.1, tokenguard 1.1.1, guardrails 1.0.0, cassette 1.0.1, acttrace 1.3.0 |
+| Generated | 2026-07-09 |
 
 ## cendor-core
 
@@ -33,10 +33,10 @@ One `instrument()` seam, provider-aware token counting, and offline pricing — 
 | Offline subword fallback vs o200k (Claude/Gemini) | **33.2%** | the defensive no-tiktoken fallback; by default Claude/Gemini use o200k directly |
 | Counting path (default) | **OpenAI=exact, Claude=bpe-estimate** | method() picks exact / bpe-estimate automatically; heuristic only if tiktoken fails to import |
 | tokens.count throughput — OpenAI heuristic | **1.24M ops/s** | on a 1.4 KB string |
-| tokens.count throughput — subword estimate | **14.6K ops/s** | on a 1.4 KB string |
-| tokens.count throughput — tiktoken exact | **9.7K ops/s** | on a 1.4 KB string |
-| instrument() overhead per call | **11.66 µs** | bus emit + usage extraction + Decimal pricing; over a no-op client |
-| bus dispatch (3 subscribers) | **1.96M emits/s** | synchronous fan-out to subscribed tools |
+| tokens.count throughput — subword estimate | **14.5K ops/s** | on a 1.4 KB string |
+| tokens.count throughput — tiktoken exact | **8.8K ops/s** | on a 1.4 KB string |
+| instrument() overhead per call | **12.88 µs** | bus emit + usage extraction + Decimal pricing; over a no-op client |
+| bus dispatch (3 subscribers) | **1.97M emits/s** | synchronous fan-out to subscribed tools |
 
 ## cendor-contextkit
 
@@ -47,8 +47,8 @@ Packing prioritized blocks into a token budget: how tightly it fills the budget,
 | Budget utilization | **100%** | used 3500/3500 tokens (reserve 500); never overflows |
 | Overflow safety | **0 over budget** | 3/25 blocks kept/shrunk, rest dropped by priority |
 | Determinism | **exact ✓** | identical inputs → byte-identical messages |
-| assemble() latency (25 blocks) | **23.80 ms** | includes per-block token counting + eviction + ordering |
-| assemble() throughput | **42 assemblies/s** | re-packing a prepared 25-block context |
+| assemble() latency (25 blocks) | **23.31 ms** | includes per-block token counting + eviction + ordering |
+| assemble() throughput | **41 assemblies/s** | re-packing a prepared 25-block context |
 
 ## cendor-squeeze
 
@@ -62,7 +62,7 @@ Content-aware, reversible compression: how much each kind shrinks (by characters
 | Code compression | **52.5%** | 11.9 KB → 5.7 KB; 42.4% fewer tokens |
 | Prose compression | **49.1%** | 8.6 KB → 4.4 KB; 46.6% fewer tokens |
 | Reversibility (expand() == original) | **5/5 exact** | every kind restores byte-for-byte from the content-addressed store |
-| compress() throughput (JSON) | **56 MB/s** | 90 KB payload, 1.57 ms/call |
+| compress() throughput (JSON) | **54 MB/s** | 90 KB payload, 1.64 ms/call |
 
 ## cendor-tokenguard
 
@@ -70,8 +70,23 @@ Budget enforcement + spend attribution as a bus subscriber: the cost it adds per
 
 | Metric | Result | Notes |
 |---|---|---|
-| Added overhead per call (@budget + track) | **4.09 µs** | records spend by tags + checks the active budget(s) |
-| report() over 5000 spend rows | **7.64 ms** | group-by aggregation into per-tag cost rows |
+| Added overhead per call (@budget + track) | **4.99 µs** | records spend by tags + checks the active budget(s) |
+| report() over 5000 spend rows | **8.12 ms** | group-by aggregation into per-tag cost rows |
+
+## cendor-guardrails
+
+A deterministic gate at four intervention points: per-check latency for each built-in rule, the cost of a small pass-through gate, and the per-call overhead the interceptor adds.
+
+| Metric | Result | Notes |
+|---|---|---|
+| keyword_deny check latency | **4.53 µs** | substring scan of the flattened message text |
+| regex_rule check latency | **4.61 µs** | one compiled-regex search over the payload |
+| url_allowlist check latency | **5.02 µs** | extract URLs + host allowlist match |
+| length_bounds check latency (chars) | **732 ns** | len() of the flattened text |
+| length_bounds check latency (tokens) | **23.08 µs** | exact token count via cendor.core.tokens (tiktoken) |
+| json_schema check latency | **4.32 µs** | json.loads + minimal type/required/properties validation |
+| apply() 4-rule input gate (pass-through) | **55.0K calls/s** | four deterministic checks, nothing trips |
+| install() interceptor overhead per call | **24.74 µs** | input gate over an instrumented no-op client (bus emit excluded — nothing trips) |
 
 ## cendor-cassette
 
@@ -79,9 +94,9 @@ Record once, replay forever: a full run replayed vs live, the per-call replay ov
 
 | Metric | Result | Notes |
 |---|---|---|
-| 25-call run: replayed vs live | **852.44 µs vs 116.03 ms** | live = fake client sleeping 4 ms/call (real LLMs are far slower) |
-| Replay speedup | **136×** | at the modeled 4 ms/call; scales with real latency |
-| Replay overhead per call | **34.10 µs** | hash the request, look up the recorded response, reconstruct it |
+| 25-call run: replayed vs live | **995.34 µs vs 116.77 ms** | live = fake client sleeping 4 ms/call (real LLMs are far slower) |
+| Replay speedup | **117×** | at the modeled 4 ms/call; scales with real latency |
+| Replay overhead per call | **39.81 µs** | hash the request, look up the recorded response, reconstruct it |
 | semantic_match (lexical default) | **✓ accept + reject** | accepts a paraphrase, rejects an unrelated answer |
 
 ## cendor-acttrace
@@ -90,16 +105,16 @@ A tamper-evident hash chain with no server: append/verify throughput, signing co
 
 | Metric | Result | Notes |
 |---|---|---|
-| Append throughput (in-memory) | **16.4K entries/s** | sha256 chain + default PII redaction per entry |
-| HMAC signing overhead | **+2%** | per-entry HMAC-SHA256 on top of the chain hash |
-| Append throughput (file-backed) | **2.5K entries/s** | flush + fsync a JSONL line per entry on a kept-open handle |
-| verify() throughput | **58.7K entries/s** | re-walks a 2001-entry chain in 34.1 ms |
+| Append throughput (in-memory) | **15.0K entries/s** | sha256 chain + default PII redaction per entry |
+| HMAC signing overhead | **+4%** | per-entry HMAC-SHA256 on top of the chain hash |
+| Append throughput (file-backed) | **3.1K entries/s** | flush + fsync a JSONL line per entry on a kept-open handle |
+| verify() throughput | **54.4K entries/s** | re-walks a 2001-entry chain in 36.8 ms |
 | Tamper detection | **✓ detected** | one edited byte → chain hash mismatch → verify() returns False |
 
 ## Method & caveats
 
 - **No network, no keys.** Every model call is a fake client matching the provider's shape; usage and responses are synthetic but realistic.
-- **Token accuracy** compares the (defensive) offline heuristic to `tiktoken` (the real OpenAI tokenizer). OpenAI counts are exact **by default** (0% error) — `tiktoken` is a required dependency; the heuristic is only reached if it fails to import. Claude/Gemini have no offline native tokenizer, so that row is a cross-tokenizer ballpark, not ground truth.
+- **Token accuracy** compares the offline heuristic to `tiktoken` (the real OpenAI tokenizer). With the `[tiktoken]` extra installed, OpenAI counts are exact (0% error); the heuristic is the zero-dependency fallback. Claude/Gemini have no offline native tokenizer, so that row is a cross-tokenizer ballpark, not ground truth.
 - **Cassette speedup** models a real call with a fake client that sleeps a few milliseconds; production LLM calls are 100×–1000× slower, so the real-world speedup is far larger than shown here.
 - **Compression ratios** depend heavily on input shape and repetition (described per row). The log rows report **both** a repetition-heavy sample (~55% identical heartbeat lines, as much production log traffic is) and a mixed-entropy sample (~15% heartbeats, the rest distinct) — the mixed row is the honest lower bound. Inputs are typical verbose payloads, not adversarially chosen to flatter the compressors, but the headline log ratio is repetition-driven; read the mixed-entropy row for less repetitive logs.
 - Throughput numbers are single-machine and relative; they vary with hardware. Re-run locally for your own figures.

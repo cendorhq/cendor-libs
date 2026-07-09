@@ -4,8 +4,8 @@
 # `cendor` (packages/cendor) is a thin meta-package whose only dependency is this one.
 [project]
 name = "cendor-libs"
-version = "1.0.0"
-description = "All six Cendor libraries in one install — plain building blocks for LLM apps: context, cost, compression, testing, and a tamper-evident audit trail."
+version = "1.1.0"
+description = "All seven Cendor libraries in one install — plain building blocks for LLM apps: context, cost, compression, a deterministic guardrails gate, testing, and a tamper-evident audit trail."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 readme = "README.md"
@@ -30,6 +30,7 @@ dependencies = [
   "cendor-squeeze>=1.0.0,<2.0",
   "cendor-cassette>=1.0.0,<2.0",
   "cendor-acttrace>=1.0.0,<2.0",
+  "cendor-guardrails>=1.0.0,<2.0",
 ]
 
 [project.urls]

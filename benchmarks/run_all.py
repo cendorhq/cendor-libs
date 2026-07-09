@@ -17,6 +17,7 @@ import bench_acttrace
 import bench_cassette
 import bench_contextkit
 import bench_core_tokens
+import bench_guardrails
 import bench_squeeze
 import bench_tokenguard
 from _harness import Result, environment
@@ -48,6 +49,12 @@ PACKAGES: list[tuple[str, str, str]] = [
         "fast it aggregates spend.",
     ),
     (
+        "guardrails",
+        "cendor-guardrails",
+        "A deterministic gate at four intervention points: per-check latency for each built-in rule, "
+        "the cost of a small pass-through gate, and the per-call overhead the interceptor adds.",
+    ),
+    (
         "cassette",
         "cendor-cassette",
         "Record once, replay forever: a full run replayed vs live, the per-call replay overhead, and "
@@ -66,6 +73,7 @@ _MODULES = [
     bench_squeeze,
     bench_contextkit,
     bench_tokenguard,
+    bench_guardrails,
     bench_cassette,
     bench_acttrace,
 ]

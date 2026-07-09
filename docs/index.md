@@ -2,8 +2,8 @@
 
 **Production plumbing for LLM applications.**
 
-Composable primitives for context, cost, testing, and governance — the layer beneath your
-LLM app. Framework-agnostic · local-first · offline by default · Apache-2.0. Available for
+Composable primitives for context, cost, guardrails, testing, and governance — the layer beneath
+your LLM app. Framework-agnostic · local-first · offline by default · Apache-2.0. Available for
 **Python** (`cendor.*` on PyPI) and **TypeScript/JavaScript** (`@cendor/*` on npm) — see
 [Languages & parity](languages.md).
 
@@ -64,8 +64,10 @@ graph TD
     B --- CK["contextkit<br/>pack context into a budget"]
     B --- SQ["squeeze<br/>compress oversized blocks"]
     PRE --- TG1["tokenguard<br/>block / downgrade if over budget"]
+    PRE --- GR1["guardrails<br/>gate input / tool calls: block / redact"]
     PRE --- AT1["acttrace<br/>policy guard: flag + block bad input"]
     POST --- TG2["tokenguard<br/>record spend by feature / user"]
+    POST --- GR2["guardrails<br/>gate output: block / flag"]
     POST --- CS["cassette<br/>record the run (replay in tests)"]
     POST --- AT2["acttrace<br/>append to the tamper-evident log"]
 
@@ -73,20 +75,23 @@ graph TD
     classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
     classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
     classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
+    classDef gr fill:#F59E0B,color:#111827,stroke:#D97706;
     classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
     classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
     class CALL seam;
     class CK ck;
     class SQ sq;
     class TG1,TG2 tg;
+    class GR1,GR2 gr;
     class CS cs;
     class AT1,AT2 at;
 ```
 
-**tokenguard** and **acttrace** each appear twice: they run *before* the call (cap spend / guard
-the input) **and** *after* it (record cost / append to the log).
+**tokenguard**, **guardrails**, and **acttrace** each appear twice: they run *before* the call (cap
+spend / gate the input / guard bad input) **and** *after* it (record cost / gate the output / append
+to the log).
 
-## The six libraries
+## The seven libraries
 
 Each solves one of those problems, and each works on its own:
 
@@ -95,16 +100,17 @@ Each solves one of those problems, and each works on its own:
 | [contextkit](contextkit.md) | prompts overflow | Pack prioritized blocks into a token budget; get a receipt of what was kept / shrunk / dropped. |
 | [squeeze](squeeze.md) | a blob is too big | Content-aware, deterministic compression (JSON / logs / code / prose) — fully reversible. |
 | [tokenguard](tokenguard.md) | runaway cost | Cap spend before a call runs (block / downgrade), and attribute cost per feature / user. |
+| [guardrails](guardrails.md) | unsafe input / output | A deterministic gate at four stages (input / tool call / tool output / output) — block / redact / flag, offline, audit-evidenced. |
 | [cassette](cassette.md) | can't test agents | Record a whole run once (LLM + tool calls), replay it forever — offline, deterministic. |
 | [acttrace](acttrace.md) | no audit trail | Tamper-evident, offline-verifiable decision log + policy flags, with compliance evidence packs. |
 | [core](core.md) | the shared glue | Types, token counting, offline-first prices, the `instrument()` seam, and the event bus every tool rides. |
 
 ```
-contextkit  →  squeeze  →  tokenguard  →  cassette  →  acttrace
- assemble       compress      budget         test         audit
+contextkit  →  squeeze  →  tokenguard  →  guardrails  →  cassette  →  acttrace
+ assemble       compress      budget         gate          test         audit
 ```
 
-All six are **published on PyPI** (Python) and as **`@cendor/*` on npm** (TypeScript/JS), green
+All seven are **published on PyPI** (Python) and as **`@cendor/*` on npm** (TypeScript/JS), green
 in CI in both languages. Cross-language artifacts interoperate byte-for-byte — a cassette
 recorded in Python replays in TypeScript, an audit chain written in TypeScript verifies in
 Python. The full feature split is in [Languages & parity](languages.md).
@@ -135,16 +141,16 @@ supported.
 
 ## Libraries or the SDK?
 
-These docs cover the six libraries — the door for teams that already have a loop (LangChain,
+These docs cover the seven libraries — the door for teams that already have a loop (LangChain,
 LlamaIndex, or direct provider-SDK calls) and want governance **beneath** it. Cendor's second
 door is [**cendor-sdk**](/docs/sdk): a governed agent loop (`Agent`, `tool`, `run`) built *on*
-these six libraries, for teams starting fresh. Both doors expose the same primitives — `budget`,
+these libraries, for teams starting fresh. Both doors expose the same primitives — `budget`,
 `guard`, `Policy`, `AuditLog`, `trace` are the same objects — so you can mix them in one process
 and move between them without a migration. Unsure which fits?
 [FAQ → libraries or SDK](/docs/sdk/faq).
 
 > **Prefer to read code?** The [Cookbook](/cookbook) has the full-stack support agent — one
-> `instrument()` call, all six tools cooperating — as one copy-paste block.
+> `instrument()` call, the whole stack cooperating — as one copy-paste block.
 
 ## Where to go next
 
