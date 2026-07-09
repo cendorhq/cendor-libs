@@ -2,6 +2,14 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.0] — Unreleased
+Maturing the Gate from a deterministic-only v1.0 into a detection-tier suite (plan-guardrails-v02). Additive and backward-compatible.
+
+### Added (Wave 1 — execution-model maturity + judge helpers)
+- **Per-guardrail `timeout` + `on_error`** on `Guardrail` / `@guardrail` / `rules.custom` / `rules.llm_judge`. `timeout` (seconds) bounds a slow bring-your-own check (async via `asyncio.wait_for`; sync via a worker thread); `on_error` is `"fail_closed"` (default — an errored check is treated as a block) or `"fail_open"` (record a flag and proceed). Either way the failure is emitted as a `GuardrailDecision` — the audit chain records that a check couldn't run, never a swallowed exception. The reason carries the exception type/message, never the payload. The `llm_judge`/`custom` factories default the policy from the action (block → closed, flag → open).
+- **`scoped(guardrails)`** — a context manager that gates every instrumented call for the block's duration, scoped to the current execution context (`contextvars`), not process-global. Closes the "process-global `install()`" wart for door-1 users on a concurrent server; nests cleanly.
+- **`cendor.guardrails.judge` helpers** — `verdict_prompt(policy)` (a strict-JSON verdict system prompt), `parse_verdict(text)` (strict-JSON → `Verdict`; malformed output raises so `on_error` decides — a garbled judge never silently passes), and `judge(respond, policy)` to compose them into a check for `rules.llm_judge`. The judge call rides an instrumented client, so its own spend lands in tokenguard/acttrace.
+
 ## [1.0.0] — 2026-07-09
 ### Added
 - First release of `cendor-guardrails` — the **Gate** in the Cendor pipeline (`contextkit → squeeze → tokenguard → guardrails → cassette → acttrace`). Define a deterministic check and attach it to one of four intervention points — `input`, `tool_call`, `tool_output`, `output` — matching Azure Foundry's intervention points and OpenAI's four decorator types.

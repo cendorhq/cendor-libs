@@ -111,6 +111,23 @@ A tamper-evident hash chain with no server: append/verify throughput, signing co
 | verify() throughput | **54.4K entries/s** | re-walks a 2001-entry chain in 36.8 ms |
 | Tamper detection | **✓ detected** | one edited byte → chain hash mismatch → verify() returns False |
 
+## PII / secret detection — acttrace catalogue
+
+Detection *quality* for the regex/validator catalogue the guardrails PII bridge (`rules.pii` / `secrets` / `entropy`, bridged from the SDK) leans on: per-group precision/recall on a small **synthetic** corpus, the false-positive rate on look-alikes, and the regex-vs-NER split for free-text names/addresses. **Read the corpus caveat below before quoting any number** — these figures establish the methodology and per-group behaviour of the shipped catalogue; they are not a headline "we catch X% of PII" claim.
+
+| Metric | Result | Notes |
+|---|---|---|
+| secret: precision / recall | **100% / 100%** | regex catalogue, 7TP 0FP 0FN on the synthetic corpus |
+| financial: precision / recall | **100% / 100%** | regex catalogue, 2TP 0FP 0FN on the synthetic corpus |
+| gov_id: precision / recall | **100% / 100%** | regex catalogue, 1TP 0FP 0FN on the synthetic corpus |
+| pii: precision / recall | **100% / 100%** | regex catalogue, 4TP 0FP 0FN on the synthetic corpus |
+| special_category: precision / recall | **100% / 100%** | regex catalogue, 1TP 0FP 0FN on the synthetic corpus |
+| false positives on clean look-alikes | **0/7 lines** | non-Luhn digit runs, partial IPs, prose — validators keep these from tripping |
+| overall (structured): precision / recall | **100% / 100%** | aggregate across 5 groups, 15TP 0FP 0FN |
+| free-text names/addresses — regex recall | **0%** | the regex catalogue does not target free-text names/addresses by design |
+| free-text names/addresses — +NER (Presidio) | **needs the `[ner]` backend** | measured only when `cendor-acttrace[ner]` is installed |
+| scan() latency (mixed line) | **~50 µs** | one pass over the full regex catalogue + validators, counts only |
+
 ## Method & caveats
 
 - **No network, no keys.** Every model call is a fake client matching the provider's shape; usage and responses are synthetic but realistic.
@@ -118,4 +135,5 @@ A tamper-evident hash chain with no server: append/verify throughput, signing co
 - **Cassette speedup** models a real call with a fake client that sleeps a few milliseconds; production LLM calls are 100×–1000× slower, so the real-world speedup is far larger than shown here.
 - **Compression ratios** depend heavily on input shape and repetition (described per row). The log rows report **both** a repetition-heavy sample (~55% identical heartbeat lines, as much production log traffic is) and a mixed-entropy sample (~15% heartbeats, the rest distinct) — the mixed row is the honest lower bound. Inputs are typical verbose payloads, not adversarially chosen to flatter the compressors, but the headline log ratio is repetition-driven; read the mixed-entropy row for less repetitive logs.
 - Throughput numbers are single-machine and relative; they vary with hardware. Re-run locally for your own figures.
+- **PII/secret detection is measured on a small, hand-labelled *synthetic* corpus** (`benchmarks/bench_pii_detectors.py`) — every value is fabricated (test keys, Luhn-valid but non-issued cards, RFC-5737 documentation IPs), modelled on the formats used by public PII corpora (Presidio's generator, Faker, the AWS Comprehend entity list) but scraping none of them, so the suite stays offline. The precision/recall figures establish the **methodology and per-group behaviour of the shipped catalogue**; they are **not** a headline "we catch X% of PII" claim — that needs a larger corpus from a licensed public dataset. The regex catalogue targets *structured* PII (patterns + checksum validators), so its recall on free-text **names/addresses is ~0 by design**; the optional Presidio NER backend (`cendor-acttrace[ner]`) covers those and is measured only when installed.
 

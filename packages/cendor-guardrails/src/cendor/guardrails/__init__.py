@@ -19,8 +19,12 @@ tokenguard; they never import it. See docs/guardrails.md.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-from collections.abc import Sequence
+import threading
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from cendor.core import bus
@@ -33,10 +37,11 @@ from cendor.core.instrument import (
 )
 from cendor.core.types import LLMCall, ToolCall
 
-from . import rules
+from . import judge, rules
 from .decision import (
     ACTIONS,
     ALLOW,
+    ON_ERROR,
     STAGES,
     Context,
     Guardrail,
@@ -57,6 +62,7 @@ __all__ = [
     "GuardrailTripped",
     "STAGES",
     "ACTIONS",
+    "ON_ERROR",
     "ALLOW",
     "normalize_stages",
     # engine
@@ -67,8 +73,10 @@ __all__ = [
     # standalone wiring
     "install",
     "uninstall",
-    # built-in rules
+    "scoped",
+    # built-in rules + judge helpers
     "rules",
+    "judge",
 ]
 
 Guardrails = Sequence[Guardrail]
@@ -116,6 +124,90 @@ def _handle(
     return payload
 
 
+_ERROR_REASON_MAX = 200
+
+
+def _on_error_verdict(g: Guardrail, exc: BaseException) -> Verdict:
+    """Map a check error/timeout to a verdict per ``g.on_error``. Either way this becomes a
+    :class:`GuardrailDecision`, so the audit chain records that the check could not run — never a
+    silently swallowed exception. The reason carries the exception *type* and a truncated message,
+    never the payload the check saw."""
+    detail = f"{type(exc).__name__}: {exc}"
+    if len(detail) > _ERROR_REASON_MAX:
+        detail = detail[:_ERROR_REASON_MAX] + "…"
+    if g.on_error == "fail_open":
+        return Verdict("flag", reason=f"check errored (fail-open): {detail}")
+    return Verdict("block", reason=f"check errored (fail-closed): {detail}")
+
+
+def _call_sync_with_timeout(g: Guardrail, payload: Any, ctx: Context) -> Any:
+    """Call ``g.check`` synchronously, bounding it to ``g.timeout`` seconds via a daemon worker
+    thread when set. A timeout raises ``TimeoutError`` (the worker is abandoned — daemon, so it
+    dies with the process; keep timed sync checks side-effect-light)."""
+    if g.timeout is None:
+        return g.check(payload, ctx)
+    box: dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            box["result"] = g.check(payload, ctx)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the calling thread below
+            box["error"] = exc
+
+    worker = threading.Thread(target=_run, name=f"guardrail:{g.name}", daemon=True)
+    worker.start()
+    worker.join(g.timeout)
+    if worker.is_alive():
+        raise TimeoutError(f"guardrail {g.name!r} check exceeded {g.timeout}s")
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
+
+
+def _invoke_sync(g: Guardrail, payload: Any, ctx: Context) -> Verdict | None:
+    """Run one guardrail's check on the sync path, applying its timeout + on_error policy. An
+    ``async`` check is a programming error here (use the async path), so that ``TypeError`` is
+    raised *before* the on_error guard and always propagates."""
+    if inspect.iscoroutinefunction(g.check):
+        raise TypeError(
+            f"guardrail {g.name!r} has an async check; use evaluate_async / an async run"
+        )
+    try:
+        result = _call_sync_with_timeout(g, payload, ctx)
+    except GuardrailTripped:
+        raise
+    except Exception as exc:  # noqa: BLE001 - timeout / check bug → on_error policy (recorded)
+        return _on_error_verdict(g, exc)
+    if inspect.isawaitable(result):
+        close = getattr(result, "close", None)
+        if close is not None:
+            close()  # avoid an un-awaited-coroutine warning
+        raise TypeError(
+            f"guardrail {g.name!r} returned an awaitable; use evaluate_async / an async run"
+        )
+    return result
+
+
+async def _invoke_async(g: Guardrail, payload: Any, ctx: Context) -> Verdict | None:
+    """Run one guardrail's check on the async path, applying its timeout + on_error policy.
+
+    ``asyncio.wait_for`` bounds an ``async`` check to ``g.timeout``. A *sync* check runs inline (the
+    deterministic tier is microseconds); a sync ``timeout`` is enforced on the sync path only —
+    stated in :class:`Guardrail`.
+    """
+    try:
+        result = g.check(payload, ctx)
+        if inspect.isawaitable(result):
+            result = await (
+                asyncio.wait_for(result, g.timeout) if g.timeout is not None else result
+            )
+    except GuardrailTripped:
+        raise
+    except Exception as exc:  # noqa: BLE001 - timeout / check bug → on_error policy (recorded)
+        return _on_error_verdict(g, exc)
+    return result
+
+
 def evaluate(
     guardrails: Guardrails,
     stage: str,
@@ -126,25 +218,15 @@ def evaluate(
 
     Returns ``(payload, decisions)`` where ``payload`` carries any redactions applied in order.
     Raises :class:`GuardrailTripped` on the first ``block`` (fail-closed) — the decision is emitted
-    first, so the block is on the audit chain before the exception propagates.
+    first, so the block is on the audit chain before the exception propagates. Each check honours
+    its :attr:`~.decision.Guardrail.timeout` / :attr:`~.decision.Guardrail.on_error` policy.
 
     Sync only: an ``async`` check raises ``TypeError`` here (use :func:`evaluate_async`).
     """
     ctx = ctx or Context(stage=stage)
     decisions: list[GuardrailDecision] = []
     for g in _applicable(guardrails, stage):
-        if inspect.iscoroutinefunction(g.check):
-            raise TypeError(
-                f"guardrail {g.name!r} has an async check; use evaluate_async / an async run"
-            )
-        verdict = g.check(payload, ctx)
-        if inspect.isawaitable(verdict):
-            close = getattr(verdict, "close", None)
-            if close is not None:
-                close()  # avoid an un-awaited-coroutine warning
-            raise TypeError(
-                f"guardrail {g.name!r} returned an awaitable; use evaluate_async / an async run"
-            )
+        verdict = _invoke_sync(g, payload, ctx)
         payload = _handle(verdict, g, stage, payload, ctx, decisions)
     return payload, decisions
 
@@ -155,13 +237,12 @@ async def evaluate_async(
     payload: Any,
     ctx: Context | None = None,
 ) -> tuple[Any, list[GuardrailDecision]]:
-    """Async counterpart of :func:`evaluate`: awaits ``async`` checks, calls sync ones directly."""
+    """Async counterpart of :func:`evaluate`: awaits ``async`` checks (bounded by each guardrail's
+    ``timeout``), calls sync ones directly, and applies each guardrail's ``on_error`` policy."""
     ctx = ctx or Context(stage=stage)
     decisions: list[GuardrailDecision] = []
     for g in _applicable(guardrails, stage):
-        verdict = g.check(payload, ctx)
-        if inspect.isawaitable(verdict):
-            verdict = await verdict
+        verdict = await _invoke_async(g, payload, ctx)
         payload = _handle(verdict, g, stage, payload, ctx, decisions)
     return payload, decisions
 
@@ -195,6 +276,40 @@ async def apply_async(
 _state: dict[str, Any] = {"interceptor": None, "subscriber": None}
 
 
+def _gate_interceptor(gl: Guardrails, event: Any) -> Any:
+    """The shared interceptor body used by :func:`install` and :func:`scoped` — gate an ``LLMCall``
+    at the ``input`` stage (redact reroutes, block raises, pass declines) and a ``ToolCall`` at the
+    ``tool_call`` stage (block raises; redact/flag recorded but the call proceeds)."""
+    if isinstance(event, LLMCall):
+        ctx = Context(stage="input", trace_id=event.trace_id)
+        cleaned, decisions = evaluate(gl, "input", event.messages, ctx)
+        if any(d.action == "redact" for d in decisions):
+            return Reroute(messages=cleaned)
+        return MISS
+    if isinstance(event, ToolCall):
+        ctx = Context(
+            stage="tool_call",
+            tool=event.name,
+            tool_args=event.arguments,
+            trace_id=event.trace_id,
+        )
+        evaluate(gl, "tool_call", event.arguments, ctx)  # block raises; else record + proceed
+        return MISS
+    return MISS
+
+
+def _gate_output(gl: Guardrails, event: Any) -> None:
+    """The shared post-flight output subscriber body: gate the completed ``LLMCall``'s response
+    text at the ``output`` stage (block raises after the call ran)."""
+    if not isinstance(event, LLMCall):
+        return
+    text = _response_text(event)
+    if text is None:
+        return
+    ctx = Context(stage="output", trace_id=event.trace_id)
+    evaluate(gl, "output", text, ctx)  # block raises post-flight
+
+
 def install(guardrails: Guardrails) -> None:
     """Gate every instrumented call by registering ONE ``cendor.core`` interceptor (+ an output
     subscriber). Framework-independent: works under any framework or a bare instrumented client.
@@ -209,37 +324,17 @@ def install(guardrails: Guardrails) -> None:
       ``tokenguard``'s ``on_exceed="raise"``; the SDK's in-loop output stage pre-empts instead).
 
     Runs sync checks only (the interceptor seam is synchronous); an async check raises. Call
-    :func:`uninstall` to remove.
+    :func:`uninstall` to remove. ``install()`` is **process-global** — for a concurrent server that
+    varies guardrails per request, use :func:`scoped` instead.
     """
     uninstall()
     gl = list(guardrails)
 
     def _interceptor(event: Any) -> Any:
-        if isinstance(event, LLMCall):
-            ctx = Context(stage="input", trace_id=event.trace_id)
-            cleaned, decisions = evaluate(gl, "input", event.messages, ctx)
-            if any(d.action == "redact" for d in decisions):
-                return Reroute(messages=cleaned)
-            return MISS
-        if isinstance(event, ToolCall):
-            ctx = Context(
-                stage="tool_call",
-                tool=event.name,
-                tool_args=event.arguments,
-                trace_id=event.trace_id,
-            )
-            evaluate(gl, "tool_call", event.arguments, ctx)  # block raises; else record + proceed
-            return MISS
-        return MISS
+        return _gate_interceptor(gl, event)
 
     def _subscriber(event: Any) -> None:
-        if not isinstance(event, LLMCall):
-            return
-        text = _response_text(event)
-        if text is None:
-            return
-        ctx = Context(stage="output", trace_id=event.trace_id)
-        evaluate(gl, "output", text, ctx)  # block raises post-flight
+        _gate_output(gl, event)
 
     add_interceptor(_interceptor)
     bus.subscribe(_subscriber)
@@ -253,6 +348,63 @@ def uninstall() -> None:
     if _state["subscriber"] is not None:
         bus.unsubscribe(_state["subscriber"])
     _state.update(interceptor=None, subscriber=None)
+
+
+# --------------------------------------------------------------------------- scoped (per-request)
+
+#: The guardrails active in *this* execution context (``contextvars``), or ``None`` outside any
+#: :func:`scoped` block. A concurrent server (threads or asyncio tasks) sees its own value, so two
+#: overlapping requests can run different guardrails through one shared, context-gated interceptor.
+_scoped_guardrails: ContextVar[list[Guardrail] | None] = ContextVar(
+    "cendor_guardrails_scoped", default=None
+)
+
+
+def _scoped_interceptor(event: Any) -> Any:
+    gl = _scoped_guardrails.get()
+    if not gl:
+        return MISS  # no active scope in this context — decline
+    return _gate_interceptor(gl, event)
+
+
+def _scoped_subscriber(event: Any) -> None:
+    gl = _scoped_guardrails.get()
+    if not gl:
+        return
+    _gate_output(gl, event)
+
+
+def _ensure_scoped_seam() -> None:
+    """Register the context-gated interceptor + subscriber (idempotent — ``add_interceptor`` /
+    ``bus.subscribe`` de-dupe). They stay registered and are no-ops outside a :func:`scoped` block,
+    so leaving them installed costs a dict lookup per call and needs no teardown."""
+    add_interceptor(_scoped_interceptor)
+    bus.subscribe(_scoped_subscriber)
+
+
+@contextmanager
+def scoped(guardrails: Guardrails) -> Iterator[None]:
+    """Gate every instrumented call for the duration of the block — like :func:`install`, but
+    **scoped to the current execution context** rather than process-global.
+
+    The interceptor reads the active guardrails from a ``ContextVar``, so a concurrent server
+    (asyncio tasks or threads) can vary guardrails per request without one request's set leaking
+    into another. This closes the same "process-global" wart for standalone (door-1) users that
+    ``Agent(guardrails=[…])`` closed for the SDK. Nest freely — an inner ``scoped`` replaces the set
+    for its block and the outer set is restored on exit. Runs sync checks only (the seam is sync).
+
+    ```python
+    with scoped([rules.keyword_deny(["secret"], action="block")]):
+        client.chat.completions.create(...)   # gated here
+    client.chat.completions.create(...)        # not gated
+    ```
+    """
+    _ensure_scoped_seam()
+    token = _scoped_guardrails.set(list(guardrails))
+    try:
+        yield
+    finally:
+        _scoped_guardrails.reset(token)
 
 
 def _response_text(call: LLMCall) -> str | None:

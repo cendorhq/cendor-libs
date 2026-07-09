@@ -265,17 +265,35 @@ def json_schema(
     return Guardrail(name=name or "json_schema", stages=normalize_stages(stage), check=check)
 
 
+def _resolve_on_error(action: str, on_error: str | None) -> str:
+    """Default the error policy from the guardrail's action: a ``block`` gate fails **closed** (an
+    errored check is treated as a block), while a ``flag`` degrades to advisory (``fail_open``).
+    An explicit ``on_error`` always wins."""
+    if on_error is not None:
+        return on_error
+    return "fail_open" if action == "flag" else "fail_closed"
+
+
 def custom(
     fn: Callable[[Any, Context], Verdict | None],
     *,
     stage: str | tuple[str, ...] = "input",
     name: str | None = None,
+    timeout: float | None = None,
+    on_error: str = "fail_closed",
 ) -> Guardrail:
-    """Wrap any ``fn(payload, ctx) -> Verdict | None`` as a :class:`Guardrail` (sync or async)."""
+    """Wrap any ``fn(payload, ctx) -> Verdict | None`` as a :class:`Guardrail` (sync or async).
+
+    Your ``fn`` is arbitrary code, so it can raise or hang: ``timeout`` (seconds) bounds it and
+    ``on_error`` (``"fail_closed"`` default / ``"fail_open"``) decides what a raise or timeout does
+    — either way the failure is recorded as a decision. See :class:`Guardrail`.
+    """
     return Guardrail(
         name=name or str(getattr(fn, "__name__", "custom")),
         stages=normalize_stages(stage),
         check=fn,
+        timeout=timeout,
+        on_error=on_error,
     )
 
 
@@ -285,6 +303,8 @@ def llm_judge(
     stage: str | tuple[str, ...] = "output",
     action: str = "block",
     name: str = "llm_judge",
+    timeout: float | None = None,
+    on_error: str | None = None,
 ) -> Guardrail:
     """Adapter **contract** for a bring-your-own model judge — not a built-in classifier.
 
@@ -294,6 +314,11 @@ def llm_judge(
     real tokens and adds real latency (typically seconds — far more than the microsecond
     deterministic rules), and a judge is only as good as its prompt. Measure and state that cost
     honestly. See docs/guardrails.md "Honest limits".
+
+    Because a judge is a network call it can hang or fail: ``timeout`` (seconds) bounds it, and
+    ``on_error`` sets the fail policy — defaulting to ``fail_closed`` for the ``block`` action
+    (a judge outage must not silently open the gate) and ``fail_open`` for a ``flag`` (advisory).
+    Compose the check with :mod:`cendor.guardrails.judge` (verdict prompt + strict-JSON parsing).
     """
 
     def check(payload: Any, ctx: Context) -> Verdict | None:
@@ -308,7 +333,13 @@ def llm_judge(
     import inspect
 
     chosen = acheck if inspect.iscoroutinefunction(judge) else check
-    return Guardrail(name=name, stages=normalize_stages(stage), check=chosen)
+    return Guardrail(
+        name=name,
+        stages=normalize_stages(stage),
+        check=chosen,
+        timeout=timeout,
+        on_error=_resolve_on_error(action, on_error),
+    )
 
 
 def _coerce_judgement(result: Any, action: str) -> Verdict | None:

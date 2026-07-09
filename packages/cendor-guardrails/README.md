@@ -36,8 +36,12 @@ client.chat.completions.create(model="gpt-4o", messages=msgs)
   `cendor.core` bus, so `cendor-acttrace` chains it as a tamper-evident `guardrail_decision` entry
   with **no import** between the two. "We blocked it" is in the hash chain, not a log line.
 - **Three ways to use it** — pure `apply()` / `evaluate()`; framework-independent `install()` on
-  the core seam; and `Agent(guardrails=[…])` in `cendor-sdk` (all four in-loop stages + per-run
-  override).
+  the core seam (or **`scoped()`** for per-request gating on a concurrent server); and
+  `Agent(guardrails=[…])` in `cendor-sdk` (all four in-loop stages + per-run override).
+- **Bring-your-own model judge** — `rules.llm_judge` for open-ended risk, with per-guardrail
+  `timeout` + `on_error` (fail-closed by default) and `cendor.guardrails.judge` helpers (verdict
+  prompt + strict-JSON parsing). The judge rides an instrumented client, so its own spend is
+  budgeted + audited.
 
 ```python
 from cendor.guardrails import apply, guardrail, Verdict, GuardrailTripped

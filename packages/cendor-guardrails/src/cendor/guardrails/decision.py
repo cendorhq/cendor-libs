@@ -25,6 +25,14 @@ STAGES: tuple[str, ...] = ("input", "tool_call", "tool_output", "output")
 #: for "replace the payload and continue".)
 ACTIONS: tuple[str, ...] = ("block", "redact", "flag")
 
+#: What to do when a check *itself* errors or times out (as opposed to returning a verdict).
+#: ``fail_closed`` treats the error as a block (fail-safe — the default for a gate you rely on);
+#: ``fail_open`` records the failure as a ``flag`` and lets the call proceed (so a flaky tier-3/4
+#: judge outage degrades to advisory rather than silently disabling the agent). Either way the
+#: failure is emitted as a :class:`GuardrailDecision`, so the audit chain records that the check
+#: could not run — evidence, not a swallowed exception.
+ON_ERROR: tuple[str, ...] = ("fail_closed", "fail_open")
+
 
 def normalize_stages(stage: str | tuple[str, ...] | list[str]) -> tuple[str, ...]:
     """Coerce a stage spec (a single stage or a collection) to a validated tuple."""
@@ -87,19 +95,44 @@ Check = Callable[[Any, Context], "Verdict | None | Awaitable[Verdict | None]"]
 @dataclass
 class Guardrail:
     """A named check bound to one or more stages. Build one directly, with the :func:`guardrail`
-    decorator, or via a factory in :mod:`cendor.guardrails.rules`."""
+    decorator, or via a factory in :mod:`cendor.guardrails.rules`.
+
+    Args:
+        name: A short label recorded on every decision this guardrail produces.
+        stages: The intervention point(s) it gates — a subset of :data:`STAGES`.
+        check: The ``check(payload, ctx) -> Verdict | None`` callable (sync or ``async``).
+        timeout: Optional per-check wall-clock limit in **seconds**. Meant for slow tier-3/4 checks
+            (an LLM judge, a hosted rail); deterministic built-ins run in microseconds and leave it
+            ``None``. On the async path a coroutine check is bounded with ``asyncio.wait_for``; on
+            the sync path the check runs in a worker thread and a timeout raises ``TimeoutError`` —
+            handled per :attr:`on_error`. (A sync timeout unblocks the caller but cannot force the
+            worker to stop; keep timed sync checks side-effect-light.)
+        on_error: What to do when the check *raises* or *times out*: ``"fail_closed"`` (default —
+            treat it as a block) or ``"fail_open"`` (record a ``flag`` and proceed). Rule factories
+            pick the safe default for their action; set it explicitly for a bring-your-own judge so
+            an outage degrades to advisory instead of a hard stop (or vice-versa).
+    """
 
     name: str
     stages: tuple[str, ...]
     check: Check
+    timeout: float | None = None
+    on_error: str = "fail_closed"
 
     def __post_init__(self) -> None:
         self.stages = normalize_stages(self.stages)
+        if self.on_error not in ON_ERROR:
+            raise ValueError(f"unknown on_error {self.on_error!r}; must be one of {ON_ERROR}")
+        if self.timeout is not None and self.timeout <= 0:
+            raise ValueError(f"timeout must be positive seconds or None, got {self.timeout!r}")
 
 
 def guardrail(
     stage: str | tuple[str, ...] | list[str] = "input",
     name: str | None = None,
+    *,
+    timeout: float | None = None,
+    on_error: str = "fail_closed",
 ) -> Callable[[Check], Guardrail] | Guardrail:
     """Decorator sugar: turn a ``check(payload, ctx)`` function into a :class:`Guardrail`.
 
@@ -111,16 +144,29 @@ def guardrail(
     ```
 
     Usable bare (``@guardrail``) — defaults to the ``input`` stage — or called
-    (``@guardrail(stage="output", name="…")``).
+    (``@guardrail(stage="output", name="…")``). ``timeout`` / ``on_error`` set the per-check
+    execution policy (see :class:`Guardrail`).
     """
     if callable(stage):  # used bare as @guardrail
         fn = stage
-        return Guardrail(name=name or _fn_name(fn), stages=("input",), check=fn)
+        return Guardrail(
+            name=name or _fn_name(fn),
+            stages=("input",),
+            check=fn,
+            timeout=timeout,
+            on_error=on_error,
+        )
 
     stages = normalize_stages(stage)
 
     def deco(fn: Check) -> Guardrail:
-        return Guardrail(name=name or _fn_name(fn), stages=stages, check=fn)
+        return Guardrail(
+            name=name or _fn_name(fn),
+            stages=stages,
+            check=fn,
+            timeout=timeout,
+            on_error=on_error,
+        )
 
     return deco
 

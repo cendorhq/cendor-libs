@@ -18,6 +18,7 @@ import bench_cassette
 import bench_contextkit
 import bench_core_tokens
 import bench_guardrails
+import bench_pii_detectors
 import bench_squeeze
 import bench_tokenguard
 from _harness import Result, environment
@@ -66,6 +67,14 @@ PACKAGES: list[tuple[str, str, str]] = [
         "A tamper-evident hash chain with no server: append/verify throughput, signing cost, and that "
         "a single edited byte is caught.",
     ),
+    (
+        "pii_detectors",
+        "PII / secret detection — acttrace catalogue",
+        "Detection *quality* for the regex/validator catalogue the guardrails PII bridge "
+        "(`rules.pii` / `secrets` / `entropy`) leans on: per-group precision/recall on a small "
+        "**synthetic** corpus, the false-positive rate on look-alikes, and the regex-vs-NER split "
+        "for free-text names/addresses. Read the corpus caveat below before quoting any number.",
+    ),
 ]
 
 _MODULES = [
@@ -76,6 +85,7 @@ _MODULES = [
     bench_guardrails,
     bench_cassette,
     bench_acttrace,
+    bench_pii_detectors,
 ]
 
 
@@ -165,6 +175,16 @@ def _to_markdown(rows: list[Result], env: dict[str, str]) -> str:
         "repetition-driven; read the mixed-entropy row for less repetitive logs.\n"
         "- Throughput numbers are single-machine and relative; they vary with hardware. Re-run "
         "locally for your own figures.\n"
+        "- **PII/secret detection is measured on a small, hand-labelled *synthetic* corpus** "
+        "(`benchmarks/bench_pii_detectors.py`) — every value is fabricated (test keys, Luhn-valid "
+        "but non-issued cards, RFC-5737 documentation IPs), modelled on the formats used by public "
+        "PII corpora (Presidio's generator, Faker, the AWS Comprehend entity list) but scraping "
+        "none of them, so the suite stays offline. The precision/recall figures establish the "
+        "**methodology and per-group behaviour of the shipped catalogue**; they are **not** a "
+        "headline 'we catch X% of PII' claim — that needs a larger corpus from a licensed public "
+        "dataset. The regex catalogue targets *structured* PII (patterns + checksum validators), so "
+        "its recall on free-text **names/addresses is ~0 by design**; the optional Presidio NER "
+        "backend (`cendor-acttrace[ner]`) covers those and is measured only when installed.\n"
     )
     return "\n".join(out) + "\n"
 
