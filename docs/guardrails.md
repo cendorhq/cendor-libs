@@ -467,11 +467,11 @@ agent = Agent(instructions="Book flights only.", guardrails=[rail], ...)
 ```ts
 import { judge, rules } from '@cendor/guardrails';
 
-// The taskAdherence helper is ported to @cendor/guardrails; wire the check by hand today:
+// Standalone (@cendor/guardrails, no loop): wire the check and set ctx.instruction yourself.
 const check = judge.taskAdherence(respond);
 const rail = rules.llmJudge(check, { stage: 'tool_call', action: 'flag', timeout: 8 });
-// > 🚧 SDK auto-threading of the user instruction into ctx.instruction is a deferred @cendor/sdk
-// > parity tail — see the parity matrix. Until it lands, set ctx.instruction yourself.
+// > On @cendor/sdk (>= 0.7.0) the runner auto-threads the user's turn into ctx.instruction, so with
+// > the SDK you don't set it by hand — see the SDK guardrails page.
 ```
 
 <!-- /tabs -->
