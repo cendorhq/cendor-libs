@@ -79,6 +79,8 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | **guardrails** hosted rails | ✅ | ✅ | `bedrock_guardrail` (AWS ApplyGuardrail), `azure_content_safety` (Prompt Shields), `model_armor` (Google) — duck-typed clients (no cloud SDK imported), metered by the vendor; every verdict still emits a **local** `guardrail_decision` ("cloud check, local evidence") |
 | **guardrails** config-as-data (`load_policy`) | ✅ | ✅ | declare deterministic rules in a versioned JSON/YAML file; the content hash + version are stamped into every decision's `metadata` (`policy_hash` / `policy_version`) so the audit chain proves which policy was active. YAML via the `[yaml]` extra (Py) / a BYO parser (TS) |
 | **guardrails** groundedness / denied topics | ✅ | ✅ | `groundedness` / `denied_topics` over a **bring-your-own** `embed(text)` fn (cassette's BYO-scorer precedent) — cosine similarity, no bundled model, no accuracy claim |
+| **guardrails** red-team eval | ✅ | ✅ | `run_redteam` + `load_corpus` — trip rate + false-positive rate + per-category breakdown against a labeled corpus **you** supply (no vended data). Py reads a file path; TS takes text/array (no `node:fs`) |
+| **guardrails** SDK re-ask / stream window | ✅ Python | 🚧 planned | `Agent(reask_on_output_trip=N)` (re-ask on an output block) + `Agent(stream_check_window=N)` (incremental stream check) are **Python-first** in `cendor-sdk`; the TS SDK port rides a later `@cendor/sdk` release |
 | **contextkit** assemble / evict / order | ✅ | ✅ | TS collapses sync+async into one `async assemble()` |
 | **squeeze** compress / decompress | ✅ | ✅ | deterministic; handle ids match |
 | **cassette** record / replay | ✅ | ✅ | cross-language replay, vector-verified |

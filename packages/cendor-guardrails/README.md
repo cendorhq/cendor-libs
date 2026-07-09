@@ -51,6 +51,9 @@ client.chat.completions.create(model="gpt-4o", messages=msgs)
   a versioned file and stamps its `policy_hash` / `policy_version` onto every decision (the audit
   chain proves which policy was live); `rules.groundedness` / `rules.denied_topics` gate on
   bring-your-own-embedding cosine similarity (RAG hallucination / off-topic), no bundled model.
+- **Red-team it** — `run_redteam(guardrails, load_corpus("attacks.jsonl"))` reports the trip rate +
+  false-positive rate against a labeled corpus **you** supply (cendor vends no attack data). A
+  measurement, not a claim: publish a rate only with the corpus named.
 
 ```python
 from cendor.guardrails import apply, guardrail, Verdict, GuardrailTripped

@@ -554,6 +554,45 @@ These are tuned heuristics, not guarantees — calibrate the threshold on your o
 ungrounded answer advisory (`action="flag"`) unless you have measured it. For open-ended risk you can
 describe in a prompt, the [LLM-judge helpers](#the-llm-judge-helpers) are the alternative.
 
+### Red-team evaluation
+The honest path to *any* detection number: run your guardrails over a **labeled corpus** and publish
+the per-category trip rate + false-positive rate, naming the corpus. `run_redteam` does the tally;
+`load_corpus` reads a file **you** supply — cendor vends no attack data (public sets like AdvBench /
+JailbreakBench / HackAPrompt are referenced here; you fetch them under their own licenses).
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+<!-- ts-check: skip -->
+
+```python
+from cendor.guardrails import load_corpus, run_redteam, rules
+
+cases = load_corpus("attacks.jsonl")   # jsonl/json/csv; each record: text, label, category
+report = run_redteam([rules.prompt_guard()], cases, stage="input")
+print(report.summary())                # "N cases: trip rate X% (…), false-positive rate Y% (…)"
+report.trip_rate, report.false_positive_rate, report.by_category
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { loadCorpus, runRedteam, rules } from '@cendor/guardrails';
+
+const cases = loadCorpus(jsonlText, { format: 'jsonl' }); // or a parsed array (no node:fs)
+const report = runRedteam([rules.classifier(classify)], cases, { stage: 'input' });
+report.summary();
+```
+
+<!-- /tabs -->
+
+A run with an `llm_judge` or a hosted rail should be **cassette-recorded** (`run_redteam_async`) so a
+CI run stays offline. The report is a measurement, not a claim: publish a rate only with the corpus
+named, and raise it by *layering tiers* — never by overfitting to the test set. See the
+[cookbook recipe](/cookbook).
+
 ### Exceptions
 `GuardrailTripped` carries `.decisions` (the list recorded up to and including the block).
 

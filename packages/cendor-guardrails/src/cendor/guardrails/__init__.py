@@ -37,7 +37,7 @@ from cendor.core.instrument import (
 )
 from cendor.core.types import LLMCall, ToolCall
 
-from . import adapters, judge, policy, rules, semantic
+from . import adapters, judge, policy, redteam, rules, semantic
 from .decision import (
     ACTIONS,
     ALLOW,
@@ -52,6 +52,7 @@ from .decision import (
     normalize_stages,
 )
 from .policy import LoadedPolicy, load_policy
+from .redteam import AttackCase, RedTeamReport, load_corpus, run_redteam, run_redteam_async
 
 __all__ = [
     # types
@@ -78,12 +79,19 @@ __all__ = [
     # config-as-data
     "load_policy",
     "LoadedPolicy",
+    # red-team evaluation (measure trip rate against a labeled corpus you supply)
+    "load_corpus",
+    "run_redteam",
+    "run_redteam_async",
+    "AttackCase",
+    "RedTeamReport",
     # built-in rules + judge helpers + opt-in detection-tier adapters + similarity checks
     "rules",
     "judge",
     "adapters",
     "semantic",
     "policy",
+    "redteam",
 ]
 
 Guardrails = Sequence[Guardrail]
