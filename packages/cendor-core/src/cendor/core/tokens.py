@@ -5,10 +5,11 @@ counts (and therefore truthful cost/budget numbers) are the whole point. Always 
 deterministic, and network-free. Three tiers, picked automatically (see :func:`method`):
 
 * **exact** — OpenAI with a model-native ``tiktoken`` encoding (the default path).
-* **bpe-estimate** — Claude/Gemini: tiktoken's ``o200k`` BPE is used as a close cross-tokenizer proxy
-  (far better than a character heuristic; not the native tokenizer).
-* **heuristic** — a character/subword fallback, rough by design. Only reached if ``tiktoken`` somehow
-  fails to import at runtime (a broken/partial install); never the default a normal install lands on.
+* **bpe-estimate** — Claude/Gemini: tiktoken's ``o200k`` BPE is used as a close cross-tokenizer
+  proxy (far better than a character heuristic; not the native tokenizer).
+* **heuristic** — a character/subword fallback, rough by design. Only reached if ``tiktoken``
+  somehow fails to import at runtime (a broken/partial install); never the default a normal
+  install lands on.
 
 :func:`register` plugs a precise counter in for any family, overriding all of the above.
 """
