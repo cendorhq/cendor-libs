@@ -59,9 +59,7 @@ def test_guardrail_decision_captures_metadata_for_policy_provenance(tmp_path):
     path = tmp_path / "g3.jsonl"
     log = AuditLog(system="s", path=str(path))
     try:
-        bus.emit(
-            _decision(metadata={"policy_hash": "sha256:abc", "policy_version": "2026-07-09"})
-        )
+        bus.emit(_decision(metadata={"policy_hash": "sha256:abc", "policy_version": "2026-07-09"}))
     finally:
         log.detach()
 

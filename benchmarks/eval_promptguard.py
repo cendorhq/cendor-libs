@@ -97,7 +97,9 @@ def main() -> None:
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-        print(f"  precision={precision:.3f} recall={recall:.3f} f1={f1:.3f}  ({tp}TP {fp}FP {fn}FN {tn}TN)")
+        print(
+            f"  precision={precision:.3f} recall={recall:.3f} f1={f1:.3f}  ({tp}TP {fp}FP {fn}FN {tn}TN)"
+        )
 
     print(
         "\nTo OPEN the claim-gate: publish these numbers to docs/benchmarks.md naming the model,\n"
