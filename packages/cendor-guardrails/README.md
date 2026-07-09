@@ -29,9 +29,10 @@ client.chat.completions.create(model="gpt-4o", messages=msgs)
 - **Four intervention points** — gate the user turn (`input`), the model's request to call a tool
   (`tool_call`), the tool's result (`tool_output`), and the model's final answer (`output`).
   Matches Azure Foundry's intervention points and OpenAI's four decorator types.
-- **Deterministic built-ins, no heavy deps** — `keyword_deny`, `regex_rule`, `url_allowlist` /
-  `url_deny`, `length_bounds` (char + **exact** token bounds via `cendor.core.tokens`),
-  `json_schema`, and `custom`. Regex/arithmetic only — offline, deterministic, $0.
+- **Deterministic built-ins, no heavy deps** — `keyword_deny`, `regex_rule`, `spotlight` (wrap
+  untrusted content in a trust-lowering delimiter — a `$0` mitigation, inspired by Azure
+  Spotlighting), `url_allowlist` / `url_deny`, `length_bounds` (char + **exact** token bounds via
+  `cendor.core.tokens`), `json_schema`, and `custom`. Regex/arithmetic only — offline, deterministic, $0.
 - **Evidence, not just enforcement** — every trip or flag emits a `GuardrailDecision` on the
   `cendor.core` bus, so `cendor-acttrace` chains it as a tamper-evident `guardrail_decision` entry
   with **no import** between the two. "We blocked it" is in the hash chain, not a log line.

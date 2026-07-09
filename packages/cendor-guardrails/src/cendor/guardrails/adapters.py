@@ -84,6 +84,15 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
     return getattr(obj, name, default)
 
 
+def _annotation(**keys: Any) -> dict[str, Any]:
+    """Build a :attr:`Verdict.metadata` dict from the **reserved annotation keys** (``severity`` /
+    ``detected`` / ``filtered`` / ``redacted`` / ``citation`` / ``license`` — documented in
+    ``docs/specs/bus-events.md``), dropping any that are ``None``. Adapters use it so a vendor's
+    detected/severity signal rides the decision's metadata into the acttrace chain — no shape
+    change, no acttrace edit."""
+    return {k: v for k, v in keys.items() if v is not None}
+
+
 def _score(result: Any, label: str | None, threshold: float) -> tuple[float, bool]:
     """Normalise a classifier result (bool / float / {label: score}) to (score, tripped)."""
     if isinstance(result, bool):
@@ -275,12 +284,15 @@ def openai_moderation(
             return None
         result = results[0]
         flagged_names = _flagged_categories(_get(result, "categories", {}))
+        ann = _annotation(detected=True, filtered=action != "flag")
         if cats is not None:
             hit = sorted(c for c in flagged_names if c.lower() in cats)
-            return Verdict(action, reason=f"moderation flagged: {', '.join(hit)}") if hit else None
+            if not hit:
+                return None
+            return Verdict(action, reason=f"moderation flagged: {', '.join(hit)}", metadata=ann)
         if _get(result, "flagged", False):
             names = ", ".join(flagged_names) or "policy"
-            return Verdict(action, reason=f"moderation flagged: {names}")
+            return Verdict(action, reason=f"moderation flagged: {names}", metadata=ann)
         return None
 
     return _mk(check, name=name, stage=stage, timeout=timeout, action=action, on_error=on_error)
@@ -351,8 +363,13 @@ def bedrock_guardrail(
         if action == "redact":
             masked = _bedrock_masked(resp)
             if masked is not None:
-                return Verdict("redact", reason=reason, replacement=masked)
-        return Verdict(action, reason=reason)
+                return Verdict(
+                    "redact",
+                    reason=reason,
+                    replacement=masked,
+                    metadata=_annotation(detected=True, filtered=True, redacted=True),
+                )
+        return Verdict(action, reason=reason, metadata=_annotation(detected=True, filtered=True))
 
     return _mk(check, name=name, stage=stage, timeout=timeout, action=action, on_error=on_error)
 
@@ -425,7 +442,11 @@ def azure_content_safety(
         hits = _azure_attacks(resp)
         if not hits:
             return None
-        return Verdict(action, reason=f"Azure Prompt Shields: attack detected ({', '.join(hits)})")
+        return Verdict(
+            action,
+            reason=f"Azure Prompt Shields: attack detected ({', '.join(hits)})",
+            metadata=_annotation(detected=True, filtered=action != "flag"),
+        )
 
     return _mk(check, name=name, stage=stage, timeout=timeout, action=action, on_error=on_error)
 
@@ -486,7 +507,11 @@ def model_armor(
         matched = _model_armor_matches(resp)
         if not matched:
             return None
-        return Verdict(action, reason=f"Model Armor matched: {', '.join(matched)}")
+        return Verdict(
+            action,
+            reason=f"Model Armor matched: {', '.join(matched)}",
+            metadata=_annotation(detected=True, filtered=action != "flag"),
+        )
 
     return _mk(check, name=name, stage=stage, timeout=timeout, action=action, on_error=on_error)
 

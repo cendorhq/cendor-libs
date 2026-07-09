@@ -55,11 +55,22 @@ class Verdict:
         reason: A short, human-readable explanation recorded on the decision. Keep it free of raw
             secret values — acttrace scrubs payloads, but a terse reason is better evidence anyway.
         replacement: The cleaned payload (messages/text) to substitute when ``action="redact"``.
+        metadata: Per-result annotations merged into this decision's
+            :attr:`GuardrailDecision.metadata` — the channel a check uses to attach the **reserved
+            annotation keys** (``severity`` / ``detected`` / ``filtered`` / ``redacted`` /
+            ``citation`` / ``license``) documented in ``docs/specs/bus-events.md``. Unlike the
+            static ``Guardrail.metadata`` (constant per guardrail — e.g. ``load_policy``'s
+            ``policy_hash``), this is computed *per verdict*, so a hosted-rail adapter records the
+            severity/labels for this specific check. ``Verdict`` is never serialized (only
+            :class:`GuardrailDecision` is), so this adds no wire change. Keep values small and
+            payload-free. Layered *under* the caller's per-call ``Context.metadata`` (context still
+            wins a key clash) — see the engine's ``_emit``.
     """
 
     action: str
     reason: str = ""
     replacement: Any = None
+    metadata: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.action not in ACTIONS:
@@ -82,6 +93,11 @@ class Context:
     agent: str = ""
     tool: str = ""
     tool_args: Any = None
+    #: The user's originating instruction/intent for the run, when the caller knows it. The SDK's
+    #: ``tool_call`` gate populates it from the run's input turn so an alignment check (e.g.
+    #: ``judge.task_adherence``) can compare a proposed tool call against what the user asked for.
+    #: Empty by default; a standalone check ignores it. See docs/guardrails.md "Task adherence".
+    instruction: str = ""
     trace_id: str = ""
     metadata: dict = field(default_factory=dict)
 

@@ -2,6 +2,20 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.3.0] — Unreleased
+Three local-first, no-vendor-lock capabilities inspired by Azure Foundry Guardrails (plan-guardrails-v03). Additive and backward-compatible — no event-shape change, no new hard dependency, `$0` and offline in the default path. Cendor's local gate stays the default; the hosted-vendor adapters remain opt-in extras (A2 only enriches their evidence, it does not promote them).
+
+### Added (A1 — spotlight: a deterministic untrusted-content transform)
+- **`rules.spotlight(*, stage=("input","tool_output"), delimiter="<untrusted>", encode=False)`** — a Tier-0, `$0`, offline **mitigation** (inspired by Azure's *Spotlighting*): a `redact`-action guardrail that never blocks — it wraps each scannable text field of the payload in a trust-lowering delimiter (a tag like `<untrusted>` gets a matching `</untrusted>` close; any other string is used on both sides) so the model treats that span as lower-trust data, not instructions. `encode=True` base-64-encodes the wrapped body like Azure. Payload shape is preserved (string / message-list / dict), so it composes with the deterministic rules that follow it and with a BYO judge. **Honest limits (from Azure's own page):** a mitigation, not detection; `encode=True` inflates token count (higher model cost, possible context-limit hits) — `encode` defaults **off**. Not an ML or network call.
+
+### Added (A2 — annotation-parity evidence: reserved metadata keys)
+- **Reserved `GuardrailDecision.metadata` keys** (documented in `docs/specs/bus-events.md` next to `policy_hash`): `severity`, `detected`, `filtered`, `redacted`, `citation`, `license` — all optional, so a decision reads as structured as a vendor's annotations without any event-shape change and **without an acttrace/cassette/port edit** (the W3 metadata capture already carries them). A check attaches them via a new **`Verdict.metadata`** dict (transient, never serialized — no wire change) that the engine merges into the decision under the caller's `Context.metadata` (context still wins a key clash).
+- **Adapters populate them from the vendor result**: `openai_moderation` and the three hosted rails set `detected`/`filtered`; `bedrock_guardrail` sets `redacted` when it substitutes a mask; `spotlight` sets `redacted`. `load_policy`-built rules keep stamping `policy_hash`/`policy_version`.
+
+### Added (A3 — task_adherence: a BYO-judge alignment check for the tool_call stage)
+- **`judge.task_adherence(respond, *, action="flag", template=…)`** — a bring-your-own-judge check for the `tool_call` stage: *given the user's instruction and this proposed tool call + arguments, is the action aligned with intent?* Reuses the W1 judge machinery (`parse_verdict`, strict-JSON), reads the instruction from the new **`Context.instruction`** field (the `cendor-sdk` runner sets it) and the proposed call from `ctx.tool`/`ctx.tool_args`. Defaults to `action="flag"` (advisory) with `on_error="fail_open"` when wired via `rules.llm_judge(..., action="flag")`. An extra model call — **seconds and billed**, budgeted + audited through your instrumented client. **No adherence-rate claim** (it's a BYO judge). Python-first; the TS SDK wiring is a deferred parity tail (🚧).
+- **`Context.instruction: str = ""`** — a new optional field carrying the run's originating user instruction, so a `tool_call`-stage check can compare a proposed action against intent. Non-breaking (default empty; standalone checks ignore it).
+
 ## [1.2.0] — Unreleased
 Maturing the Gate from a deterministic-only v1.0 into a full guardrails suite (plan-guardrails-v02). Additive and backward-compatible. (Folds the never-released 1.1.0 — Waves 1 & 2 below — into a single minor with Wave 3; if the waves ship separately, 1.1.0 = Waves 1–2 and 1.2.0 = Wave 3.)
 

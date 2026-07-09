@@ -13,6 +13,7 @@ adversarial attack; see docs/guardrails.md "Honest limits".
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from collections.abc import Callable, Iterable, Iterator
@@ -145,6 +146,68 @@ def regex_rule(
         return Verdict(action, reason=reason)
 
     return Guardrail(name=name or "regex_rule", stages=normalize_stages(stage), check=check)
+
+
+def _spotlight_delimiters(delimiter: str) -> tuple[str, str]:
+    """Derive the (opening, closing) wrapper from ``delimiter``. A tag-shaped delimiter
+    (``"<untrusted>"``) yields a matching close tag (``"</untrusted>"``); any other string is used
+    verbatim on both sides (``"###"`` → ``"###"`` … ``"###"``)."""
+    d = delimiter.strip()
+    if d.startswith("<") and d.endswith(">") and not d.startswith("</"):
+        tag = d[1:-1].strip()
+        if tag:
+            return f"<{tag}>", f"</{tag}>"
+    return delimiter, delimiter
+
+
+def _spotlight_wrap(text: str, delimiter: str, encode: bool) -> str:
+    """Wrap ``text`` in the trust-lowering ``delimiter`` (optionally base-64-encoding the body like
+    Azure's spotlighting). Empty/whitespace-only text is returned unchanged (nothing to wrap)."""
+    if not text.strip():
+        return text
+    body = base64.b64encode(text.encode("utf-8")).decode("ascii") if encode else text
+    open_tag, close_tag = _spotlight_delimiters(delimiter)
+    return f"{open_tag}\n{body}\n{close_tag}"
+
+
+def spotlight(
+    *,
+    stage: str | tuple[str, ...] = ("input", "tool_output"),
+    delimiter: str = "<untrusted>",
+    encode: bool = False,
+    name: str = "spotlight",
+) -> Guardrail:
+    """Wrap untrusted content in a trust-lowering delimiter — a deterministic, ``$0``, offline
+    **mitigation** (not a detector), inspired by Azure Foundry's *Spotlighting*.
+
+    The check **always** returns ``Verdict("redact", …)`` — it never blocks; it rewrites the
+    payload, wrapping each scannable text field in ``delimiter`` (a tag like ``"<untrusted>"`` gets
+    a matching ``"</untrusted>"`` close; any other string is used on both sides) so a model treats
+    that span as lower-trust data, not instructions. With ``encode=True`` the wrapped body is
+    base-64-encoded (mirroring Azure), further separating data from instructions. Payload shape is
+    preserved (string, chat-message list, or dict), so it composes with the deterministic rules that
+    follow it and with a bring-your-own judge.
+
+    Most useful at ``tool_output`` (retrieved docs, tool results, emails — the indirect-injection
+    surface); also ``input`` when a caller wants to mark the whole turn as untrusted.
+
+    **Honest limits (straight from Azure's own page):** spotlighting is a *mitigation, not
+    detection* — it lowers trust, it does not catch an attack. ``encode=True`` **inflates token
+    count** (higher model cost, and large docs can exceed context limits), and some models mention
+    the encoding in their reply. ``encode`` defaults **off** to avoid silent token inflation. It is
+    not an ML or network call.
+    """
+
+    def check(payload: Any, ctx: Context) -> Verdict | None:
+        wrapped = _redact_payload(payload, lambda s: _spotlight_wrap(s, delimiter, encode))
+        return Verdict(
+            "redact",
+            reason="spotlighted untrusted content",
+            replacement=wrapped,
+            metadata={"redacted": True},
+        )
+
+    return Guardrail(name=name, stages=normalize_stages(stage), check=check)
 
 
 _URL_RE = re.compile(r"https?://[^\s<>)\]}\"']+", re.IGNORECASE)
@@ -411,6 +474,7 @@ from .semantic import denied_topics, groundedness  # noqa: E402
 __all__ = [  # noqa: F822 - names are the module's public factories
     "keyword_deny",
     "regex_rule",
+    "spotlight",
     "url_allowlist",
     "url_deny",
     "length_bounds",

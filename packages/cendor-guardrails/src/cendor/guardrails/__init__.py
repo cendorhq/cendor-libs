@@ -105,9 +105,11 @@ def _applicable(guardrails: Guardrails, stage: str) -> list[Guardrail]:
 
 
 def _emit(g: Guardrail, stage: str, verdict: Verdict, ctx: Context) -> GuardrailDecision:
-    # The guardrail's static metadata (e.g. load_policy's policy_hash/version) is the base; the
-    # caller's per-call Context.metadata layers on top and wins any key clash.
-    metadata = {**g.metadata, **ctx.metadata}
+    # Three metadata layers, lowest precedence first: the guardrail's static metadata (e.g.
+    # load_policy's policy_hash/version) is the base; the verdict's per-result annotations (the
+    # reserved severity/detected/… keys an adapter attaches to *this* check — see bus-events.md)
+    # layer over it; the caller's per-call Context.metadata is on top and still wins any key clash.
+    metadata = {**g.metadata, **verdict.metadata, **ctx.metadata}
     decision = GuardrailDecision(
         guardrail=g.name,
         stage=stage,

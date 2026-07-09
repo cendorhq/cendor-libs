@@ -108,6 +108,28 @@ consumer reads them like any other metadata:
   plain `guardrail_decision`: the vendor performs the check, but the evidence is local — the `reason`
   names *which* cloud policy fired, never the payload ("cloud check, local evidence").
 
+**Reserved annotation keys (v03 — annotation parity).** The same `metadata` dict now also carries a
+small set of **optional, reserved keys** so a decision reads as structured as a vendor's annotations
+(the shape an auditor reading the chain wants), *without* any change to the event shape and *without*
+an acttrace/cassette/port edit — a consumer reads them like any other metadata. They are populated
+per-decision by the check that produced the verdict (a `Verdict.metadata` dict the engine merges,
+layered under the caller's `Context.metadata`, which still wins a key clash — `Verdict` itself is
+in-process only and is never serialized). All optional; absent unless a check sets them:
+
+| key | type | meaning |
+|---|---|---|
+| `severity` | `"low"` \| `"medium"` \| `"high"`, or a float | how severe the finding is (a vendor's severity level or a normalized score). |
+| `detected` | bool | the risk was detected (parity with Azure's `detected`). |
+| `filtered` | bool | the content was filtered/acted on (block or redact), vs annotate-only (a `flag`). Parity with Azure's `filtered`. |
+| `redacted` | bool | the payload was redacted/masked (e.g. Bedrock PII masking). Parity with Azure's PII `redacted`. |
+| `citation` | string \| object | a source citation for a match (e.g. protected-material-code's GitHub URL). |
+| `license` | string | a license identifier accompanying a citation. |
+
+Where the signal already exists, adapters populate them: `openai_moderation` (`detected` +
+`filtered`), the three hosted rails (`detected` / `filtered`, and `redacted` when a Bedrock mask is
+substituted). `load_policy`-built rules keep stamping `policy_hash` / `policy_version`; the
+deterministic `spotlight` mitigation sets `redacted`. A port populates the same key names/conventions.
+
 A port must emit the same field names/conventions (`snake_case` ↔ `camelCase`) so an audit chain
 written in one language records byte-identical `guardrail_decision` entries as the other.
 

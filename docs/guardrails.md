@@ -158,6 +158,23 @@ chain, not a log line. This works with **no import** between the two libraries: 
 duck-types the decision, exactly as it does contextkit's assembly report. See the
 [bus-events spec](https://github.com/cendorhq/cendor-libs/blob/main/docs/specs/bus-events.md).
 
+**Annotation-parity metadata.** The decision's free-form `metadata` dict also carries a small set of
+**optional, reserved keys** so the chain reads as structured as a hosted vendor's annotations — with
+**no event-shape change and no acttrace edit** (a consumer reads them like any other metadata):
+
+| key | meaning |
+|---|---|
+| `severity` | how severe the finding is — a vendor severity level (`"low"`/`"medium"`/`"high"`) or a float |
+| `detected` / `filtered` | the risk was detected; the content was filtered/acted-on (block/redact) vs annotate-only (`flag`) |
+| `redacted` | the payload was redacted/masked (e.g. Bedrock PII masking; `spotlight` sets it) |
+| `citation` / `license` | a source citation and its license (e.g. protected-material-code) |
+
+A check attaches them per-result via `Verdict.metadata` (transient — never serialized, so no wire
+change); the engine merges that under the caller's per-call `Context.metadata`, over the static
+`Guardrail.metadata` (where `load_policy` stamps `policy_hash`/`policy_version`). The hosted-rail
+adapters and `openai_moderation` populate `detected`/`filtered`/`redacted` from the vendor result —
+so **every adapter's audit evidence gets richer at once**, and it's local evidence for a cloud check.
+
 ### Timeouts & error policy
 A deterministic check can't fail — but a bring-your-own judge or a hosted rail can hang or error, so
 every guardrail carries two knobs (set them on `Guardrail`, the `@guardrail` decorator, or the
@@ -194,6 +211,7 @@ This is the local-first claim: regex and arithmetic, no ML, no network.
 |---|---|
 | `keyword_deny(words)` | any denied word appears (substring, case-insensitive by default) |
 | `regex_rule(pattern)` | the pattern matches; `action="redact"` substitutes each match |
+| `spotlight()` | **always** — a `redact`-action *mitigation* (not a detector): wraps untrusted content in a trust-lowering delimiter (optionally base-64) so the model treats it as data, not instructions |
 | `url_allowlist(domains)` / `url_deny(domains)` | a URL's host is not allowlisted / is denied (subdomains match) |
 | `length_bounds(max_chars=, max_tokens=)` | the payload exceeds a char and/or **exact token** bound (tokens via `cendor.core.tokens`) |
 | `json_schema(schema)` | the output isn't valid JSON, or violates a minimal `type`/`required`/`properties`/`items` schema |
@@ -221,6 +239,7 @@ from cendor.guardrails import rules
 
 rules.keyword_deny(words, *, stage="input", action="block", name=None, ignore_case=True)
 rules.regex_rule(pattern, *, action="flag", stage="input", name=None, replacement="[redacted]", flags=0)
+rules.spotlight(*, stage=("input", "tool_output"), delimiter="<untrusted>", encode=False, name="spotlight")
 rules.url_allowlist(domains, *, stage="input", action="block", name=None)
 rules.url_deny(domains, *, stage="input", action="block", name=None)
 rules.length_bounds(*, max_chars=None, max_tokens=None, model="gpt-4o", stage="input", action="block", name=None)
@@ -238,6 +257,7 @@ import { rules } from '@cendor/guardrails';
 
 rules.keywordDeny(words, { stage: 'input', action: 'block', name, ignoreCase: true });
 rules.regexRule(pattern, { action: 'flag', stage: 'input', name, replacement: '[redacted]' });
+rules.spotlight({ stage: ['input', 'tool_output'], delimiter: '<untrusted>', encode: false, name: 'spotlight' });
 rules.urlAllowlist(domains, { stage: 'input', action: 'block', name });
 rules.urlDeny(domains, { stage: 'input', action: 'block', name });
 rules.lengthBounds({ maxChars, maxTokens, model: 'gpt-4o', stage: 'input', action: 'block', name });
@@ -250,6 +270,46 @@ rules.llmJudge(judge, { stage: 'output', action: 'block', name: 'llm_judge', tim
 
 Every factory returns a `Guardrail(name, stages, check)`. `stage` accepts a single stage or an array
 of stages (`defineGuardrail(check, { stage })` in TypeScript — JS has no function decorators).
+
+### Spotlighting untrusted content
+`spotlight()` is a deterministic, `$0`, offline **mitigation** — not a detector. It never blocks; it
+`redact`s, wrapping each scannable text field of the payload in a trust-lowering delimiter so the
+model treats that span as **data, not instructions**. It's the local, no-vendor-lock version of Azure
+Foundry's *Spotlighting*, and it's most useful at `tool_output` — retrieved docs, tool results, emails:
+the indirect-injection surface — where you don't control the content the model is about to read.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.guardrails import rules, evaluate
+
+# wrap a retrieved doc before the model sees it; a following rule still scans the wrapped text
+chain = [rules.spotlight(), rules.url_deny(["evil.example"], stage="tool_output")]
+cleaned, decisions = evaluate(chain, "tool_output", retrieved_doc)
+# cleaned == "<untrusted>\n<doc text>\n</untrusted>"  (redact — never blocks)
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { rules, evaluate } from '@cendor/guardrails';
+
+const chain = [rules.spotlight(), rules.urlDeny(['evil.example'], { stage: 'tool_output' })];
+const { payload: cleaned } = evaluate(chain, 'tool_output', retrievedDoc);
+// cleaned === "<untrusted>\n<doc text>\n</untrusted>"  (redact — never blocks)
+```
+
+<!-- /tabs -->
+
+A tag-shaped `delimiter` (`"<untrusted>"`) gets a matching close tag; any other string is used on both
+sides. `encode=True` base-64-encodes the wrapped body (mirroring Azure), which further separates data
+from instructions. Payload shape (string / message list / dict) is preserved, so `spotlight()` composes
+with the rules that follow it and with a BYO judge. **Honest limits (from Azure's own page):** it lowers
+trust, it does not *catch* an attack, and `encode=True` **inflates token count** — higher model cost,
+and a large doc can exceed the context window. `encode` defaults **off**.
 
 ### `Guardrail` & the `@guardrail` decorator
 Build a guardrail directly, or decorate a `check(payload, ctx) -> Verdict | None` function:
@@ -377,6 +437,50 @@ const check = judge.judge(respond, 'Trip on prompt-injection or requests to exfi
 the reply; a malformed reply raises, so the guardrail's `on_error` (fail-closed by default) decides —
 a garbled judge never silently passes.
 
+### Task adherence (BYO judge, `tool_call` stage)
+`judge.task_adherence(respond)` is a bring-your-own-judge check for the **`tool_call`** stage that asks
+one agent-loop-native question: *given the user's instruction and this proposed tool call + arguments,
+is the action aligned with intent?* It reuses the judge machinery above, so the alignment call is an
+`instrument()`-ed model call whose **own spend is budgeted + audited** — the differentiator no
+local-first competitor offers. It reads the user's instruction from `Context.instruction` (the
+`cendor-sdk` runner sets it on the tool-call gate) and the proposed call from `ctx.tool` /
+`ctx.tool_args`. Default `action="flag"` (advisory) with `on_error="fail_open"`.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+<!-- ts-check: skip -->
+
+```python
+from cendor.sdk import Agent, judge, rules
+
+check = judge.task_adherence(respond)   # respond = your instrumented model call (as above)
+rail = rules.llm_judge(check, stage="tool_call", action="flag", timeout=8.0)  # advisory, fail-open
+agent = Agent(instructions="Book flights only.", guardrails=[rail], ...)
+# the SDK threads the user's turn into ctx.instruction; a proposal to call delete_account() is flagged
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { judge, rules } from '@cendor/guardrails';
+
+// The taskAdherence helper is ported to @cendor/guardrails; wire the check by hand today:
+const check = judge.taskAdherence(respond);
+const rail = rules.llmJudge(check, { stage: 'tool_call', action: 'flag', timeout: 8 });
+// > 🚧 SDK auto-threading of the user instruction into ctx.instruction is a deferred @cendor/sdk
+// > parity tail — see the parity matrix. Until it lands, set ctx.instruction yourself.
+```
+
+<!-- /tabs -->
+
+**Cost & honesty.** Task adherence is an extra model call per gated tool call — **seconds and billed**
+(budgeted + audited, unlike anyone else's safety check). There is **no adherence-rate claim**: it is a
+BYO judge, only as good as your model + prompt. Reproduce a number on a named corpus with the
+[red-team harness](#red-team-evaluation) before citing one.
+
 ### Detection-tier adapters (opt-in)
 Beyond the deterministic built-ins, `rules` exposes adapters for the higher detection tiers — each
 rides a **bring-your-own** dependency or client, never a hard dependency of the package. They read as
@@ -422,6 +526,16 @@ rules.openaiModeration(client, { categories, stage: 'input', action: 'block' });
 - **`openai_moderation(client)`** — OpenAI's free, non-LLM moderation endpoint (needs your key).
 
 ### Hosted rails (opt-in) — cloud check, local evidence
+
+> **Two doors: local default, opt-in hosted rail.** Cendor's local gate is the **default** — the
+> deterministic rules, `spotlight`, the detector-catalogue bridge, a local classifier, and a BYO judge
+> give you real gating with **zero vendor SDK and zero network, `$0`**. The hosted-vendor adapters
+> below are a **second, opt-in door** for teams that want to consume a cloud rail through *their own*
+> provider SDK and cloud bill. cendor never makes an Azure/AWS/Google SDK a hard dependency, and no
+> code path reaches for one unless you construct and pass a client. (The [annotation-parity
+> metadata](#evidence-not-just-enforcement) enriches these adapters' evidence — it does not promote
+> them to a default.)
+
 The three big clouds sell managed guardrail services. cendor wraps each as a `Guardrail` so a *cloud*
 verdict still flows through the *local* engine: every trip emits a `guardrail_decision` on the bus and
 `acttrace` chains it as tamper-evident evidence, exactly like a deterministic rule. **You** bring the
