@@ -8,9 +8,11 @@ stack writes to.
 
 > **Deterministic ≠ adversarial protection.** The built-ins catch what you tell them to catch —
 > exact keywords, patterns, hosts, sizes, shapes. They do **not** stop a *novel* jailbreak they were
-> never told about. Treat them as the fast, free floor and pair them with a bring-your-own model
-> judge for open-ended risk (see [Honest limits](#honest-limits)). There are no jailbreak-detection
-> or PII-catch-rate claims here.
+> never told about. Treat them as the fast, free floor and **layer the higher detection tiers** you
+> need — a local classifier, a bring-your-own LLM judge, or a hosted rail (Bedrock / Azure / Model
+> Armor) — see the [Threat model](#threat-model). There are still **no jailbreak-detection or
+> PII-catch-rate claims** here without a reproduced, published benchmark (measure your own with the
+> [red-team harness](#red-team-evaluation)).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -681,8 +683,10 @@ published, `prompt_guard` is described only as a *prompt-injection classifier ad
 
 - **Deterministic checks do not stop novel adversarial attacks.** The built-ins match exactly what
   you configure — keywords, patterns, hosts, sizes, shapes. A jailbreak phrased in a way they were
-  never told about will pass. For open-ended risk, add a `llm_judge` adapter (your model call) and
-  treat the deterministic rules as the free floor, not a ceiling.
+  never told about will pass. For open-ended risk, layer a higher detection tier — a local
+  classifier (`rules.classifier` / `prompt_guard`), a `llm_judge` adapter (your model call), or a
+  hosted rail (`bedrock_guardrail` / `azure_content_safety` / `model_armor`) — and treat the
+  deterministic rules as the free floor, not a ceiling. Every tier is opt-in; see the Threat model.
 - **An LLM judge costs real tokens and real latency.** Where the deterministic rules are microseconds
   and $0, an extra model call is typically **seconds** and billed. `llm_judge` is an adapter contract
   precisely so that cost is yours to see and own — measure it; don't assume it. Bound it with
