@@ -375,6 +375,50 @@ const check = judge.judge(respond, 'Trip on prompt-injection or requests to exfi
 the reply; a malformed reply raises, so the guardrail's `on_error` (fail-closed by default) decides —
 a garbled judge never silently passes.
 
+### Detection-tier adapters (opt-in)
+Beyond the deterministic built-ins, `rules` exposes adapters for the higher detection tiers — each
+rides a **bring-your-own** dependency or client, never a hard dependency of the package. They read as
+`rules.*` but live in `cendor.guardrails.adapters`. See [Threat model](#threat-model) for what each
+tier does and doesn't stop.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+<!-- ts-check: skip -->
+
+```python
+from cendor.guardrails import rules
+
+rules.classifier(classify, *, threshold=0.5, label=None, stage="input", action="block")  # BYO local model
+rules.prompt_guard(model="meta-llama/Llama-Prompt-Guard-2-86M", *, threshold=0.5, stage="input")  # [promptguard] extra
+rules.language(["en"], *, detect=None, stage="input", action="flag")     # [langid] extra, or BYO detect
+rules.openai_moderation(client, *, categories=None, stage="input", action="block")  # free OpenAI endpoint
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { rules } from '@cendor/guardrails';
+
+rules.classifier(classify, { threshold: 0.5, stage: 'input', action: 'block' });   // BYO local model
+rules.language(['en'], { detect, stage: 'input', action: 'flag' });                // BYO detect
+rules.openaiModeration(client, { categories, stage: 'input', action: 'block' });   // free OpenAI endpoint
+// prompt_guard is Python-only (transformers) — in TS, wire an ONNX/transformers.js model via rules.classifier
+```
+
+<!-- /tabs -->
+
+- **`classifier(classify)`** — the generic, license-agnostic contract: `classify(text)` returns a
+  score / `{label: score}` / bool; trips over `threshold`. Wrap **any** local model.
+- **`prompt_guard(...)`** — a prompt-injection **classifier adapter** (optional `[promptguard]`
+  extra; lazy `transformers`). Weights are never bundled — you download the (license-gated) model
+  yourself. **No jailbreak-detection claim** ships until its eval is reproduced (see below).
+- **`language(allowed)`** — trips on an off-list language (a language-switch bypass guard); BYO
+  `detect` or the `[langid]` extra.
+- **`openai_moderation(client)`** — OpenAI's free, non-LLM moderation endpoint (needs your key).
+
 ### Exceptions
 `GuardrailTripped` carries `.decisions` (the list recorded up to and including the block).
 
@@ -431,6 +475,33 @@ same `instrument()` interceptor and event bus every other library uses, so the s
 applies under the `cendor-sdk` loop, a bare instrumented OpenAI/Anthropic/Gemini/Bedrock/Ollama
 client, or beneath another framework — in Python and TypeScript alike. Decisions flow to `acttrace`
 over the bus; nothing is imported in either direction.
+
+## Threat model
+
+Guardrails are **defense in depth**, not a single wall. Each detection tier catches a different
+class of risk at a different cost — and each has documented bypasses. Layer them; don't trust one.
+
+| Tier | What it is | Catches | Does **not** catch | Cost |
+|---|---|---|---|---|
+| 0 | Deterministic rules (`keyword_deny`, `regex_rule`, `url_*`, `length_bounds`, `json_schema`) | exactly what you configure — known strings, patterns, hosts, sizes, shapes | anything phrased outside the pattern; obfuscation, encoding, paraphrase | µs · $0 · local |
+| 1 | Detector catalogue (`rules.pii`/`secrets`/`entropy` via acttrace, bridged from the SDK) | structured PII/secrets with validated patterns | free-text names/addresses (needs the `[ner]` backend); novel secret formats | µs–ms · $0 · local |
+| 2 | Local classifiers (`classifier`, `prompt_guard`, `language`) | learned patterns of prompt injection / off-list language | **mutation & obfuscation attacks that shift the input off the training distribution**; anything the model wasn't trained on | tens of ms · $0 · local |
+| 3 | BYO LLM judge (`llm_judge` + `judge` helpers) | open-ended, context-dependent risk you can describe in a prompt | whatever the judge's prompt misses; a judge can itself be prompt-injected | seconds · ~2× call · metered |
+| 4 | Hosted moderation (`openai_moderation`) | the provider's policy categories (violence, hate, …) | injection/jailbreak (it's a content classifier, not an injection detector); anything outside its taxonomy | ~100 ms–1 s · free–metered |
+
+**Documented bypasses to assume.** A determined attacker will try **mutation** (typos, homoglyphs,
+spacing), **encoding** (base64, rot13, leetspeak), **translation / language switching**,
+**split-and-reassemble** across turns, and **injection of the guardrail itself** (tricking an LLM
+judge). No filter tier stops all of these — the research is explicit that classifier and
+keyword filters are beaten by mutation. The durable value here is **fail-closed enforcement + an
+audit chain**: when a check *does* trip, the block is pre-spend and the decision is tamper-evident
+evidence. That is what these guardrails guarantee; detection coverage is a spectrum you tune.
+
+**Claims gate.** Cendor cites **no jailbreak-detection rate and no PII catch-rate** anywhere until
+the number is reproduced on a named dataset/corpus and published to [benchmarks](/benchmarks). The
+PII catalogue has per-category precision/recall on a documented synthetic corpus there today; the
+prompt-injection classifier's eval harness is `benchmarks/eval_promptguard.py` — until it is run and
+published, `prompt_guard` is described only as a *prompt-injection classifier adapter*.
 
 ## Honest limits
 

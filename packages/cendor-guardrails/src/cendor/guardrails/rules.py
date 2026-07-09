@@ -389,3 +389,30 @@ def _validate(data: Any, schema: dict, path: str) -> str | None:
             if error is not None:
                 return error
     return None
+
+
+# Opt-in detection-tier adapters (classifier / prompt_guard / language / openai_moderation) live in
+# .adapters (each rides a BYO dependency or client, never a hard dep). Re-exported here so they read
+# as `rules.classifier` etc. alongside the deterministic built-ins. Imported at the bottom because
+# .adapters depends on the helpers above (_payload_text / _resolve_on_error / custom).
+from .adapters import (  # noqa: E402  (bottom import breaks the rules↔adapters cycle)
+    classifier,
+    language,
+    openai_moderation,
+    prompt_guard,
+)
+
+__all__ = [  # noqa: F822 - names are the module's public factories
+    "keyword_deny",
+    "regex_rule",
+    "url_allowlist",
+    "url_deny",
+    "length_bounds",
+    "json_schema",
+    "custom",
+    "llm_judge",
+    "classifier",
+    "prompt_guard",
+    "language",
+    "openai_moderation",
+]

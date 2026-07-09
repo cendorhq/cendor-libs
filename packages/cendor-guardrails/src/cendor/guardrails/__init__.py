@@ -37,7 +37,7 @@ from cendor.core.instrument import (
 )
 from cendor.core.types import LLMCall, ToolCall
 
-from . import judge, rules
+from . import adapters, judge, rules
 from .decision import (
     ACTIONS,
     ALLOW,
@@ -74,9 +74,10 @@ __all__ = [
     "install",
     "uninstall",
     "scoped",
-    # built-in rules + judge helpers
+    # built-in rules + judge helpers + opt-in detection-tier adapters
     "rules",
     "judge",
+    "adapters",
 ]
 
 Guardrails = Sequence[Guardrail]

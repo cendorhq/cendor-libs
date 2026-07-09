@@ -75,7 +75,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | LangChain `CendorCallbackHandler` | ✅ | ✅ | `@cendor/core/langchain`; recording-only in both; reads `usage_metadata`, correlates by root-run `traceId` |
 | `trace()` correlation | ✅ contextvars | ✅ AsyncLocalStorage | |
 | **tokenguard** budgets / track / report / sinks | ✅ | ✅ | SQLite / Queue / OTel sinks in both |
-| **guardrails** rules / stages / install / scoped | ✅ | ✅ | deterministic gate at 4 stages (input / tool_call / tool_output / output); block / redact / flag → `guardrail_decision` on the bus; `apply` / `evaluate` (+ async), `install()` interceptor, `scoped()` per-request gating (contextvars / AsyncLocalStorage), per-guardrail `timeout` + `on_error`, `judge` helpers. `@cendor/guardrails` is pure/all-runtime (no `node:*`) |
+| **guardrails** rules / stages / install / scoped / adapters | ✅ | ✅ | deterministic gate at 4 stages (input / tool_call / tool_output / output); block / redact / flag → `guardrail_decision` on the bus; `apply` / `evaluate` (+ async), `install()` interceptor, `scoped()` per-request gating (contextvars / AsyncLocalStorage), per-guardrail `timeout` + `on_error`, `judge` helpers, detection-tier adapters (`classifier`, `language`, `openai_moderation`). `prompt_guard` (transformers) is **Python only** — in TS wire a classifier via `rules.classifier`. `@cendor/guardrails` core is pure/all-runtime (no hard `node:*`) |
 | **contextkit** assemble / evict / order | ✅ | ✅ | TS collapses sync+async into one `async assemble()` |
 | **squeeze** compress / decompress | ✅ | ✅ | deterministic; handle ids match |
 | **cassette** record / replay | ✅ | ✅ | cross-language replay, vector-verified |

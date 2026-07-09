@@ -19,6 +19,13 @@ readme = "README.md"
 # >=1.1: install()'s redact-before-send needs core's Reroute(messages=…), added in cendor-core 1.1.
 dependencies = ["cendor-core>=1.1,<2.0"]
 
+[project.optional-dependencies]
+# Opt-in detection-tier adapters (docs/guardrails.md "Threat model"). Never hard deps — the base
+# package stays deterministic + local-first. Model WEIGHTS are never bundled: `promptguard` pulls
+# only the runtime; you download the (license-gated) model from Hugging Face yourself.
+promptguard = ["transformers>=4.40"]  # a prompt-injection classifier adapter (rules.prompt_guard)
+langid = ["py3langid>=0.3"]           # a local language detector (rules.language default detect)
+
 [project.urls]
 Homepage = "https://github.com/cendorhq/cendor-libs"
 Documentation = "https://cendor.ai/docs/guardrails"

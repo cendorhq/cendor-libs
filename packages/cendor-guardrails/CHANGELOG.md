@@ -10,6 +10,14 @@ Maturing the Gate from a deterministic-only v1.0 into a detection-tier suite (pl
 - **`scoped(guardrails)`** — a context manager that gates every instrumented call for the block's duration, scoped to the current execution context (`contextvars`), not process-global. Closes the "process-global `install()`" wart for door-1 users on a concurrent server; nests cleanly.
 - **`cendor.guardrails.judge` helpers** — `verdict_prompt(policy)` (a strict-JSON verdict system prompt), `parse_verdict(text)` (strict-JSON → `Verdict`; malformed output raises so `on_error` decides — a garbled judge never silently passes), and `judge(respond, policy)` to compose them into a check for `rules.llm_judge`. The judge call rides an instrumented client, so its own spend lands in tokenguard/acttrace.
 
+### Added (Wave 2 — local classifiers, language, hosted moderation)
+- **Opt-in detection-tier adapters** in `cendor.guardrails.adapters`, re-exported as `rules.*` (each rides a bring-your-own dependency or client — never a hard dep; the base package stays deterministic + local-first):
+  - `rules.classifier(classify)` — the generic, license-agnostic local-classifier contract: wrap any `classify(text) -> score | {label: score} | bool` and trip over a `threshold`.
+  - `rules.prompt_guard(model=…)` — a **prompt-injection classifier adapter** behind the optional `[promptguard]` extra (lazy `transformers`). Model weights are **never bundled** — you download the (license-gated; Meta's Llama Prompt Guard 2 is Llama-Community-Licensed) model yourself. **No jailbreak-detection claim**: `benchmarks/eval_promptguard.py` is the reproduction harness; a detection rate is published only after it is run on a named dataset.
+  - `rules.language(allowed)` — trips on an off-list language (a language-switch bypass guard); BYO `detect` or the optional `[langid]` extra.
+  - `rules.openai_moderation(client)` — OpenAI's free, non-LLM moderation endpoint (your key).
+- **New optional extras** `[promptguard]` (transformers) and `[langid]` (py3langid). **Threat-model** documentation (the tier-0→4 model + documented bypasses; defense in depth) in docs/guardrails.md.
+
 ## [1.0.0] — 2026-07-09
 ### Added
 - First release of `cendor-guardrails` — the **Gate** in the Cendor pipeline (`contextkit → squeeze → tokenguard → guardrails → cassette → acttrace`). Define a deterministic check and attach it to one of four intervention points — `input`, `tool_call`, `tool_output`, `output` — matching Azure Foundry's intervention points and OpenAI's four decorator types.
