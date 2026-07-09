@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
-## [1.3.0] — Unreleased
+## [1.3.0] — 2026-07-09
 Three local-first, no-vendor-lock capabilities inspired by Azure Foundry Guardrails (plan-guardrails-v03). Additive and backward-compatible — no event-shape change, no new hard dependency, `$0` and offline in the default path. Cendor's local gate stays the default; the hosted-vendor adapters remain opt-in extras (A2 only enriches their evidence, it does not promote them).
 
 ### Added (A1 — spotlight: a deterministic untrusted-content transform)
