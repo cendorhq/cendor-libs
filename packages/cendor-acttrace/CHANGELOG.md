@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.4.0] — Unreleased
+### Added
+- **Guardrail decisions now carry their `metadata` into the chain.** The `guardrail_decision` entry gains a `metadata` field, so a decision's provenance is recorded as tamper-evident evidence — notably `cendor-guardrails`' `load_policy()` stamps `policy_hash` / `policy_version`, letting an audit prove **which** policy was active when a call was gated. Still duck-typed (no sibling import); `metadata` defaults to `{}`, so a chain with no metadata is byte-identical to before.
+
 ## [1.3.0] — 2026-07-09
 ### Added
 - **Auto-capture of guardrail decisions.** When `cendor-guardrails` is in use, every trip or flag it emits on the `cendor.core` bus is now chained as a tamper-evident `guardrail_decision` entry (recording the guardrail name, stage, action, and reason — never the raw payload). Captured by **duck typing** (`guardrail`/`stage`/`action` present), so acttrace still imports no sibling tool — the same pattern used for contextkit's `AssemblyReport`. No API change; a log with no guardrails in play is byte-identical to before.

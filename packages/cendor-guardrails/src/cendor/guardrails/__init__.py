@@ -37,7 +37,7 @@ from cendor.core.instrument import (
 )
 from cendor.core.types import LLMCall, ToolCall
 
-from . import adapters, judge, rules
+from . import adapters, judge, policy, rules, semantic
 from .decision import (
     ACTIONS,
     ALLOW,
@@ -51,6 +51,7 @@ from .decision import (
     guardrail,
     normalize_stages,
 )
+from .policy import LoadedPolicy, load_policy
 
 __all__ = [
     # types
@@ -74,10 +75,15 @@ __all__ = [
     "install",
     "uninstall",
     "scoped",
-    # built-in rules + judge helpers + opt-in detection-tier adapters
+    # config-as-data
+    "load_policy",
+    "LoadedPolicy",
+    # built-in rules + judge helpers + opt-in detection-tier adapters + similarity checks
     "rules",
     "judge",
     "adapters",
+    "semantic",
+    "policy",
 ]
 
 Guardrails = Sequence[Guardrail]
@@ -91,6 +97,9 @@ def _applicable(guardrails: Guardrails, stage: str) -> list[Guardrail]:
 
 
 def _emit(g: Guardrail, stage: str, verdict: Verdict, ctx: Context) -> GuardrailDecision:
+    # The guardrail's static metadata (e.g. load_policy's policy_hash/version) is the base; the
+    # caller's per-call Context.metadata layers on top and wins any key clash.
+    metadata = {**g.metadata, **ctx.metadata}
     decision = GuardrailDecision(
         guardrail=g.name,
         stage=stage,
@@ -99,7 +108,7 @@ def _emit(g: Guardrail, stage: str, verdict: Verdict, ctx: Context) -> Guardrail
         agent=ctx.agent,
         tool=ctx.tool,
         trace_id=ctx.trace_id or current_trace_id(),
-        metadata=dict(ctx.metadata),
+        metadata=metadata,
     )
     bus.emit(decision)  # acttrace (if attached) chains this as a guardrail_decision entry
     return decision

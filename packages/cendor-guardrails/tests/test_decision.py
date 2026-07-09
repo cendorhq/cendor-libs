@@ -23,6 +23,30 @@ def test_verdict_rejects_unknown_action():
         Verdict("nuke")
 
 
+def test_guardrail_metadata_merged_onto_decision(decisions):
+    from cendor.guardrails import apply
+
+    g = Guardrail(
+        name="tagged",
+        stages=("input",),
+        check=lambda p, c: Verdict("flag", reason="hit"),
+        metadata={"severity": "high", "owner": "sec"},
+    )
+    apply([g], "input", "x", Context(stage="input", metadata={"owner": "override", "req": "r1"}))
+    d = decisions[-1]
+    assert d.metadata["severity"] == "high"  # from the guardrail's static metadata
+    assert d.metadata["req"] == "r1"  # from the per-call context
+    assert d.metadata["owner"] == "override"  # ctx.metadata wins a key clash
+
+
+def test_decorator_accepts_metadata():
+    @guardrail(stage="input", metadata={"team": "trust"})
+    def check(payload, ctx):
+        return None
+
+    assert check.metadata == {"team": "trust"}
+
+
 def test_verdict_defaults():
     v = Verdict("flag")
     assert v.reason == "" and v.replacement is None

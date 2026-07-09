@@ -111,6 +111,11 @@ class Guardrail:
             treat it as a block) or ``"fail_open"`` (record a ``flag`` and proceed). Rule factories
             pick the safe default for their action; set it explicitly for a bring-your-own judge so
             an outage degrades to advisory instead of a hard stop (or vice-versa).
+        metadata: Static key/value context merged into every :class:`GuardrailDecision` this
+            guardrail emits (under the caller's per-call ``Context.metadata``, which wins on a key
+            clash). :func:`~cendor.guardrails.load_policy` uses it to stamp ``policy_hash`` /
+            ``policy_version`` so the audit chain proves *which* policy was active; you can also use
+            it for a severity, owner, or ticket id. Values should be small and payload-free.
     """
 
     name: str
@@ -118,6 +123,7 @@ class Guardrail:
     check: Check
     timeout: float | None = None
     on_error: str = "fail_closed"
+    metadata: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.stages = normalize_stages(self.stages)
@@ -133,6 +139,7 @@ def guardrail(
     *,
     timeout: float | None = None,
     on_error: str = "fail_closed",
+    metadata: dict | None = None,
 ) -> Callable[[Check], Guardrail] | Guardrail:
     """Decorator sugar: turn a ``check(payload, ctx)`` function into a :class:`Guardrail`.
 
@@ -155,6 +162,7 @@ def guardrail(
             check=fn,
             timeout=timeout,
             on_error=on_error,
+            metadata=dict(metadata or {}),
         )
 
     stages = normalize_stages(stage)
@@ -166,6 +174,7 @@ def guardrail(
             check=fn,
             timeout=timeout,
             on_error=on_error,
+            metadata=dict(metadata or {}),
         )
 
     return deco

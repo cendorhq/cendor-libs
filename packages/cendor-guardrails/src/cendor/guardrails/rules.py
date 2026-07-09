@@ -391,16 +391,22 @@ def _validate(data: Any, schema: dict, path: str) -> str | None:
     return None
 
 
-# Opt-in detection-tier adapters (classifier / prompt_guard / language / openai_moderation) live in
-# .adapters (each rides a BYO dependency or client, never a hard dep). Re-exported here so they read
-# as `rules.classifier` etc. alongside the deterministic built-ins. Imported at the bottom because
-# .adapters depends on the helpers above (_payload_text / _resolve_on_error / custom).
+# Opt-in detection-tier adapters (classifier / prompt_guard / language / openai_moderation + the
+# three hosted rails) live in .adapters, and the similarity checks (groundedness / denied_topics) in
+# .semantic — each rides a BYO dependency, client, or embedding fn, never a hard dep. Re-exported
+# here so they read as `rules.classifier` / `rules.bedrock_guardrail` / `rules.groundedness` etc.
+# alongside the deterministic built-ins. Imported at the bottom because both depend on the helpers
+# above (_payload_text / custom).
 from .adapters import (  # noqa: E402  (bottom import breaks the rules↔adapters cycle)
+    azure_content_safety,
+    bedrock_guardrail,
     classifier,
     language,
+    model_armor,
     openai_moderation,
     prompt_guard,
 )
+from .semantic import denied_topics, groundedness  # noqa: E402
 
 __all__ = [  # noqa: F822 - names are the module's public factories
     "keyword_deny",
@@ -415,4 +421,9 @@ __all__ = [  # noqa: F822 - names are the module's public factories
     "prompt_guard",
     "language",
     "openai_moderation",
+    "bedrock_guardrail",
+    "azure_content_safety",
+    "model_armor",
+    "groundedness",
+    "denied_topics",
 ]

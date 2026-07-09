@@ -93,7 +93,20 @@ because it is part of the cross-language bus vocabulary a port must match.
 | `tool` | string | `""` | tool name for the tool stages, when known. |
 | `trace_id` | string | `""` | correlation id set by `trace()`; `""` = uncorrelated. |
 | `ts` | timestamp | now | when the decision was made. |
-| `metadata` | object | `{}` | free-form. |
+| `metadata` | object | `{}` | free-form; see the reserved keys below. |
+
+**`metadata` — no shape change, richer content (v02 wave 3).** The event shape is unchanged; two
+reserved keys now carry policy provenance when present, so no port/acttrace edit is required — a
+consumer reads them like any other metadata:
+
+- `policy_hash` (string, `"sha256:<hex>"`) and `policy_version` (string) — stamped on every decision
+  from a guardrail built by `load_policy()` (config-as-data). They let an audit chain prove *which*
+  policy file was active when a call was gated. They come from the guardrail's static
+  `Guardrail.metadata`, which the engine merges under the per-call `Context.metadata` (context wins a
+  key clash).
+- Hosted-rail adapters (`bedrock_guardrail` / `azure_content_safety` / `model_armor`) still emit a
+  plain `guardrail_decision`: the vendor performs the check, but the evidence is local — the `reason`
+  names *which* cloud policy fired, never the payload ("cloud check, local evidence").
 
 A port must emit the same field names/conventions (`snake_case` ↔ `camelCase`) so an audit chain
 written in one language records byte-identical `guardrail_decision` entries as the other.

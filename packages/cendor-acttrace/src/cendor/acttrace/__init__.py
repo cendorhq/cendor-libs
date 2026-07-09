@@ -591,6 +591,10 @@ class AuditLog:
                     "reason": getattr(event, "reason", ""),
                     "agent": getattr(event, "agent", ""),
                     "tool": getattr(event, "tool", ""),
+                    # metadata carries provenance the chain must record — e.g. load_policy's
+                    # policy_hash / policy_version (proves which policy was active). Duck-typed +
+                    # json-normalized; empty by default, so this stays backward-compatible.
+                    "metadata": _jsonable(getattr(event, "metadata", {}) or {}),
                 },
             )
 

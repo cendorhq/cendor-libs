@@ -2,8 +2,18 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
-## [1.1.0] — Unreleased
-Maturing the Gate from a deterministic-only v1.0 into a detection-tier suite (plan-guardrails-v02). Additive and backward-compatible.
+## [1.2.0] — Unreleased
+Maturing the Gate from a deterministic-only v1.0 into a full guardrails suite (plan-guardrails-v02). Additive and backward-compatible. (Folds the never-released 1.1.0 — Waves 1 & 2 below — into a single minor with Wave 3; if the waves ship separately, 1.1.0 = Waves 1–2 and 1.2.0 = Wave 3.)
+
+### Added (Wave 3 — hosted rails, config-as-data, grounding & topics)
+- **Hosted-rail adapters** in `cendor.guardrails.adapters`, re-exported as `rules.*` — each turns a *cloud* verdict into a **local** `GuardrailDecision` on the bus ("cloud check, local evidence"); the client is **duck-typed** (no cloud SDK imported here), metered by the vendor, and the reason records only which cloud policy fired:
+  - `rules.bedrock_guardrail(client, guardrail_id)` — AWS Bedrock **`ApplyGuardrail`** (the flagship: evaluates any text independently of the model, so it works with any provider). `source` is picked from the stage (`INPUT`/`OUTPUT`); `action="redact"` substitutes Bedrock's masked `outputs` text.
+  - `rules.azure_content_safety(client)` — Azure AI Content Safety **Prompt Shields** (binary user-prompt / document attack detection).
+  - `rules.model_armor(client, template)` — Google Cloud **Model Armor** (`sanitize_user_prompt` / `sanitize_model_response`: prompt-injection & jailbreak, SDP, malicious URIs, RAI).
+- **Config-as-data** — `load_policy(source)` builds a guardrail list from a versioned JSON (stdlib) or YAML (`[yaml]` extra) document of deterministic rules. Its `LoadedPolicy` is a `list[Guardrail]` (use it directly) that also carries `.policy_hash` / `.policy_version`; those are stamped into every decision's `metadata` (`policy_hash` / `policy_version`), so the audit chain proves **which** policy was active. No event-shape change.
+- **Grounding & denied topics** — `rules.groundedness(embed, sources)` (RAG hallucination gate: trips when a response's max cosine similarity to the sources is below a threshold) and `rules.denied_topics(embed, topics)` (trips when the payload is too close to a denied-topic exemplar). Both take a **bring-your-own** `embed(text)` fn (cassette's BYO-scorer precedent) — no bundled model, no accuracy claim.
+- **`Guardrail.metadata`** — static per-guardrail key/values (also on `@guardrail(metadata=…)`) merged into every decision it emits (under the per-call `Context.metadata`, which wins a clash). Used by `load_policy` for policy provenance; also handy for severity/owner/ticket tags.
+- **New optional extras** `[yaml]` (PyYAML, for `load_policy`), `[bedrock]` / `[azure]` / `[modelarmor]` (convenience installs of the vendor SDK — the adapters duck-type the client, so nothing is imported). Docs: hosted-rail metering cites each vendor's own pricing page (no invented numbers); the tier-4 "Threat model" now covers the hosted rails.
 
 ### Added (Wave 1 — execution-model maturity + judge helpers)
 - **Per-guardrail `timeout` + `on_error`** on `Guardrail` / `@guardrail` / `rules.custom` / `rules.llm_judge`. `timeout` (seconds) bounds a slow bring-your-own check (async via `asyncio.wait_for`; sync via a worker thread); `on_error` is `"fail_closed"` (default — an errored check is treated as a block) or `"fail_open"` (record a flag and proceed). Either way the failure is emitted as a `GuardrailDecision` — the audit chain records that a check couldn't run, never a swallowed exception. The reason carries the exception type/message, never the payload. The `llm_judge`/`custom` factories default the policy from the action (block → closed, flag → open).

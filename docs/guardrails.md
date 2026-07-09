@@ -419,6 +419,141 @@ rules.openaiModeration(client, { categories, stage: 'input', action: 'block' });
   `detect` or the `[langid]` extra.
 - **`openai_moderation(client)`** — OpenAI's free, non-LLM moderation endpoint (needs your key).
 
+### Hosted rails (opt-in) — cloud check, local evidence
+The three big clouds sell managed guardrail services. cendor wraps each as a `Guardrail` so a *cloud*
+verdict still flows through the *local* engine: every trip emits a `guardrail_decision` on the bus and
+`acttrace` chains it as tamper-evident evidence, exactly like a deterministic rule. **You** bring the
+cloud client (the adapter duck-types it — nothing here imports a cloud SDK) and the credentials, and
+the vendor meters the call. The reason records only which cloud policy fired — never the payload.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+<!-- ts-check: skip -->
+
+```python
+import boto3
+from cendor.guardrails import rules
+
+# AWS Bedrock ApplyGuardrail — model-agnostic: it assesses any text without invoking a model
+bedrock = boto3.client("bedrock-runtime")
+rail = rules.bedrock_guardrail(bedrock, "gr-abc123", guardrail_version="DRAFT", timeout=2.0)
+
+# Azure AI Content Safety — Prompt Shields (binary attack detection)
+rules.azure_content_safety(azure_client, action="block")
+
+# Google Model Armor — screens the prompt/response against a template
+rules.model_armor(armor_client, "projects/p/locations/us-central1/templates/t")
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { rules } from '@cendor/guardrails';
+
+rules.bedrockGuardrail(bedrock, 'gr-abc123', { guardrailVersion: 'DRAFT', timeout: 2 });
+rules.azureContentSafety(azureClient, { action: 'block' });
+rules.modelArmor(armorClient, 'projects/p/locations/us-central1/templates/t');
+```
+
+<!-- /tabs -->
+
+- **`bedrock_guardrail(client, guardrail_id)`** — AWS Bedrock **`ApplyGuardrail`**, the flagship: it
+  evaluates text against your configured guardrail **independently of any model**, so it works no
+  matter which provider your agent uses. `source` is chosen from the stage (`INPUT`/`OUTPUT`);
+  `action="redact"` substitutes Bedrock's masked output.
+- **`azure_content_safety(client)`** — Azure AI Content Safety **Prompt Shields** (binary
+  user-prompt / document attack detection).
+- **`model_armor(client, template)`** — Google Cloud **Model Armor** (`sanitize_user_prompt` /
+  `sanitize_model_response`: prompt-injection & jailbreak, Sensitive Data Protection, malicious URIs).
+
+**Metering (cite the vendor, never a number we invent).** Each is a paid call on *your* cloud
+account. As of July 2026: AWS Bedrock Guardrails is metered per 1,000 text units, with word/regex
+filters free ([pricing](https://aws.amazon.com/bedrock/pricing/)); Azure AI Content Safety bills per
+text record with an F0 free tier ([pricing](https://azure.microsoft.com/pricing/details/cognitive-services/content-safety/));
+Google Model Armor is metered per token with a monthly free allocation
+([pricing](https://cloud.google.com/security/products/model-armor#pricing)). Confirm the current
+figures at those links. They are network calls — set `timeout` / `on_error`.
+
+### Config as data — `load_policy`
+Declare a set of **deterministic** rules in a versioned JSON or YAML file and load it into a guardrail
+list. The point is evidence: the file's content hash and its version are stamped into every decision's
+`metadata` (`policy_hash` / `policy_version`), so the audit chain proves **which** policy was active.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+<!-- ts-check: skip -->
+
+```python
+from cendor.guardrails import load_policy
+
+# guardrails.yaml (or .json) — see the shape in the module docstring
+policy = load_policy("guardrails.yaml")     # a list[Guardrail] you use directly...
+agent = Agent(..., guardrails=policy)        # ...in the SDK,
+install(policy)                              # ...or standalone.
+policy.policy_hash      # "sha256:…"  — also on every decision this policy emits
+policy.policy_version   # "2026-07-09"
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { loadPolicy } from '@cendor/guardrails';
+
+// JSON is built in; for YAML pass your own parser: loadPolicy(text, { parse: YAML.parse })
+const policy = loadPolicy(jsonText);
+policy.policyHash;     // "sha256:…"
+policy.policyVersion;  // "2026-07-09"
+```
+
+<!-- /tabs -->
+
+Only the deterministic built-ins are constructible from data (`keyword_deny`, `regex_rule`, `url_*`,
+`length_bounds`, `json_schema`) — a rule needing a callable or a client is wired in code. YAML needs
+the `[yaml]` extra in Python (JSON is stdlib); TypeScript's `loadPolicy` reads JSON and takes a
+bring-your-own `parse` for YAML.
+
+### Grounding & denied topics
+Two open-ended checks over a **bring-your-own** embedding function (`embed(text) -> vector`) — cendor
+ships no model, mirroring `cassette`'s bring-your-own-scorer. Cosine similarity, no numpy.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+<!-- ts-check: skip -->
+
+```python
+from cendor.guardrails import rules
+
+# RAG hallucination gate: flag an answer not grounded in the retrieved passages
+rules.groundedness(embed, sources=passages, threshold=0.75, action="flag")
+
+# steer off subjects: block a prompt too close to a denied-topic exemplar
+rules.denied_topics(embed, ["medical diagnosis", "legal advice"], threshold=0.8, action="block")
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { rules } from '@cendor/guardrails';
+
+rules.groundedness(embed, passages, { threshold: 0.75, action: 'flag' });
+rules.deniedTopics(embed, ['medical diagnosis', 'legal advice'], { threshold: 0.8, action: 'block' });
+```
+
+<!-- /tabs -->
+
+These are tuned heuristics, not guarantees — calibrate the threshold on your own data, and keep an
+ungrounded answer advisory (`action="flag"`) unless you have measured it. For open-ended risk you can
+describe in a prompt, the [LLM-judge helpers](#the-llm-judge-helpers) are the alternative.
+
 ### Exceptions
 `GuardrailTripped` carries `.decisions` (the list recorded up to and including the block).
 
@@ -487,7 +622,7 @@ class of risk at a different cost — and each has documented bypasses. Layer th
 | 1 | Detector catalogue (`rules.pii`/`secrets`/`entropy` via acttrace, bridged from the SDK) | structured PII/secrets with validated patterns | free-text names/addresses (needs the `[ner]` backend); novel secret formats | µs–ms · $0 · local |
 | 2 | Local classifiers (`classifier`, `prompt_guard`, `language`) | learned patterns of prompt injection / off-list language | **mutation & obfuscation attacks that shift the input off the training distribution**; anything the model wasn't trained on | tens of ms · $0 · local |
 | 3 | BYO LLM judge (`llm_judge` + `judge` helpers) | open-ended, context-dependent risk you can describe in a prompt | whatever the judge's prompt misses; a judge can itself be prompt-injected | seconds · ~2× call · metered |
-| 4 | Hosted moderation (`openai_moderation`) | the provider's policy categories (violence, hate, …) | injection/jailbreak (it's a content classifier, not an injection detector); anything outside its taxonomy | ~100 ms–1 s · free–metered |
+| 4 | Hosted rails (`openai_moderation` free; `bedrock_guardrail`, `azure_content_safety`, `model_armor` metered) | the vendor's configured policies — content categories, denied topics, PII, prompt-shield / injection (varies by vendor) | whatever the vendor's policy misses; a vendor outage (bound with `timeout`/`on_error`); anything outside its taxonomy | ~100 ms–1 s · free–metered |
 
 **Documented bypasses to assume.** A determined attacker will try **mutation** (typos, homoglyphs,
 spacing), **encoding** (base64, rot13, leetspeak), **translation / language switching**,

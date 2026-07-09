@@ -42,6 +42,15 @@ client.chat.completions.create(model="gpt-4o", messages=msgs)
   `timeout` + `on_error` (fail-closed by default) and `cendor.guardrails.judge` helpers (verdict
   prompt + strict-JSON parsing). The judge rides an instrumented client, so its own spend is
   budgeted + audited.
+- **Detection tiers you opt into** — a local classifier contract (`rules.classifier`,
+  `rules.prompt_guard` behind the `[promptguard]` extra), `rules.language`, and hosted rails
+  (`rules.bedrock_guardrail` / `azure_content_safety` / `model_armor` — duck-typed clients, metered
+  by the vendor). Every hosted verdict still emits a **local** `guardrail_decision`: cloud check,
+  local evidence. No jailbreak/PII-catch-rate claim ships without a reproduced, published benchmark.
+- **Config as data + grounding** — `load_policy("guardrails.yaml")` builds deterministic rules from
+  a versioned file and stamps its `policy_hash` / `policy_version` onto every decision (the audit
+  chain proves which policy was live); `rules.groundedness` / `rules.denied_topics` gate on
+  bring-your-own-embedding cosine similarity (RAG hallucination / off-topic), no bundled model.
 
 ```python
 from cendor.guardrails import apply, guardrail, Verdict, GuardrailTripped
