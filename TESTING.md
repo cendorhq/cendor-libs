@@ -23,7 +23,7 @@ status, and how-to-run.
 | **D. Real-provider fixtures** | `instrument()` parses *actual* OpenAI/Anthropic/Bedrock/Gemini/Ollama responses | recorded cassettes | gated | ⏳ planned (record-once → replay) |
 | **E. Property / edge** | invariants hold for arbitrary inputs | `packages/*/tests/test_*_properties.py` (hypothesis) | ✅ yes | ✅ in place (9 tests) |
 
-Plus static gates in CI: `ruff check`, `ruff format --check`, **`mypy`** (all six packages), and the namespace-guard.
+Plus static gates in CI: `ruff check`, `ruff format --check`, **`mypy`** (all seven packages), and the namespace-guard.
 
 ### Layer A — Unit tests *(implemented)*
 The correctness guard for all logic. Mocked clients, golden values, no network. Run:

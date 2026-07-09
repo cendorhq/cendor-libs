@@ -4,7 +4,7 @@ How the Cendor tools work, how they connect, and how they plug into your agent.
 
 ## The mental model
 
-Six small libraries, one shared foundation, one brand. Each is useful alone; installed together
+Seven small libraries, one shared foundation, one brand. Each is useful alone; installed together
 they cover the lifecycle of a production LLM call:
 
 ```

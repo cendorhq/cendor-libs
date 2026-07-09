@@ -10,7 +10,7 @@ keeps working forever; both resolve to the same stack.
 ![PyPI](https://img.shields.io/pypi/v/cendor) ![license](https://img.shields.io/badge/license-Apache_2.0-blue)
 
 This package ships **no code** of its own. Installing it is exactly equivalent to installing
-`cendor-libs`, which declares the six libraries as dependencies so they share the `cendor.*` import
+`cendor-libs`, which declares the seven libraries as dependencies so they share the `cendor.*` import
 namespace (PEP 420):
 
 | | Import | Role |
@@ -19,6 +19,7 @@ namespace (PEP 420):
 | `cendor-contextkit` | `cendor.contextkit` | assemble context within a budget |
 | `cendor-squeeze` | `cendor.squeeze` | reversible, content-aware compression |
 | `cendor-tokenguard` | `cendor.tokenguard` | pre-flight cost caps + attribution |
+| `cendor-guardrails` | `cendor.guardrails` | deterministic gate — block/redact/flag at four stages |
 | `cendor-cassette` | `cendor.cassette` | record/replay agent runs |
 | `cendor-acttrace` | `cendor.acttrace` | tamper-evident audit log |
 
