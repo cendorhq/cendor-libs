@@ -21,8 +21,9 @@ pip install cendor-guardrails
 
 <!-- tab: TypeScript -->
 
-> **TypeScript examples land in the docs flip.** `@cendor/guardrails` ships in this release; the
-> paired TS sample is filled in once the package builds (see the [parity matrix](/docs/languages)).
+```bash
+npm i @cendor/guardrails
+```
 
 <!-- /tabs -->
 
@@ -52,8 +53,21 @@ client.chat.completions.create(model="gpt-4o", messages=msgs)
 
 <!-- tab: TypeScript -->
 
-> **TypeScript examples land in the docs flip.** `@cendor/guardrails` ships in this release; the
-> paired TS sample is filled in once the package builds (see the [parity matrix](/docs/languages)).
+```ts
+import { instrument } from '@cendor/core';
+import { install, rules } from '@cendor/guardrails';
+
+const client = instrument(new OpenAI());
+install([
+  rules.keywordDeny(['ignore previous instructions'], { action: 'block' }), // prompt-injection floor
+  rules.regexRule(/\bsk-[A-Za-z0-9]{20,}\b/, { action: 'redact', stage: 'input' }), // scrub leaked keys
+  rules.urlAllowlist(['docs.cendor.ai'], { stage: 'input' }), // only sanctioned links
+]);
+
+await client.chat.completions.create({ model: 'gpt-4o', messages: msgs });
+// a blocked prompt -> throws GuardrailTripped BEFORE the request is sent ($0 spent)
+// a leaked key    -> the provider receives "[redacted]" instead of the secret
+```
 
 <!-- /tabs -->
 
@@ -78,8 +92,24 @@ except GuardrailTripped as e:
 
 <!-- tab: TypeScript -->
 
-> **TypeScript examples land in the docs flip.** `@cendor/guardrails` ships in this release; the
-> paired TS sample is filled in once the package builds (see the [parity matrix](/docs/languages)).
+```ts
+import { apply, defineGuardrail, GuardrailTripped, Verdict } from '@cendor/guardrails';
+
+const mustBeJson = defineGuardrail(
+  (payload) =>
+    typeof payload === 'string' && !payload.trim().startsWith('{')
+      ? new Verdict('block', 'expected a JSON object')
+      : null,
+  { stage: 'output' },
+);
+
+const modelText = '{"ok": true}';
+try {
+  apply([mustBeJson], 'output', modelText); // throws GuardrailTripped on a block
+} catch (e) {
+  if (e instanceof GuardrailTripped) console.log(e.decisions); // recorded decisions, block last
+}
+```
 
 <!-- /tabs -->
 
@@ -122,7 +152,7 @@ it chains that decision as a tamper-evident `guardrail_decision` entry — recor
 name, stage, action, and a short reason, **never the raw payload**. "We blocked it" is in the hash
 chain, not a log line. This works with **no import** between the two libraries: `acttrace`
 duck-types the decision, exactly as it does contextkit's assembly report. See the
-[bus-events spec](specs/bus-events.md).
+[bus-events spec](https://github.com/cendorhq/cendor-libs/blob/main/docs/specs/bus-events.md).
 
 ### Three ways to use it
 - **Pure** — `apply(guardrails, stage, payload)` / `evaluate(...)` gate a payload directly (sync;
@@ -174,13 +204,25 @@ rules.llm_judge(judge, *, stage="output", action="block", name="llm_judge")   # 
 
 <!-- tab: TypeScript -->
 
-> **TypeScript examples land in the docs flip.** `@cendor/guardrails` ships in this release; the
-> paired TS sample is filled in once the package builds (see the [parity matrix](/docs/languages)).
+<!-- ts-check: skip -->
+
+```ts
+import { rules } from '@cendor/guardrails';
+
+rules.keywordDeny(words, { stage: 'input', action: 'block', name, ignoreCase: true });
+rules.regexRule(pattern, { action: 'flag', stage: 'input', name, replacement: '[redacted]' });
+rules.urlAllowlist(domains, { stage: 'input', action: 'block', name });
+rules.urlDeny(domains, { stage: 'input', action: 'block', name });
+rules.lengthBounds({ maxChars, maxTokens, model: 'gpt-4o', stage: 'input', action: 'block', name });
+rules.jsonSchema(schema, { stage: 'output', action: 'block', name });
+rules.custom(fn, { stage: 'input', name });
+rules.llmJudge(judge, { stage: 'output', action: 'block', name: 'llm_judge' }); // adapter — BYO model
+```
 
 <!-- /tabs -->
 
-Every factory returns a `Guardrail(name, stages, check)`. `stage` accepts a single stage or a tuple
-of stages.
+Every factory returns a `Guardrail(name, stages, check)`. `stage` accepts a single stage or an array
+of stages (`defineGuardrail(check, { stage })` in TypeScript — JS has no function decorators).
 
 ### `Guardrail` & the `@guardrail` decorator
 Build a guardrail directly, or decorate a `check(payload, ctx) -> Verdict | None` function:
@@ -200,13 +242,22 @@ def no_ssn(payload, ctx):
 
 <!-- tab: TypeScript -->
 
-> **TypeScript examples land in the docs flip.** `@cendor/guardrails` ships in this release; the
-> paired TS sample is filled in once the package builds (see the [parity matrix](/docs/languages)).
+```ts
+import { defineGuardrail, Verdict } from '@cendor/guardrails';
+
+const noSsn = defineGuardrail(
+  (payload) =>
+    String(payload).toLowerCase().includes('ssn')
+      ? new Verdict('block', 'SSN mentioned')
+      : null, // return null to pass
+  { stage: ['input', 'output'] }, // one or more of the four stages
+);
+```
 
 <!-- /tabs -->
 
-The `check` receives a `Context(stage, agent, tool, tool_args, trace_id, metadata)` — all optional,
-so a standalone check can ignore it.
+The `check` receives a `Context` (`stage`, `agent`, `tool`, `toolArgs`, `traceId`, `metadata`) — all
+optional, so a standalone check can ignore it.
 
 ### `apply` / `evaluate` (+ async)
 
