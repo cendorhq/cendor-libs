@@ -51,3 +51,8 @@ packages = ["src/cendor"]     # contributes cendor/guardrails only — NEVER add
 # Ship the policy JSON Schema (config tooling — NOT model data): editors resolve `$schema`, and
 # load_policy(validate=True) / policy_schema() read it at runtime via importlib.resources.
 artifacts = ["src/cendor/guardrails/policy.schema.json"]
+
+# Bundle the shared assistant/integration guide (verbatim copy of the repo-root canonical
+# cendor-libs/INTEGRATION.md; must sit in the package root to round-trip through the sdist).
+[tool.hatch.build.targets.wheel.force-include]
+"INTEGRATION.md" = "cendor/guardrails/INTEGRATION.md"

@@ -32,3 +32,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cendor"]     # contributes cendor/cassette only — NEVER add src/cendor/__init__.py
+
+# Bundle the shared assistant/integration guide (verbatim copy of the repo-root canonical
+# cendor-libs/INTEGRATION.md; must sit in the package root to round-trip through the sdist).
+[tool.hatch.build.targets.wheel.force-include]
+"INTEGRATION.md" = "cendor/cassette/INTEGRATION.md"

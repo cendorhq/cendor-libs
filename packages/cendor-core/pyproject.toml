@@ -42,3 +42,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cendor"]     # contributes cendor/core only — NEVER add src/cendor/__init__.py
+
+# Bundle the shared "how to call Cendor" guide into the wheel (lands at
+# site-packages/cendor/core/INTEGRATION.md) so humans grep it and some assistants read it. The file
+# is a verbatim copy of the repo-root canonical cendor-libs/INTEGRATION.md — it must live inside the
+# package root so it round-trips through the sdist (uv builds the wheel FROM the sdist, and pip can
+# build from source), which a ../../ path cannot. Keep it in sync with the root canonical.
+[tool.hatch.build.targets.wheel.force-include]
+"INTEGRATION.md" = "cendor/core/INTEGRATION.md"
