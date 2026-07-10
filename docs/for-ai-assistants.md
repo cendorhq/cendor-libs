@@ -403,6 +403,26 @@ Python is a PEP 420 namespace. Provider SDKs are optional. Deterministic guardra
 attacks; acttrace is evidence, not a guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
 ```
 
+## MCP — live docs for your assistant
+
+The copy-paste rules files above are static — you paste them once. If your assistant runs in **agent
+mode** (Claude Code, Cursor's agent, GitHub Copilot agent, Windsurf Cascade), there's a live option:
+the **Cendor MCP server**. Connect it once and your assistant can *look up* the correct call-shape on
+demand — the same trap table and canonical examples on this page, served fresh — instead of relying on
+a pasted snapshot.
+
+- **Remote** (zero-install, always current): `https://mcp.cendor.ai`
+- **Local** (fully offline, docs bundled — nothing leaves your machine): `npx @cendor/mcp` (Node) or
+  `uvx cendor-mcp` (Python)
+
+It is **read-only** and **pull-based**: your assistant calls a tool, the server answers, your
+assistant writes the code — your codebase never flows to the server. The tools are `search_docs`,
+`get_page`, `get_api` (the anti-hallucination call-shape lookup), `example`, and `list_recipes`.
+
+**Honest limit:** MCP is only called by *agent* modes — inline autocomplete does not call it. For that
+path, rely on the types Cendor ships in every package (the `@example` + correct-shape signatures
+described above). Use both. Full setup for every assistant: [cendor.ai/mcp](/mcp).
+
 ## Honest limits
 
 - This page states call **shapes**, never performance numbers. Every benchmark-backed claim lives in
