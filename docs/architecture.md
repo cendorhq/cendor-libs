@@ -9,31 +9,47 @@ they cover **the lifecycle of one governed LLM call** — cooperating through on
 through imports:
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}} }%%
-flowchart LR
-    subgraph BEFORE["before the call · pre-flight"]
-        direction TB
-        CK["contextkit · assemble"]
-        SQ["squeeze · compress"]
-        TG["tokenguard · budget"]
-        GRI["guardrails · gate input"]
-        ATG["acttrace · guard"]
+%%{init: {"flowchart": {"htmlLabels": false, "nodeSpacing": 34, "rankSpacing": 52}} }%%
+flowchart TB
+    subgraph BEFORE["1 · before the call — pre-flight"]
+        direction LR
+        CK["contextkit<br/>assemble"]
+        SQ["squeeze<br/>compress"]
+        TG["tokenguard<br/>budget"]
+        GRI["guardrails<br/>gate input"]
+        ATG["acttrace<br/>guard"]
     end
-    subgraph CALL["the call"]
-        direction TB
+    subgraph CALL["2 · the call"]
         LLM["your LLM / tool call<br/>rides core's instrument() seam"]
     end
-    subgraph AFTER["after · automatic, via the bus"]
-        direction TB
-        GRO["guardrails · gate output"]
-        CS["cassette · test"]
-        ATA["acttrace · audit"]
+    subgraph AFTER["3 · after the call — automatic, via the bus"]
+        direction LR
+        GRO["guardrails<br/>gate output"]
+        CS["cassette<br/>test"]
+        ATA["acttrace<br/>audit"]
     end
-    BEFORE --> CALL --> AFTER
-    CORE["cendor-core — the instrument() seam + one event bus beneath every stage"]
+    CORE["cendor-core<br/>the instrument() seam + one event bus<br/>— beneath every stage"]
+    BEFORE ==> CALL ==> AFTER
     BEFORE -.-> CORE
     CALL -.-> CORE
     AFTER -.-> CORE
+
+    classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB,stroke-width:1px;
+    classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A,stroke-width:1px;
+    classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED,stroke-width:1px;
+    classDef gr fill:#F97316,color:#111827,stroke:#EA580C,stroke-width:1px;
+    classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488,stroke-width:1px;
+    classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48,stroke-width:1px;
+    classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF,stroke-width:1px;
+    classDef co fill:#94A3BB,color:#0F172A,stroke:#64748B,stroke-width:1px;
+    class CK ck;
+    class SQ sq;
+    class TG tg;
+    class GRI,GRO gr;
+    class CS cs;
+    class ATG,ATA at;
+    class LLM seam;
+    class CORE co;
 ```
 
 **A lifecycle, not a dependency chain.** Every library works alone; two act on *both* sides of the
