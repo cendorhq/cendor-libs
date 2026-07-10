@@ -29,7 +29,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from .decision import Context, Guardrail, Verdict, normalize_stages
+from .decision import Action, Context, Guardrail, Verdict, normalize_stages
 
 __all__ = ["intent"]
 
@@ -107,7 +107,7 @@ def intent(
     mode: str = "deny",
     threshold: float = 0.8,
     stage: str | tuple[str, ...] = "input",
-    action: str = "flag",
+    action: Action = "flag",
     name: str = "intent",
     timeout: float | None = None,
     on_error: str | None = None,
@@ -115,6 +115,12 @@ def intent(
     """Screen a request by **intent** before the model runs. Provide exactly one backend —
     ``embed=`` (semantic exemplars) or ``classify=`` (a BYO label classifier). For the LLM-judge
     backend, use :func:`cendor.guardrails.judge.intent_prompt` with ``rules.llm_judge`` instead.
+
+    ```python
+    from cendor.guardrails import rules, embeddings
+    embed = embeddings.local_embedder()
+    gate = [rules.intent({"support": ["reset my password"]}, embed=embed, mode="allow")]
+    ```
 
     Args:
         intents: For ``embed=``, a ``{label: [example phrase, …]}`` mapping. For ``classify=``, the

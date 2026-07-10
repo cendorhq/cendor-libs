@@ -50,6 +50,12 @@ class Money:
     Accepts ``int``/``float``/``str``/``Decimal`` for ``amount`` and coerces to
     ``Decimal`` (floats via their string form, to avoid binary-float noise).
     Arithmetic and comparisons require a matching ``currency``.
+
+    ```python
+    from decimal import Decimal
+    from cendor.core import Money
+    price = Money(Decimal("0.0025"))       # pass a Decimal or str — a float works but risks noise
+    ```
     """
 
     amount: Decimal

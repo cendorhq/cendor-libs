@@ -30,6 +30,10 @@ DEFAULT_MODEL = "minishlab/potion-base-8M"
 def local_embedder(model: str = "minishlab/potion-base-8M") -> Callable[[str], Sequence[float]]:
     """A free, offline ``embed(text) -> list[float]`` backed by **model2vec** static embeddings.
 
+    It lives on the :mod:`~cendor.guardrails.embeddings` module, **not** on ``rules`` — call
+    ``embeddings.local_embedder()`` (there is no ``rules.local_embedder``) and hand the result to a
+    semantic rule's ``embed=`` argument.
+
     Needs the optional extra: ``pip install 'cendor-guardrails[embeddings]'`` (installs model2vec —
     numpy-only, no torch). ``model`` is any model2vec checkpoint (default
     ``"minishlab/potion-base-8M"``); it is loaded from Hugging Face on the **first** call and cached

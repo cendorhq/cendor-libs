@@ -115,6 +115,15 @@ def estimate(
 
     Returns:
         The estimated :class:`~cendor.core.types.Money` cost in USD.
+
+    ``output_tokens`` (and the cache args) are **positional** here — a documented divergence from
+    the TypeScript port, where they ride an options object (``prices.estimate(model, n,
+    {outputTokens})``).
+
+    ```python
+    from cendor.core import prices
+    cost = prices.estimate("gpt-4o", 1200, output_tokens=300)   # -> Money("...", "USD")
+    ```
     """
     r = _rates(model)
     cached = min(max(cached_tokens, 0), input_tokens)  # cached ⊆ input; clamp defensively
@@ -373,3 +382,19 @@ def _reset() -> None:
     _source = "bundled"
     _source_name = "bundled"
     _source_url = None
+
+
+def __getattr__(name: str) -> object:  # PEP 562 — teach the common wrong guess
+    """Turn the hallucinated ``prices.register`` into a helpful error, not a bare AttributeError.
+
+    The TS port has ``prices.register`` on ``@cendor/core``, but in Python a model's price is
+    registered with ``cendor.sdk.register_model_price(model, input=..., output=...)`` (which writes
+    into this table). ``tokens.register`` is a different thing — it registers a token *counter*.
+    """
+    if name in ("register", "register_model_price"):
+        raise AttributeError(
+            "cendor.core.prices has no 'register'. To register a model's price use "
+            "cendor.sdk.register_model_price(model, input=..., output=..., per='1M'); "
+            "cendor.core.tokens.register(fam, counter) registers a token counter, not a price."
+        )
+    raise AttributeError(f"module 'cendor.core.prices' has no attribute {name!r}")

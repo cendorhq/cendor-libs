@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from cendor.core import bus, prices, tokens
 from cendor.core.instrument import MISS, Reroute, add_interceptor
@@ -70,7 +70,7 @@ class _Truncated(Exception):
 class _Frame:
     cap_usd: Decimal | None
     cap_tokens: int | None
-    on_exceed: str | Callable[[dict], Any]
+    on_exceed: OnExceedMode | Callable[[dict], Any]
     scope: str | None = None
     downgrade: dict | None = None  # model -> cheaper model, for on_exceed="downgrade"
     output_reserve: int = _DEFAULT_OUTPUT_RESERVE  # pre-flight output projection (block/downgrade)
@@ -82,6 +82,10 @@ class _Frame:
 
 #: Valid string values for ``budget(on_exceed=...)`` (a callable is also accepted).
 _ON_EXCEED = ("raise", "block", "truncate", "downgrade", "clamp")
+
+#: The five overflow strategies, as a type so an editor autocompletes them and a typo is a type
+#: error (a ``Callable[[dict], Any]`` is also accepted). Keep in sync with :data:`_ON_EXCEED`.
+OnExceedMode = Literal["raise", "block", "truncate", "downgrade", "clamp"]
 
 #: Per-provider request kwarg that caps generated (reasoning + visible) output tokens, used by
 #: ``on_exceed="clamp"``. On these providers the cap is enforced server-side and *includes*
@@ -443,7 +447,7 @@ class _Budget:
         self,
         usd: float | Decimal | None = None,
         tokens: int | None = None,
-        on_exceed: str | Callable[[dict], Any] = "raise",
+        on_exceed: OnExceedMode | Callable[[dict], Any] = "raise",
         scope: str | None = None,
         downgrade: dict | None = None,
         output_reserve: int = _DEFAULT_OUTPUT_RESERVE,
@@ -555,13 +559,27 @@ class _Budget:
 def budget(
     usd: float | Decimal | None = None,
     tokens: int | None = None,
-    on_exceed: str | Callable[[dict], Any] = "raise",
+    on_exceed: OnExceedMode | Callable[[dict], Any] = "raise",
     scope: str | None = None,
     downgrade: dict | None = None,
     output_reserve: int = _DEFAULT_OUTPUT_RESERVE,
     reasoning_reserve: int = 0,
 ) -> _Budget:
     """Cap spend on a unit of work, as a decorator or a context manager.
+
+    Not curried — call ``budget(...)`` directly (in TypeScript it's ``budget(cfg)(fn)``). The
+    returned object is **both** a decorator and a context manager; there is no ``with_budget``.
+
+    ```python
+    from cendor.tokenguard import budget
+
+    @budget(usd=0.50, on_exceed="raise")          # as a decorator
+    def answer(q: str) -> str: ...
+
+    with budget(usd=0.50) as b:                    # or as a context manager
+        answer("hi")
+        print(b.spent)                             # -> Money spent so far
+    ```
 
     Validates its configuration eagerly: a missing cap, an unknown ``on_exceed``, a ``"downgrade"``
     without a map/USD cap, or a ``"clamp"`` without a ``tokens=`` cap raises :class:`ValueError` at
@@ -624,6 +642,13 @@ def track(**tags: object) -> Iterator[None]:
 
     Tags merge with any enclosing ``track(...)`` and apply to every instrumented call made
     inside the block — including across nested and async calls.
+
+    ```python
+    from cendor.tokenguard import track, report
+    with track(feature="support", user_id="alice"):
+        client.chat.completions.create(...)
+    report(group_by=["feature"])   # spend grouped by tag
+    ```
     """
     _ensure_subscribed()
     token = _tags.set({**_current_tags(), **tags})
@@ -688,6 +713,14 @@ def report(group_by: list[str] | None = None) -> Report:
     the retained in-memory buffer; if the :func:`configure` cap has evicted older rows (see
     :func:`dropped`), the report reflects only the most recent window — use a sink for complete,
     durable history.
+
+    Row keys stay **snake_case** in both languages (``row["input_tokens"]``, not ``inputTokens``):
+
+    ```python
+    from cendor.tokenguard import report
+    for row in report(group_by=["feature"]):
+        print(row["tags"], row["usd"], row["input_tokens"])
+    ```
     """
     keys = group_by or []
     groups: dict[tuple, dict] = {}

@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 from cendor.core import tokens
 
-from .decision import Context, Guardrail, Verdict, normalize_stages
+from .decision import Action, Context, Guardrail, Verdict, normalize_stages
 
 # --------------------------------------------------------------------------- payload helpers
 
@@ -167,7 +167,7 @@ def keyword_deny(
     words: Iterable[str],
     *,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str | None = None,
     ignore_case: bool = True,
     match: str = "substring",
@@ -176,6 +176,12 @@ def keyword_deny(
     """Trip when any of ``words`` appears in the payload. ``action="redact"`` scrubs the matches to
     ``[redacted]`` instead of blocking. The decision's ``metadata["matched"]`` records the term that
     fired.
+
+    ```python
+    from cendor.guardrails import rules, evaluate, GuardrailTripped
+    gate = [rules.keyword_deny(["ignore previous instructions"], action="block")]
+    payload, decisions = evaluate(gate, "input", user_text)   # raises GuardrailTripped on a hit
+    ```
 
     Matching options (all default to the original, byte-for-byte behaviour — a deny-list is a
     security primitive, so nothing changes silently in a minor release; opt into the hardening):
@@ -228,14 +234,21 @@ def keyword_deny(
 def regex_rule(
     pattern: str | re.Pattern[str],
     *,
-    action: str = "flag",
+    action: Action = "flag",
     stage: str | tuple[str, ...] = "input",
     name: str | None = None,
     replacement: str = "[redacted]",
     flags: int = 0,
 ) -> Guardrail:
     """Trip when ``pattern`` matches the payload text. ``action="redact"`` substitutes each match
-    with ``replacement`` and continues."""
+    with ``replacement`` and continues.
+
+    ```python
+    from cendor.guardrails import rules, evaluate
+    gate = [rules.regex_rule(r"\\d{3}-\\d{2}-\\d{4}", action="redact")]
+    cleaned, decisions = evaluate(gate, "output", "SSN 123-45-6789")   # -> "SSN [redacted]"
+    ```
+    """
     rx = re.compile(pattern, flags) if isinstance(pattern, str) else pattern
 
     def check(payload: Any, ctx: Context) -> Verdict | None:
@@ -284,6 +297,12 @@ def spotlight(
 ) -> Guardrail:
     """Wrap untrusted content in a trust-lowering delimiter — a deterministic, ``$0``, offline
     **mitigation** (not a detector), inspired by Azure Foundry's *Spotlighting*.
+
+    ```python
+    from cendor.guardrails import rules, evaluate
+    gate = [rules.spotlight(delimiter="<untrusted>")]
+    wrapped, decisions = evaluate(gate, "tool_output", "search result text")
+    ```
 
     The check **always** returns ``Verdict("redact", …)`` — it never blocks; it rewrites the
     payload, wrapping each scannable text field in ``delimiter`` (a tag like ``"<untrusted>"`` gets
@@ -335,11 +354,18 @@ def url_allowlist(
     domains: Iterable[str],
     *,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str | None = None,
 ) -> Guardrail:
     """Trip when the payload contains a URL whose host is **not** on ``domains`` (or a subdomain of
-    one). Use to keep an agent from being steered to arbitrary sites."""
+    one). Use to keep an agent from being steered to arbitrary sites.
+
+    ```python
+    from cendor.guardrails import rules, evaluate
+    gate = [rules.url_allowlist(["example.com"], action="block")]
+    payload, decisions = evaluate(gate, "input", "see https://evil.test/x")
+    ```
+    """
     allowed = [d for d in domains if d]
 
     def check(payload: Any, ctx: Context) -> Verdict | None:
@@ -355,10 +381,17 @@ def url_deny(
     domains: Iterable[str],
     *,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str | None = None,
 ) -> Guardrail:
-    """Trip when the payload contains a URL whose host is on ``domains`` (or a subdomain of one)."""
+    """Trip when the payload contains a URL whose host is on ``domains`` (or a subdomain of one).
+
+    ```python
+    from cendor.guardrails import rules, evaluate
+    gate = [rules.url_deny(["evil.test"], action="block")]
+    payload, decisions = evaluate(gate, "input", "see https://evil.test/x")
+    ```
+    """
     denied = [d for d in domains if d]
 
     def check(payload: Any, ctx: Context) -> Verdict | None:
@@ -376,11 +409,18 @@ def length_bounds(
     max_tokens: int | None = None,
     model: str = "gpt-4o",
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str | None = None,
 ) -> Guardrail:
     """Trip when the payload exceeds ``max_chars`` and/or ``max_tokens``. Token counts use
-    ``cendor.core.tokens`` (exact for OpenAI with tiktoken), so ``max_tokens`` is a real budget."""
+    ``cendor.core.tokens`` (exact for OpenAI with tiktoken), so ``max_tokens`` is a real budget.
+
+    ```python
+    from cendor.guardrails import rules, evaluate
+    gate = [rules.length_bounds(max_tokens=2000, action="block")]
+    payload, decisions = evaluate(gate, "input", "a very long prompt…")
+    ```
+    """
     if max_chars is None and max_tokens is None:
         raise ValueError("length_bounds needs at least one of max_chars / max_tokens")
 
@@ -403,13 +443,19 @@ def json_schema(
     schema: dict,
     *,
     stage: str | tuple[str, ...] = "output",
-    action: str = "block",
+    action: Action = "block",
     name: str | None = None,
 ) -> Guardrail:
     """Validate structured output against a (minimal) JSON Schema — ``type`` / ``required`` /
     ``properties`` / ``items``, recursively. Trips when the payload is not valid JSON or violates
     the schema, *before* the caller parses it. Pass the model's raw text or an already-parsed
     object.
+
+    ```python
+    from cendor.guardrails import rules, evaluate
+    gate = [rules.json_schema({"type": "object", "required": ["name"]}, action="block")]
+    payload, decisions = evaluate(gate, "output", '{"name": "Ada"}')
+    ```
 
     This is a deliberately small validator (no ``jsonschema`` dependency — no heavy deps). It does
     not implement the full spec (no ``$ref``, ``oneOf``, ``pattern``, …); for richer validation,
@@ -455,6 +501,13 @@ def custom(
     Your ``fn`` is arbitrary code, so it can raise or hang: ``timeout`` (seconds) bounds it and
     ``on_error`` (``"fail_closed"`` default / ``"fail_open"``) decides what a raise or timeout does
     — either way the failure is recorded as a decision. See :class:`Guardrail`.
+
+    ```python
+    from cendor.guardrails import rules, Verdict
+    def check(payload, ctx):
+        return Verdict("block", reason="nope") if "secret" in str(payload) else None
+    gate = [rules.custom(check)]
+    ```
     """
     return Guardrail(
         name=name or str(getattr(fn, "__name__", "custom")),
@@ -469,12 +522,19 @@ def llm_judge(
     judge: Callable[[Any, Context], Verdict | bool | None],
     *,
     stage: str | tuple[str, ...] = "output",
-    action: str = "block",
+    action: Action = "block",
     name: str = "llm_judge",
     timeout: float | None = None,
     on_error: str | None = None,
 ) -> Guardrail:
     """Adapter **contract** for a bring-your-own model judge — not a built-in classifier.
+
+    ```python
+    from cendor.guardrails import rules
+    def judge(payload, ctx):
+        return True   # your model call decides; True trips with the default action
+    gate = [rules.llm_judge(judge, action="block", timeout=10)]
+    ```
 
     ``judge`` is *your* callable (sync or ``async``) that makes whatever model call you want and
     returns a :class:`Verdict` (full control over action/reason), ``True`` to trip with the default

@@ -159,6 +159,11 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
     },
 }
 
+#: Frameworks with a bundled (starting-template) control mapping, as a type so
+#: :meth:`AuditLog.export`'s ``framework=`` autocompletes and a typo is a type error. These are
+#: exactly the keys of :data:`_CONTROLS` (mirrored by :func:`frameworks`).
+Framework = Literal["eu_ai_act", "gdpr", "iso_42001", "nist_rmf"]
+
 
 # Category/group-specific control pointers, layered *on top of* the per-type ``policy_flag`` mapping
 # above when a flag names the category it fired on (``data=[...]``). This makes a category-tagged
@@ -338,7 +343,17 @@ def _meta_signature(key_bytes: bytes, meta: dict) -> str:
 
 
 class AuditLog:
-    """A hash-chained, append-only, auto-populating audit log. docs/acttrace.md §3, §5."""
+    """A hash-chained, append-only, auto-populating audit log. docs/acttrace.md §3, §5.
+
+    ```python
+    from cendor.acttrace import AuditLog
+
+    audit = AuditLog(system="support", risk_tier="limited")
+    with audit.decision(input="refund please") as d:
+        ...                                   # instrumented calls inside are auto-captured
+    audit.export("evidence.jsonl", framework="eu_ai_act")
+    ```
+    """
 
     def __init__(
         self,
@@ -627,7 +642,14 @@ class AuditLog:
 
     @contextmanager
     def decision(self, input: Any = None, actor: str = "agent") -> Iterator[Decision]:
-        """Group a unit of work. Auto-captured calls inside it are tagged with this decision."""
+        """Group a unit of work. Auto-captured calls inside it are tagged with this decision.
+
+        ```python
+        with audit.decision(input="refund please") as d:
+            answer = my_agent.run("refund please")
+            d.record(model="gpt-4o")          # optional decision metadata
+        ```
+        """
         did = uuid.uuid4().hex
         self._append("decision", {"decision_id": did, "input": _jsonable(input), "actor": actor})
         token = _active_decision.set(did)
@@ -713,8 +735,12 @@ class AuditLog:
             "flags_by_severity": dict(Counter(e.payload.get("severity") for e in flags)),
         }
 
-    def export(self, path: str, framework: str | None = None) -> None:
+    def export(self, path: str, framework: Framework | None = None) -> None:
         """Write the chain as a JSONL evidence pack, optionally annotated with control IDs.
+
+        ```python
+        audit.export("evidence.jsonl", framework="eu_ai_act")
+        ```
 
         ``framework`` (e.g. ``"eu_ai_act"`` or ``"nist_rmf"``) annotates each entry with the
         control IDs it provides evidence for, and the ``_meta`` header lists every control covered.
@@ -802,6 +828,13 @@ def verify(
     expect_entries: int | None = None,
 ) -> tuple[bool, str]:
     """Re-walk the hash chain in a JSONL file. Returns ``(ok, detail)``. docs/acttrace.md §5.
+
+    ```python
+    from cendor.acttrace import verify
+
+    ok, detail = verify("evidence.jsonl")
+    assert ok, detail
+    ```
 
     Detects edits and deletions, *including tail-truncation*: a hash chain alone can't catch
     trailing entries being dropped, so completeness is checked against an expected head hash and/or

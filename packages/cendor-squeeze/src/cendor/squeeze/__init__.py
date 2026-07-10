@@ -18,7 +18,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from cendor.core import tokens
 
@@ -36,6 +36,12 @@ def use_store(store: Any) -> Any:
 
     A backend is any object with ``get(key) -> str`` and ``put(key, value) -> None``. Handles
     expand against whichever backend is active at expand time.
+
+    ```python
+    from cendor.squeeze import use_store, store
+
+    use_store(store.SQLiteStore("cache.db"))   # persist originals across processes
+    ```
     """
     global _backend
     previous, _backend = _backend, store
@@ -62,7 +68,16 @@ class Handle:
 
     def to_dict(self) -> dict:
         """Serialize the handle (not the original). Persist it alongside a durable store
-        (e.g. :class:`store.SQLiteStore`) to :meth:`expand` after the process restarts."""
+        (e.g. :class:`store.SQLiteStore`) to :meth:`expand` after the process restarts.
+
+        Pairs with :meth:`from_dict` for a round-trip (in TypeScript these are ``toDict`` /
+        ``fromDict``):
+
+        ```python
+        d = handle.to_dict()          # a JSON-serializable dict
+        same = Handle.from_dict(d)    # rebuild it; expand() uses the active store
+        ```
+        """
         return {
             "id": self.id,
             "kind": self.kind,
@@ -72,7 +87,14 @@ class Handle:
 
     @classmethod
     def from_dict(cls, data: dict) -> Handle:
-        """Rebuild a handle from :meth:`to_dict`; ``expand()`` resolves via the active store."""
+        """Rebuild a handle from :meth:`to_dict`; ``expand()`` resolves via the active store.
+
+        ```python
+        from cendor.squeeze import Handle
+
+        handle = Handle.from_dict(d)   # d came from handle.to_dict(); TS casing: Handle.fromDict
+        ```
+        """
         return cls(
             id=data["id"],
             kind=data["kind"],
@@ -113,6 +135,17 @@ def _normalize_log_line(line: str) -> str:
 _LEVEL = re.compile(r"\b(?:DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL|TRACE|FATAL)\b")
 
 _FIDELITY = ("lossless", "balanced", "aggressive")
+
+#: The three ``fidelity`` levels as a type (mirrors :data:`_FIDELITY`) so an editor autocompletes
+#: them and a typo is a type error. A bad string still raises ``ValueError`` at runtime.
+Fidelity = Literal["lossless", "balanced", "aggressive"]
+
+#: Content kinds ``compress(kind=...)`` accepts — ``"auto"`` (detect) plus the four concrete kinds.
+Kind = Literal["auto", "json", "logs", "code", "prose"]
+
+#: What :func:`detect` returns — the four concrete kinds, a subset of :data:`Kind`.
+DetectedKind = Literal["json", "logs", "code", "prose"]
+
 _CODE_MARKERS = (
     "def ",
     "class ",
@@ -199,7 +232,7 @@ def _strip_comments(code: str) -> str:
     return "".join(out)
 
 
-def detect(content: str) -> str:
+def detect(content: str) -> DetectedKind:
     """Detect the content kind: ``"json"`` | ``"logs"`` | ``"code"`` | ``"prose"``. (docs §4)"""
     s = content.strip()
     if not s:
@@ -242,10 +275,10 @@ def _looks_like_code(s: str) -> bool:
 
 def compress(
     content: Any,
-    kind: str = "auto",
+    kind: Kind = "auto",
     target_tokens: int | None = None,
     model: str = "gpt-4o",
-    fidelity: str = "balanced",
+    fidelity: Fidelity = "balanced",
 ) -> tuple[str, Handle]:
     """Compress ``content`` and return ``(small, handle)``. ``handle.expand()`` restores it.
 
@@ -256,6 +289,14 @@ def compress(
         model: Model id used for token counting.
         fidelity: How hard to squeeze — ``"lossless"`` (structural only), ``"balanced"`` (default),
             or ``"aggressive"``. Reversibility is unaffected; the original is always in the handle.
+
+    ```python
+    from cendor.squeeze import compress
+
+    my_data = {"user": {"id": 42, "name": "Ada"}, "scores": [1, 2, 3]}
+    small, handle = compress(my_data, kind="json")
+    original = handle.expand()   # exact round-trip, byte-for-byte
+    ```
     """
     if fidelity not in _FIDELITY:
         raise ValueError(f"fidelity must be one of {_FIDELITY}, got {fidelity!r}")
@@ -312,8 +353,8 @@ class SqueezeCompressor:
         *,
         target_tokens: int | None = None,
         model: str | None = None,
-        kind: str = "auto",
-        fidelity: str = "balanced",
+        kind: Kind = "auto",
+        fidelity: Fidelity = "balanced",
     ) -> tuple[str, Handle]:
         return compress(
             content,

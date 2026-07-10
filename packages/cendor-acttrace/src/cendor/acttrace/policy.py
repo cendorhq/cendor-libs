@@ -32,6 +32,14 @@ _SCRUB_ACTIONS = frozenset({"redact", "block"})
 class Policy:
     """Maps each detected category → an action, with a fallthrough ``default``.
 
+    The presets are classmethods (there is **no** ``presets`` module):
+
+    ```python
+    from cendor.acttrace import Policy
+
+    policy = Policy.gdpr()   # or Policy.default() / Policy.pci() / Policy.strict()
+    ```
+
     Keys in ``actions`` may be a specific **category** (``"credit_card"``) or a **group**
     (``"financial"``); a category-specific entry wins over its group, which wins over ``default``.
 
@@ -124,6 +132,12 @@ class Finding:
 def scan(obj: Any, policy: Policy | None = None) -> list[Finding]:
     """Detect sensitive data in ``obj`` (str/dict/list) and resolve each category to an action.
 
+    ```python
+    from cendor.acttrace import scan
+
+    findings = scan("email bob@acme.com")   # -> [Finding(category='email', count=1, ...)]
+    ```
+
     Returns one :class:`Finding` per detected category, sorted by category. Reports **counts
     only** — the raw offending values are never returned (so a caller can't accidentally log a
     secret). Uses :meth:`Policy.default` when ``policy`` is ``None``.
@@ -139,6 +153,12 @@ def scan(obj: Any, policy: Policy | None = None) -> list[Finding]:
 
 def redact(obj: Any, policy: Policy | None = None) -> tuple[Any, list[Finding]]:
     """Scrub ``obj`` per ``policy`` and return ``(cleaned_copy, findings)``.
+
+    ```python
+    from cendor.acttrace import redact, Policy
+
+    cleaned, findings = redact({"note": "card 4111111111111111"}, Policy.pci())
+    ```
 
     Only categories whose resolved action is ``redact`` or ``block`` are scrubbed (a ``block``
     value is removed for record safety even though *enforcing* the block is a separate step).

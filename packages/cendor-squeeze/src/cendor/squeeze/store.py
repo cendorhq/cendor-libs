@@ -20,6 +20,14 @@ class MemoryStore:
     survives eviction and only genuinely-cold originals are dropped. Expanding a handle whose
     original was evicted raises ``KeyError`` — the documented trade-off of a capped store. ``None``
     (default) means unbounded (no eviction, so recency isn't tracked).
+
+    Reach it via ``cendor.squeeze.store`` and install it with ``use_store``:
+
+    ```python
+    from cendor.squeeze import use_store, store
+
+    use_store(store.MemoryStore(max_items=10_000))   # bounded LRU
+    ```
     """
 
     def __init__(self, max_items: int | None = None) -> None:
@@ -55,6 +63,15 @@ class SQLiteStore:
     Opened with ``check_same_thread=False`` so a single store can serve a threaded server; writes
     are idempotent ``INSERT OR IGNORE``s (content-addressed), so concurrent puts of the same content
     are safe.
+
+    The class name capitalizes ``SQL`` — it is ``SQLiteStore``, not ``SqliteStore`` — and is
+    reached via ``cendor.squeeze.store``:
+
+    ```python
+    from cendor.squeeze import use_store, store
+
+    use_store(store.SQLiteStore("cache.db"))   # originals persist across processes
+    ```
     """
 
     def __init__(self, path: str) -> None:

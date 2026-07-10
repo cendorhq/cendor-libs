@@ -34,7 +34,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .decision import Context, Guardrail, Verdict, normalize_stages
+from .decision import Action, Context, Guardrail, Verdict, normalize_stages
 
 __all__ = [
     "classifier",
@@ -117,7 +117,7 @@ def classifier(
     threshold: float = 0.5,
     label: str | None = None,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str = "classifier",
     reason: str | None = None,
     timeout: float | None = None,
@@ -129,6 +129,11 @@ def classifier(
     The guardrail trips when the (selected ``label``'s, else the max) score ``>= threshold`` (or the
     bool is ``True``). Bring **any** local classifier — an ONNX model, a ``transformers`` pipeline,
     a heuristic. A network call can hang, so set ``timeout`` / ``on_error`` for a remote classifier.
+
+    ```python
+    from cendor.guardrails import rules
+    gate = [rules.classifier(lambda text: 0.9 if "attack" in text else 0.1, action="block")]
+    ```
     """
 
     def check(payload: Any, ctx: Context) -> Verdict | None:
@@ -146,7 +151,7 @@ def prompt_guard(
     threshold: float = 0.5,
     device: Any = None,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str = "prompt_guard",
     timeout: float | None = None,
     on_error: str | None = None,
@@ -208,13 +213,18 @@ def language(
     *,
     detect: Callable[[str], str] | None = None,
     stage: str | tuple[str, ...] = "input",
-    action: str = "flag",
+    action: Action = "flag",
     name: str = "language",
     timeout: float | None = None,
     on_error: str | None = None,
 ) -> Guardrail:
     """Trip when the payload's detected language is **not** in ``allowed`` (ISO codes) — a guard
     against the language-switch bypass, a documented real-world jailbreak vector.
+
+    ```python
+    from cendor.guardrails import rules
+    gate = [rules.language(["en"], detect=lambda text: "fr", action="flag")]
+    ```
 
     ``detect(text) -> str`` is bring-your-own; without it, the optional ``[langid]`` extra provides
     a local detector (``py3langid``, BSD). Language ID on short/mixed text is unreliable, so this
@@ -265,7 +275,7 @@ def openai_moderation(
     *,
     model: str = "omni-moderation-latest",
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     categories: list[str] | tuple[str, ...] | None = None,
     name: str = "openai_moderation",
     timeout: float | None = None,
@@ -273,6 +283,12 @@ def openai_moderation(
 ) -> Guardrail:
     """Trip when OpenAI's **free, non-LLM** moderation endpoint flags the payload — the cheapest
     hosted tier.
+
+    ```python
+    from openai import OpenAI
+    from cendor.guardrails import rules
+    gate = [rules.openai_moderation(OpenAI(), action="block", timeout=10)]
+    ```
 
     ``client`` is *your* OpenAI client (needs a key); this calls ``client.moderations.create(...)``.
     Restrict to specific ``categories`` (e.g. ``["violence", "hate"]``) or trip on any flag. It is a
@@ -329,7 +345,7 @@ def bedrock_guardrail(
     guardrail_version: str = "DRAFT",
     source: str | None = None,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str = "bedrock_guardrail",
     timeout: float | None = None,
     on_error: str | None = None,
@@ -338,6 +354,11 @@ def bedrock_guardrail(
     any text against your pre-configured Bedrock guardrail **independently of any model** (AWS:
     "assess any text … without invoking the foundation models"), so it works no matter which
     provider your agent uses.
+
+    ```python
+    from cendor.guardrails import rules
+    gate = [rules.bedrock_guardrail(client, "gr-123", guardrail_version="1", action="block")]
+    ```
 
     ``client`` is *your* ``boto3.client("bedrock-runtime")`` (needs AWS credentials + a configured
     guardrail); ``guardrail_id`` / ``guardrail_version`` identify it. This calls
@@ -428,7 +449,7 @@ def azure_content_safety(
     blocklist_names: list[str] | tuple[str, ...] | None = None,
     halt_on_blocklist: bool = False,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str = "azure_content_safety",
     timeout: float | None = None,
     on_error: str | None = None,
@@ -436,6 +457,11 @@ def azure_content_safety(
     """Azure AI Content Safety as a guardrail — **Prompt Shields** (jailbreak / indirect-injection)
     and, opt-in, the **harm-category classifier** (hate / sexual / violence / self-harm, with
     severity) and custom **blocklists**.
+
+    ```python
+    from cendor.guardrails import rules
+    gate = [rules.azure_content_safety(client, checks=("prompt_shields",), action="block")]
+    ```
 
     ``client`` is *your* ``azure.ai.contentsafety.ContentSafetyClient`` (needs an endpoint + key or
     Entra ID). ``checks`` selects which surfaces to call (each is a metered request, so enabling two
@@ -574,7 +600,7 @@ def model_armor(
     template: str,
     *,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str = "model_armor",
     timeout: float | None = None,
     on_error: str | None = None,
@@ -582,6 +608,11 @@ def model_armor(
     """Google Cloud **Model Armor** as a guardrail — screens prompts and responses against a
     template (prompt-injection & jailbreak, Sensitive Data Protection, malicious URIs,
     responsible-AI filters).
+
+    ```python
+    from cendor.guardrails import rules
+    gate = [rules.model_armor(client, "projects/p/locations/us/templates/t", action="block")]
+    ```
 
     ``client`` is *your* ``google.cloud.modelarmor_v1.ModelArmorClient`` (needs GCP credentials + a
     regional endpoint); ``template`` is the full resource path

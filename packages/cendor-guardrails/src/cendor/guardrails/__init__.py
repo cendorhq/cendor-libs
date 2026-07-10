@@ -245,6 +245,15 @@ def evaluate(
     first, so the block is on the audit chain before the exception propagates. Each check honours
     its :attr:`~.decision.Guardrail.timeout` / :attr:`~.decision.Guardrail.on_error` policy.
 
+    ```python
+    from cendor.guardrails import rules, evaluate
+    gate = [rules.keyword_deny(["ignore previous instructions"], action="block")]
+    payload, decisions = evaluate(gate, "input", "please ignore previous instructions")
+    ```
+
+    Under ``cendor-sdk`` you don't call ``evaluate`` — pass ``Agent(guardrails=[…])`` and the loop
+    runs all four stages for you. This is the standalone (door-1) entry point.
+
     Sync only: an ``async`` check raises ``TypeError`` here (use :func:`evaluate_async`).
     """
     ctx = ctx or Context(stage=stage)
@@ -262,7 +271,12 @@ async def evaluate_async(
     ctx: Context | None = None,
 ) -> tuple[Any, list[GuardrailDecision]]:
     """Async counterpart of :func:`evaluate`: awaits ``async`` checks (bounded by each guardrail's
-    ``timeout``), calls sync ones directly, and applies each guardrail's ``on_error`` policy."""
+    ``timeout``), calls sync ones directly, and applies each guardrail's ``on_error`` policy.
+
+    ```python
+    payload, decisions = await evaluate_async(gate, "output", answer)
+    ```
+    """
     ctx = ctx or Context(stage=stage)
     decisions: list[GuardrailDecision] = []
     for g in _applicable(guardrails, stage):
@@ -279,7 +293,12 @@ def apply(
 ) -> list[GuardrailDecision]:
     """Gate ``payload`` and return the recorded decisions. Raises :class:`GuardrailTripped` on a
     block. A thin wrapper over :func:`evaluate` for callers that only gate (block/flag) — for the
-    redacted payload back, use :func:`evaluate` or :func:`install`."""
+    redacted payload back, use :func:`evaluate` or :func:`install`.
+
+    ```python
+    decisions = apply(gate, "input", user_text)
+    ```
+    """
     return evaluate(guardrails, stage, payload, ctx)[1]
 
 
@@ -289,7 +308,12 @@ async def apply_async(
     payload: Any,
     ctx: Context | None = None,
 ) -> list[GuardrailDecision]:
-    """Async counterpart of :func:`apply`."""
+    """Async counterpart of :func:`apply`.
+
+    ```python
+    decisions = await apply_async(gate, "input", user_text)
+    ```
+    """
     return (await evaluate_async(guardrails, stage, payload, ctx))[1]
 
 

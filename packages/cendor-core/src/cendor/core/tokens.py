@@ -83,7 +83,16 @@ def family(model: str) -> str:
 
 
 def register(fam: str, counter: Counter) -> None:
-    """Override the counter for a family (e.g. plug in a precise tokenizer). See docs/core.md §8."""
+    """Override the counter for a family (e.g. plug in a precise tokenizer). See docs/core.md §8.
+
+    This registers a token *counter*, not a price — to register a model's **price** use
+    ``cendor.sdk.register_model_price(...)`` (``cendor.core.prices`` has no ``register``).
+
+    ```python
+    from cendor.core import tokens
+    tokens.register("anthropic", lambda text_or_messages, model: my_counter(text_or_messages))
+    ```
+    """
     _counters[fam] = counter
 
 
@@ -141,6 +150,13 @@ def count(text_or_messages: str | list[dict], model: str) -> int:
 
     Returns:
         The estimated token count.
+
+    It's ``tokens.count`` (not ``count_tokens``); pass the model **positionally or by keyword**:
+
+    ```python
+    from cendor.core import tokens
+    n = tokens.count([{"role": "user", "content": "hi"}], model="gpt-4o")
+    ```
     """
     fam = family(model)
     if fam in _counters:

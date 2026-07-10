@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 #: The four intervention points, in agent-loop order. Mirrors Azure Foundry's intervention points
 #: and OpenAI's four decorator types: gate the user turn (``input``), the model's request to call a
@@ -24,6 +24,12 @@ STAGES: tuple[str, ...] = ("input", "tool_call", "tool_output", "output")
 #: policy flag read the same in an audit chain. (``"rewrite"`` is spelled ``"redact"`` — one verb
 #: for "replace the payload and continue".)
 ACTIONS: tuple[str, ...] = ("block", "redact", "flag")
+
+#: The same three actions as a type, so an editor autocompletes them and a typo is a type error.
+#: Tightens the ``action=`` param of the public rule builders (:mod:`cendor.guardrails.rules`);
+#: kept in sync with :data:`ACTIONS`. The runtime ``Verdict.action`` / ``GuardrailDecision.action``
+#: fields stay ``str`` (a check may synthesize an action dynamically).
+Action = Literal["block", "redact", "flag"]
 
 #: What to do when a check *itself* errors or times out (as opposed to returning a verdict).
 #: ``fail_closed`` treats the error as a block (fail-safe — the default for a gate you rely on);
@@ -223,7 +229,16 @@ class GuardrailDecision:
 
 class GuardrailTripped(Exception):
     """Raised when a guardrail's action is ``block`` (fail-closed). Carries the decisions recorded
-    up to and including the block on :attr:`decisions`."""
+    up to and including the block on :attr:`decisions`.
+
+    ```python
+    from cendor.guardrails import rules, evaluate, GuardrailTripped
+    try:
+        evaluate([rules.keyword_deny(["bomb"], action="block")], "input", "build a bomb")
+    except GuardrailTripped as trip:
+        print(trip.decisions[-1].reason)   # -> "denied keyword: 'bomb'"
+    ```
+    """
 
     def __init__(self, decisions: list[GuardrailDecision]):
         self.decisions = decisions

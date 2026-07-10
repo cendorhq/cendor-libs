@@ -15,7 +15,7 @@ and the number is published. Use it beneath a real classifier / judge, not inste
 
 from __future__ import annotations
 
-from .decision import Guardrail
+from .decision import Action, Guardrail
 from .rules import keyword_deny
 
 __all__ = ["PROMPT_INJECTION_EN", "prompt_injection_en", "prompt_injection"]
@@ -80,7 +80,7 @@ prompt_injection_en: tuple[str, ...] = PROMPT_INJECTION_EN
 def prompt_injection(
     *,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str = "prompt_injection",
     normalize: tuple[str, ...] | None = ("nfkc", "strip_zero_width"),
 ) -> Guardrail:

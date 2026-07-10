@@ -100,6 +100,14 @@ def add_interceptor(fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
     """Register a pre-call interceptor. It receives the event (``LLMCall``/``ToolCall``) and
     returns a response to short-circuit the real call, or :data:`MISS` to proceed. Idempotent.
 
+    Top-level on ``cendor.core`` — **not** on ``bus`` (``bus`` only has ``subscribe`` /
+    ``unsubscribe`` / ``emit``). Return :class:`Reroute` to rewrite the outgoing request instead.
+
+    ```python
+    from cendor.core import add_interceptor, MISS
+    add_interceptor(lambda call: MISS)   # inspect every call; MISS lets it proceed unchanged
+    ```
+
     Thread-safe: registration is guarded by a lock and :func:`_intercept` runs over a snapshot.
     """
     with _interceptors_lock:
@@ -149,6 +157,13 @@ def instrument(client: T) -> T:
 
     Unknown clients are returned untouched. Wrapping is idempotent (re-wrapping is a no-op) and
     returns the same client object.
+
+    Wrap the client **once**, at construction — not per request:
+
+    ```python
+    from cendor.core import instrument
+    client = instrument(OpenAI())   # every call now emits an LLMCall on the bus; sync/async/stream
+    ```
     """
     targets = _find_targets(client)
     # The check-then-setattr below is a race; serialize so two threads can't both wrap the same fn.

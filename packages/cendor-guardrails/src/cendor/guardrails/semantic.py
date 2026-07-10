@@ -24,7 +24,7 @@ import math
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from .decision import Context, Guardrail, Verdict, normalize_stages
+from .decision import Action, Context, Guardrail, Verdict, normalize_stages
 
 __all__ = ["groundedness", "denied_topics", "custom_category"]
 
@@ -71,7 +71,7 @@ def groundedness(
     *,
     threshold: float = 0.75,
     stage: str | tuple[str, ...] = "output",
-    action: str = "flag",
+    action: Action = "flag",
     name: str = "groundedness",
     timeout: float | None = None,
     on_error: str | None = None,
@@ -79,6 +79,12 @@ def groundedness(
     """Trip when the payload's max cosine similarity to any of ``sources`` is **below**
     ``threshold`` — i.e. the response is not grounded in the retrieved passages (a RAG
     hallucination gate).
+
+    ```python
+    from cendor.guardrails import rules, embeddings
+    embed = embeddings.local_embedder()
+    gate = [rules.groundedness(embed, sources=["the earth orbits the sun"])]
+    ```
 
     ``embed(text)`` is bring-your-own. ``sources`` (the retrieved passages / knowledge you expect
     the answer based on) are embedded once on first check. Defaults to the ``output`` stage and
@@ -114,7 +120,7 @@ def custom_category(
     embed: Embed,
     threshold: float = 0.8,
     stage: str | tuple[str, ...] = "input",
-    action: str = "flag",
+    action: Action = "flag",
     name: str | None = None,
     timeout: float | None = None,
     on_error: str | None = None,
@@ -122,6 +128,12 @@ def custom_category(
     """Trip when the payload is semantically close to a **custom category** you define by example —
     the local, ``$0`` counterpart to Azure Content Safety's *rapid custom categories* (description +
     examples → embedding search), with no cloud call and no training step.
+
+    ```python
+    from cendor.guardrails import rules, embeddings
+    embed = embeddings.local_embedder()
+    gate = [rules.custom_category("code", ["write a program"], embed=embed, action="flag")]
+    ```
 
     ``category`` is the label recorded on the decision (``metadata["category"]``); ``examples`` are
     a few exemplar phrases of the category (embedded once on first check). ``embed(text)`` is
@@ -170,13 +182,19 @@ def denied_topics(
     *,
     threshold: float = 0.8,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: Action = "block",
     name: str = "denied_topics",
     timeout: float | None = None,
     on_error: str | None = None,
 ) -> Guardrail:
     """Trip when the payload's max cosine similarity to any denied-topic exemplar is **at or above**
     ``threshold`` — steer an agent off subjects it must never engage.
+
+    ```python
+    from cendor.guardrails import rules, embeddings
+    embed = embeddings.local_embedder()
+    gate = [rules.denied_topics(embed, ["medical diagnosis", "legal advice"])]
+    ```
 
     ``embed(text)`` is bring-your-own; ``topics`` are short exemplar phrases of what to refuse (e.g.
     ``["medical diagnosis", "legal advice"]``), embedded once on first check. The reason names the

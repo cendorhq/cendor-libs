@@ -59,6 +59,13 @@ def use_compressor(compressor: Any) -> Any:
     ``compress(text, target_tokens=)`` callable — so you can plug in an alternative backend without
     touching call sites. Pass ``None`` to clear (falls back to auto-discovering ``squeeze``). A
     per-``Context`` ``compressor=`` argument still overrides this default.
+
+    ```python
+    from cendor.contextkit import use_compressor
+    from cendor.squeeze import SqueezeCompressor
+
+    use_compressor(SqueezeCompressor())   # process-wide default for evict="compress" blocks
+    ```
     """
     global _default_compressor
     previous, _default_compressor = _default_compressor, compressor
@@ -76,6 +83,15 @@ class Block:
     Provide **exactly one** of ``content`` (a single message, text or multimodal parts) or
     ``messages`` (a conversation segment — a list of ``{"role", "content"}`` turns that
     ``evict="drop_oldest"`` shrinks by peeling the *oldest* turns until it fits).
+
+    ```python
+    from cendor.contextkit import Block
+
+    Block("system prompt", priority=10, pin=True, role="system")
+    ```
+
+    ``evict="compress"`` needs the ``contextkit[squeeze]`` extra installed; without it a
+    ``compress`` block falls back to truncation.
 
     Attributes:
         content: The block's content for a single-message block — text, or a list of multimodal
@@ -163,6 +179,10 @@ class AssemblyReport:
 _ROLE_RANK = {"system": 0, "history": 1, "tool": 1, "assistant": 2, "user": 3}
 _ORDERS = ("default", "attention", "cache")
 
+#: The three ``order`` strategies as a type (mirrors :data:`_ORDERS`) so an editor autocompletes
+#: them and a typo is a type error. A bad string still raises ``ValueError`` at runtime.
+OrderMode = Literal["default", "attention", "cache"]
+
 
 def _ord_role(block: Block) -> str:
     """The role a block is ordered by — ``"history"`` for a multi-turn (``messages``) block."""
@@ -208,6 +228,15 @@ class Context:
       (just after system / just before the user turn), weakest in the dead center.
     - ``"cache"`` — stable prefix first (pinned, high-priority blocks lead) to maximize provider
       prompt-cache / KV-cache hits across calls.
+
+    Create it with a budget and model, add :class:`Block`s, then call the **synchronous**
+    :meth:`assemble` (the async form is the separate :meth:`aassemble`):
+
+    ```python
+    from cendor.contextkit import Context
+
+    ctx = Context(budget_tokens=8000, model="gpt-4o", reserve_output=1000)
+    ```
     """
 
     def __init__(
@@ -216,7 +245,7 @@ class Context:
         model: str,
         reserve_output: int = 0,
         compressor: Any = None,
-        order: str = "default",
+        order: OrderMode = "default",
         image_tokens: int | Callable[[dict], int] = 0,
     ) -> None:
         if order not in _ORDERS:
@@ -243,6 +272,13 @@ class Context:
 
         Deterministic: stable sort by ``(pinned, priority, insertion order)``. Emits the
         :class:`AssemblyReport` onto core's bus so ``acttrace`` records what the model saw.
+
+        ```python
+        messages = ctx.assemble()   # sync; the async variant is ctx.aassemble()
+        ```
+
+        Python's ``assemble()`` is **synchronous** — the async form is the separate
+        :meth:`aassemble` method (this differs from TypeScript, where ``assemble()`` is async).
         """
         messages, report = self._pack(self.budget_tokens, emit=True)
         self._messages = messages
@@ -250,7 +286,12 @@ class Context:
         return messages
 
     def report(self) -> AssemblyReport:
-        """Return the receipt for the most recent :meth:`assemble`. Raises before the first one."""
+        """Return the receipt for the most recent :meth:`assemble`. Raises before the first one.
+
+        ```python
+        print(ctx.report())   # budget math + per-block decisions
+        ```
+        """
         if self._report is None:
             raise RuntimeError("call assemble() before report()")
         return self._report

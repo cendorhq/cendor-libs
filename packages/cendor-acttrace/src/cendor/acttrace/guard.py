@@ -85,13 +85,18 @@ def guard(
 ) -> Callable[[Any], Any]:
     """Return a pre-call interceptor that enforces ``policy`` and records refusals via ``audit``.
 
-    Install it on ``core``'s seam::
+    It hands back a plain **pre-call interceptor** — you install it on ``core``'s seam, and it is
+    ``core`` (not acttrace) that blocks or rewrites the call. Redact-before-send works by returning
+    a :class:`~cendor.core.Reroute` (also imported from ``cendor.core``) so the *provider* receives
+    the cleaned messages:
 
-        from cendor.core.instrument import add_interceptor
-        from cendor.acttrace import AuditLog, Policy, guard
+    ```python
+    from cendor.core import add_interceptor
+    from cendor.acttrace import AuditLog, Policy, guard
 
-        log = AuditLog(system="support_bot", risk_tier="high")
-        add_interceptor(guard(Policy.gdpr(), audit=log))   # enforce + record in one line
+    log = AuditLog(system="support_bot", risk_tier="high")
+    add_interceptor(guard(Policy.gdpr(), log))   # enforce + record in one line
+    ```
 
     Args:
         policy: The posture to enforce (defaults to :meth:`Policy.default`). Note that

@@ -32,7 +32,7 @@ from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 from cendor.core import bus
 from cendor.core.instrument import MISS, add_interceptor, remove_interceptor
@@ -59,6 +59,12 @@ __all__ = [
 _FORMAT_VERSION = 2
 _SUPPORTED_VERSIONS = (1, 2)
 _drift: list[dict] = []  # divergences found by the most recent mode="rerecord" run
+
+#: The record/replay modes accepted by :func:`use` / :func:`using`, as a type so an editor
+#: autocompletes them and a typo is a type error: ``"auto"`` (record if the cassette file is
+#: missing, else replay), ``"record"``/``"replay"`` (force one), ``"rerecord"`` (run live and
+#: report :func:`drift` without overwriting).
+Mode = Literal["auto", "record", "replay", "rerecord"]
 
 #: Marks which record/replay context an event belongs to, so concurrent ``using()`` blocks on the
 #: process-global bus don't capture each other's events. Set on context entry; asyncio tasks inherit
@@ -418,11 +424,19 @@ def _manager(
 
 def use(
     path: str,
-    mode: str = "auto",
+    mode: Mode = "auto",
     normalizer: Callable[[Any], dict] | None = None,
     redact: bool | Callable[[Any], Any] = True,
 ) -> Callable:
     """Decorator: record the wrapped run on first use, replay it thereafter. docs/cassette.md §3.
+
+    ```python
+    from cendor import cassette
+
+    @cassette.use("tests/fixtures/refund.json")
+    def test_refund_flow():
+        assert my_agent.run("refund please") == "processing your refund"
+    ```
 
     Modes: ``"auto"`` (record if the cassette file is missing, else replay), ``"record"``
     (always record), ``"replay"`` (always replay; fail on an unrecorded call), ``"rerecord"``
@@ -452,16 +466,20 @@ def use(
 @contextmanager
 def using(
     path: str,
-    mode: str = "auto",
+    mode: Mode = "auto",
     normalizer: Callable[[Any], dict] | None = None,
     redact: bool | Callable[[Any], Any] = True,
 ) -> Iterator[None]:
     """Context-manager form of :func:`use` — record/replay a ``with`` block instead of a function.
 
-    Same modes, ``normalizer``, and ``redact`` as :func:`use`; convenient in pytest fixtures::
+    Same modes, ``normalizer``, and ``redact`` as :func:`use`; convenient in pytest fixtures:
 
-        with cassette.using("tests/fixtures/run.json"):
-            result = my_agent.run("refund please")
+    ```python
+    from cendor import cassette
+
+    with cassette.using("tests/fixtures/run.json"):
+        result = my_agent.run("refund please")
+    ```
     """
     with _manager(path, mode, normalizer, redact):
         yield
@@ -469,6 +487,12 @@ def using(
 
 def promote(trace_path: str, to: str, redact: bool | Callable[[Any], Any] = True) -> int:
     """Convert a JSONL trace of calls into a replayable cassette. docs/cassette.md §2, §6.
+
+    ```python
+    from cendor.cassette import promote
+
+    n = promote("run.jsonl", "tests/fixtures/run.json")   # -> number of entries written
+    ```
 
     Each trace line is ``{"kind": "llm"|"tool", "request": {...}, "response": ...}`` (a tool may
     use ``"result"`` instead of ``"response"``); ``_meta`` and unrecognized lines are skipped.
@@ -547,6 +571,13 @@ def semantic_match(
     scorer: Callable[[str, str], float] | None = None,
 ) -> bool:
     """Assert ``actual`` means roughly ``expected``. Lexical default (offline, deterministic).
+
+    ```python
+    from cendor.cassette import semantic_match
+
+    out = my_agent.run("why was I charged?")
+    assert semantic_match(out, "explains the charge")
+    ```
 
     The default :func:`lexical_score` is **recall-oriented** (keyword containment): it matches when
     ``actual`` contains ``expected``'s words, so it tolerates extra surrounding text — but it is
@@ -665,3 +696,24 @@ def semantic_drift(
         if score < threshold:
             out.append({**d, "score": score})
     return out
+
+
+#: The session-store names people reach for out of habit — cassette has none (a cassette is a plain
+#: JSON file). Redirect them to the SDK rather than raise a bare "no attribute".
+_SESSION_STORE_ALIASES = ("SqliteSessionStore", "SQLiteSessionStore", "SessionStore")
+
+
+def __getattr__(name: str) -> object:
+    """PEP 562 module hook: redirect the common session-store mistake to its real home.
+
+    cassette has **no** session store — a cassette is a plain JSON file you record once and replay
+    (see :func:`use` / :func:`using`), not a durable store. A durable, resumable session store lives
+    in the SDK. Any other unknown attribute raises the normal :class:`AttributeError`.
+    """
+    if name in _SESSION_STORE_ALIASES:
+        raise AttributeError(
+            f"cendor.cassette has no {name!r}: cassettes are plain JSON files "
+            "(record/replay via cassette.use / cassette.using), not a session store. "
+            "For a durable, resumable session store, use cendor.sdk.SQLiteSessionStore."
+        )
+    raise AttributeError(f"module 'cendor.cassette' has no attribute {name!r}")
