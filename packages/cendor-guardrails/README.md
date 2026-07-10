@@ -8,6 +8,8 @@ before the model or a tool ever runs. No server, no account, no model call.
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-guardrails) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-guardrails`
 
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
 ```python
 from cendor.core import instrument
 from cendor.guardrails import install, rules

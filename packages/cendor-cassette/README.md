@@ -7,6 +7,8 @@ Record an agent run once; replay it forever — deterministic, offline, and free
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-cassette) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-cassette`
 
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
 ```python
 from cendor.core import instrument
 from cendor import cassette

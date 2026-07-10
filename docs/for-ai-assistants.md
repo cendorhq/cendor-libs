@@ -17,8 +17,8 @@ right one. This page just makes that knowledge copy-pasteable.
 > assistant's context, or drop the trap table into your repo's `AGENTS.md` /
 > `.github/copilot-instructions.md` / `.cursor/rules`. The types teach the rest on install.
 
-> **Or run one command.** `npx @cendor/init` (Node) / `uvx cendor-init` (Python) writes the rules
-> files from [§3](#wire-up-your-ai-assistant) into your repo for you — idempotently, never clobbering
+> **Or run one command.** `npx @cendor/init` (Node) / `uvx cendor-init` (Python) writes the
+> [rules files](assistant-rules.md) into your repo for you — idempotently, never clobbering
 > your own content — and can add the MCP config and a working starter. Offline, no key. It ships a
 > `doctor` too: `npx @cendor/init doctor` static-checks your wiring (namespace, provider deps,
 > `instrument()` once, money-as-`Decimal`, versions) and exits non-zero on hard problems, so it fits CI.
@@ -269,172 +269,24 @@ audit.export('evidence.jsonl', 'eu_ai_act');           // tamper-evident; verify
 
 <!-- /tabs -->
 
-## Wire up your AI assistant
+## Wire up your assistant — three ways
 
-Drop one of these into **your own** repo so your assistant reads the correct call-shapes on every
-edit — no need to paste this page each time. Each block carries the same short cheatsheet: which
-library does what, the one call that matters, and the shapes assistants most often get wrong. Keep
-them short on purpose — an over-long rules file gets truncated or ignored.
+You don't have to paste this page every time. Pick whichever fits how your assistant reads context —
+they stack, so use more than one:
 
-> **Shortcut:** `npx @cendor/init` (or `uvx cendor-init`) writes the right file(s) for you — detected
-> from your repo, idempotent, never clobbering your own content. The blocks below are exactly what it
-> writes; they're also here to paste by hand.
+- **Rules files** — drop a short cheatsheet into your repo (`.github/copilot-instructions.md`,
+  `.cursor/rules/cendor.mdc`, `AGENTS.md`, `CLAUDE.md`, or `.windsurf/rules`) so your assistant reads
+  the correct call-shapes on every edit. The copy-paste blocks are on **[Rules files](assistant-rules.md)**.
+- **MCP server** — if your assistant runs in **agent mode** (Claude Code, Cursor's agent, Copilot
+  agent, Windsurf Cascade), connect the read-only **Cendor MCP server** and it *looks up* the correct
+  shape on demand — the same trap table above, served fresh. See **[MCP server](assistant-mcp.md)**.
+- **One command** — `npx @cendor/init` (or `uvx cendor-init`) writes the rules files (and, with
+  `--mcp`, the connect config) for you, idempotently. It also ships a `doctor` that static-checks your
+  wiring for CI. See **[init CLI & doctor](assistant-init.md)**.
 
-> These are a *different artifact* from Cendor's own maintainer `CLAUDE.md` (which says things like
-> "never create `__init__.py`"). Don't copy that one — it's about developing Cendor, not calling it.
-
-**GitHub Copilot** → `.github/copilot-instructions.md` (repo-wide). For a monorepo, you can instead
-scope rules to paths with `.github/instructions/*.instructions.md` files carrying an `applyTo` glob
-in frontmatter.
-
-```md
-# Using Cendor (cendor.* / @cendor/*) correctly
-
-Cendor is offline-first plumbing for LLM apps — Python `cendor.*` (PyPI), TypeScript `@cendor/*`
-(npm), Apache-2.0. Wrap the provider client **once** with `instrument()`; budgets, gating, testing,
-and audit all plug into one event bus. Every public symbol ships an inline `@example` + a
-correct-shape type — trust the editor's hover/completion over a guess.
-
-Which library, and the one call that matters (Python shown; TS mirrors it in camelCase — see traps):
-- Cap / attribute spend → **tokenguard**: `@budget(usd=0.5, on_exceed="raise")`, `track(...)`, `report()`
-- Fit a prompt to a token budget → **contextkit**: `Context(budget_tokens=8000, model="gpt-4o").assemble()`
-- Losslessly shrink a payload → **squeeze**: `small, handle = compress(x, kind="auto")`
-- Block / redact unsafe input+output → **guardrails**: `rules.keyword_deny([...], action="block")`
-- Record once, replay offline in tests → **cassette**: `@cassette.use("tests/x.json")`
-- PII/secret detection + tamper-evident audit → **acttrace**: `AuditLog(system="support", risk_tier="limited")`
-- Token count / price / instrument → **core**: `instrument(OpenAI())`, `tokens.count(msgs, model="gpt-4o")`
-- A whole governed agent loop → **cendor-sdk**: `Agent(name=…, model=…, guardrails=[…], max_usd=0.5)`; `run(agent, "hi")`
-
-Call shapes that are easy to get wrong:
-- `instrument()` wraps the client **once**, not per call.
-- TS `budget` is **curried**: `budget(cfg)(fn)` — never `budget(cfg, fn)`. Python `budget(...)` takes keyword args and is both a decorator and a context-manager.
-- `prices.estimate` — Python positional `prices.estimate(model, input_tokens, output_tokens=200)`; TS options object `prices.estimate(model, inputTokens, { outputTokens: 200 })`.
-- Money is `Decimal` / `decimal.js`, never `float` / `number`.
-- `Context.assemble()` is sync in Python (`aassemble()` for async), async in TS (`await`).
-- Guardrail actions are `block | redact | flag` (no `warn`); PII/secrets are acttrace detectors, not guardrail rules.
-- Session store lives in the SDK, casing differs: Python `SQLiteSessionStore`, TS `SqliteSessionStore`.
-- TS tokenguard sinks live at the `@cendor/tokenguard/sinks` subpath.
-- Python is a PEP 420 namespace — `from cendor.tokenguard import budget`; no top-level `cendor` module.
-- Provider SDKs are optional (Python extras, TS peer deps) — install only what you call.
-
-Honest limits: deterministic guardrails don't stop novel adversarial attacks; acttrace produces
-*evidence*, not a compliance guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
-```
-
-**Cursor** → `.cursor/rules/cendor.mdc` (a project rule; the `globs` decide when it attaches).
-
-```md
----
-description: How to call Cendor (cendor.* / @cendor/*) correctly
-globs: ["**/*.py", "**/*.ts", "**/*.tsx", "**/*.js"]
-alwaysApply: false
----
-Cendor is offline-first plumbing for LLM apps — Python `cendor.*`, TypeScript `@cendor/*`. Wrap the
-provider client **once** with `instrument()`; budgets, gating, testing, and audit plug into one bus.
-Every public symbol ships an inline `@example` — trust the editor's hover over a guess.
-
-Which library, and the one call that matters (Python; TS mirrors it in camelCase — see traps):
-- Cap / attribute spend → **tokenguard**: `@budget(usd=0.5, on_exceed="raise")`, `track(...)`, `report()`
-- Fit a prompt to a token budget → **contextkit**: `Context(budget_tokens=8000, model="gpt-4o").assemble()`
-- Losslessly shrink a payload → **squeeze**: `small, handle = compress(x, kind="auto")`
-- Block / redact unsafe input+output → **guardrails**: `rules.keyword_deny([...], action="block")`
-- Record once, replay offline → **cassette**: `@cassette.use("tests/x.json")`
-- PII/secret detection + tamper-evident audit → **acttrace**: `AuditLog(system="support", risk_tier="limited")`
-- Token count / price / instrument → **core**: `instrument(OpenAI())`, `tokens.count(msgs, model="gpt-4o")`
-- A governed agent loop → **cendor-sdk**: `Agent(name=…, model=…, guardrails=[…], max_usd=0.5)`; `run(agent, "hi")`
-
-Traps: `instrument()` once, not per call. TS `budget` is curried — `budget(cfg)(fn)`, never
-`budget(cfg, fn)`. `prices.estimate` is positional in Python (`output_tokens=…`) but takes a
-`{ outputTokens }` object in TS. Money is `Decimal`/`decimal.js`, never `float`/`number`.
-`Context.assemble()` is sync in Python (`aassemble()` async), `await` in TS. Guardrail actions are
-`block | redact | flag` (no `warn`); PII/secrets are acttrace detectors, not guardrail rules. Session
-store is in the SDK, casing differs (`SQLiteSessionStore` / `SqliteSessionStore`). TS tokenguard
-sinks: `@cendor/tokenguard/sinks`. Python is a PEP 420 namespace (`from cendor.tokenguard import
-budget`). Provider SDKs are optional (extras / peer deps). Deterministic guardrails don't stop novel
-attacks; acttrace is evidence, not a guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
-```
-
-**AGENTS.md** (the cross-tool standard Cursor, Windsurf, and others read) → paste this as a section
-into your repo's `AGENTS.md`.
-
-```md
-## Cendor (cendor.* / @cendor/*)
-
-Offline-first plumbing for LLM apps. Wrap the provider client **once** with `instrument()`; budgets,
-gating, testing, and audit plug into one bus. Every symbol ships an inline `@example` — trust the
-editor's hover over a guess.
-
-Which library, and the one call that matters (Python; TS mirrors it in camelCase — see traps):
-- Cap / attribute spend → **tokenguard**: `@budget(usd=0.5, on_exceed="raise")`, `track(...)`, `report()`
-- Fit a prompt to a token budget → **contextkit**: `Context(budget_tokens=8000, model="gpt-4o").assemble()`
-- Losslessly shrink a payload → **squeeze**: `small, handle = compress(x, kind="auto")`
-- Block / redact unsafe input+output → **guardrails**: `rules.keyword_deny([...], action="block")`
-- Record once, replay offline → **cassette**: `@cassette.use("tests/x.json")`
-- PII/secret detection + tamper-evident audit → **acttrace**: `AuditLog(system="support", risk_tier="limited")`
-- Token count / price / instrument → **core**: `instrument(OpenAI())`, `tokens.count(msgs, model="gpt-4o")`
-- A governed agent loop → **cendor-sdk**: `Agent(name=…, model=…, guardrails=[…], max_usd=0.5)`; `run(agent, "hi")`
-
-Traps: `instrument()` once, not per call. TS `budget` is curried — `budget(cfg)(fn)`, never
-`budget(cfg, fn)`. `prices.estimate` is positional in Python, `{ outputTokens }` object in TS. Money
-is `Decimal`/`decimal.js`, never `float`/`number`. `Context.assemble()` is sync in Python
-(`aassemble()` async), `await` in TS. Guardrail actions `block | redact | flag` (no `warn`);
-PII/secrets are acttrace detectors, not guardrail rules. Session store is in the SDK, casing differs
-(`SQLiteSessionStore` / `SqliteSessionStore`). TS tokenguard sinks: `@cendor/tokenguard/sinks`.
-Python is a PEP 420 namespace. Provider SDKs are optional. Deterministic guardrails don't stop novel
-attacks; acttrace is evidence, not a guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
-```
-
-**Claude Code** → paste this section into your repo's `CLAUDE.md`.
-
-```md
-## Calling Cendor (cendor.* / @cendor/*)
-
-Offline-first plumbing for LLM apps. Wrap the provider client **once** with `instrument()`; budgets,
-gating, testing, and audit plug into one bus. Every symbol ships an inline `@example` — prefer the
-editor's hover to a guess.
-
-Which library, and the one call that matters (Python; TS mirrors it in camelCase — see traps):
-- Cap / attribute spend → **tokenguard**: `@budget(usd=0.5, on_exceed="raise")`, `track(...)`, `report()`
-- Fit a prompt to a token budget → **contextkit**: `Context(budget_tokens=8000, model="gpt-4o").assemble()`
-- Losslessly shrink a payload → **squeeze**: `small, handle = compress(x, kind="auto")`
-- Block / redact unsafe input+output → **guardrails**: `rules.keyword_deny([...], action="block")`
-- Record once, replay offline → **cassette**: `@cassette.use("tests/x.json")`
-- PII/secret detection + tamper-evident audit → **acttrace**: `AuditLog(system="support", risk_tier="limited")`
-- Token count / price / instrument → **core**: `instrument(OpenAI())`, `tokens.count(msgs, model="gpt-4o")`
-- A governed agent loop → **cendor-sdk**: `Agent(name=…, model=…, guardrails=[…], max_usd=0.5)`; `run(agent, "hi")`
-
-Traps: `instrument()` once, not per call. TS `budget` is curried — `budget(cfg)(fn)`, never
-`budget(cfg, fn)`. `prices.estimate` is positional in Python, `{ outputTokens }` object in TS. Money
-is `Decimal`/`decimal.js`, never `float`/`number`. `Context.assemble()` is sync in Python
-(`aassemble()` async), `await` in TS. Guardrail actions `block | redact | flag` (no `warn`);
-PII/secrets are acttrace detectors, not guardrail rules. Session store is in the SDK, casing differs
-(`SQLiteSessionStore` / `SqliteSessionStore`). TS tokenguard sinks: `@cendor/tokenguard/sinks`.
-Python is a PEP 420 namespace. Provider SDKs are optional. Deterministic guardrails don't stop novel
-attacks; acttrace is evidence, not a guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
-```
-
-## MCP — live docs for your assistant
-
-The copy-paste rules files above are static — you paste them once. If your assistant runs in **agent
-mode** (Claude Code, Cursor's agent, GitHub Copilot agent, Windsurf Cascade), there's a live option:
-the **Cendor MCP server**. Connect it once and your assistant can *look up* the correct call-shape on
-demand — the same trap table and canonical examples on this page, served fresh — instead of relying on
-a pasted snapshot.
-
-- **Remote** (zero-install, always current): `https://mcp.cendor.ai`
-- **Local** (fully offline, docs bundled — nothing leaves your machine): `npx @cendor/mcp` (Node) or
-  `uvx cendor-mcp` (Python)
-
-It is **read-only** and **pull-based**: your assistant calls a tool, the server answers, your
-assistant writes the code — your codebase never flows to the server. The tools are `search_docs`,
-`get_page`, `get_api` (the anti-hallucination call-shape lookup), `example`, and `list_recipes`.
-
-`npx @cendor/init --mcp` (or `uvx cendor-init --mcp`) can drop the connect config into your repo for
-you (`.cursor/mcp.json` / `.vscode/mcp.json`), so you don't have to hand-edit it.
-
-**Honest limit:** MCP is only called by *agent* modes — inline autocomplete does not call it. For that
-path, rely on the types Cendor ships in every package (the `@example` + correct-shape signatures
-described above). Use both. Full setup for every assistant: [cendor.ai/mcp](/mcp).
+> These rules files are a *different artifact* from Cendor's own maintainer `CLAUDE.md` (which says
+> things like "never create `__init__.py`"). Don't copy that one — it's about developing Cendor, not
+> calling it.
 
 ## Honest limits
 

@@ -8,6 +8,8 @@ purpose-built, **deterministic** compressor — **no LLM, no model download, byt
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-squeeze) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-squeeze`
 
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
 ```python
 from cendor.squeeze import compress
 

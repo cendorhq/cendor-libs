@@ -8,6 +8,8 @@ what it kept, shrank, and dropped.
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-contextkit) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-contextkit`
 
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
 ```python
 from cendor.contextkit import Context, Block
 

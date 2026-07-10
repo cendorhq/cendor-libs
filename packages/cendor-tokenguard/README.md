@@ -7,6 +7,8 @@ one context manager. No dashboard, no account, no infra.
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-tokenguard) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-tokenguard`
 
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
 ```python
 from cendor.core import instrument
 from cendor.tokenguard import budget, track, report

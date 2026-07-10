@@ -8,6 +8,8 @@ OpenTelemetry GenAI emitters. Tiny on purpose — it's the blast radius for ever
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-core) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · usually installed transitively · `import cendor.core`
 
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
 ```python
 from cendor.core import tokens, prices, instrument, bus
 
