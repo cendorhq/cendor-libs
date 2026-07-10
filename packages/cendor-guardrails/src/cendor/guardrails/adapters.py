@@ -411,44 +411,141 @@ def _bedrock_masked(resp: Any) -> str | None:
     return None
 
 
+_AZURE_CHECKS: tuple[str, ...] = ("prompt_shields", "harm_categories")
+
+
 def azure_content_safety(
     client: Any,
     *,
+    checks: str | tuple[str, ...] = ("prompt_shields",),
     documents: list[str] | tuple[str, ...] | None = None,
+    harm_categories: list[str] | tuple[str, ...] | None = None,
+    harm_threshold: int = 4,
+    blocklist_names: list[str] | tuple[str, ...] | None = None,
+    halt_on_blocklist: bool = False,
     stage: str | tuple[str, ...] = "input",
     action: str = "block",
     name: str = "azure_content_safety",
     timeout: float | None = None,
     on_error: str | None = None,
 ) -> Guardrail:
-    """Azure AI Content Safety **Prompt Shields** as a guardrail — detects user-prompt and document
-    injection/jailbreak attacks.
+    """Azure AI Content Safety as a guardrail — **Prompt Shields** (jailbreak / indirect-injection)
+    and, opt-in, the **harm-category classifier** (hate / sexual / violence / self-harm, with
+    severity) and custom **blocklists**.
 
     ``client`` is *your* ``azure.ai.contentsafety.ContentSafetyClient`` (needs an endpoint + key or
-    Entra ID). This calls ``client.shield_prompt(options={"userPrompt": <text>, "documents":
-    [...]})`` and trips when the response's ``userPromptAnalysis.attackDetected`` (or any
-    ``documentsAnalysis[].attackDetected``) is true — the binary Prompt Shields signal (there is no
-    severity/redaction to remap, so ``block`` / ``flag`` are the meaningful actions). If your SDK
-    version spells the call differently, wrap it in :func:`~cendor.guardrails.rules.custom` instead.
+    Entra ID). ``checks`` selects which surfaces to call (each is a metered request, so enabling two
+    makes two calls; the first to trip wins):
 
-    Metered per text record (Azure AI Content Safety pricing; F0 free tier available). It is a
-    network call — set ``timeout`` / ``on_error``. The ``[azure]`` extra installs
-    azure-ai-contentsafety.
+    * ``"prompt_shields"`` (default) — ``client.shield_prompt(options={"userPrompt": …,
+      "documents": …})``; trips when ``userPromptAnalysis.attackDetected`` (or any
+      ``documentsAnalysis[].attackDetected``) is true. Binary signal — ``block`` / ``flag`` are the
+      meaningful actions.
+    * ``"harm_categories"`` — ``client.analyze_text(options={"text": …})``; trips when any
+    category's
+      **severity ≥ ``harm_threshold``** (0/2/4/6 four-level scale; default ``4`` = medium). The max
+      severity rides the decision's ``metadata["severity"]`` (annotation parity). Narrow with
+      ``harm_categories=["Hate", "Violence"]`` (Azure's category names). ``blocklist_names`` /
+      ``halt_on_blocklist`` pass custom term lists through to the same call.
+
+    If your SDK version spells a call differently, wrap it in
+    :func:`~cendor.guardrails.rules.custom` instead. Metered per text record (Azure AI Content
+    Safety
+    pricing; F0 free tier). It is a network call — set ``timeout`` / ``on_error``. The ``[azure]``
+    extra installs azure-ai-contentsafety.
+
+    *(Groundedness-as-a-service — ``detect_groundedness`` — is a preview Azure API with a shape that
+    needs the grounding sources plumbed in; it is a planned adapter addition, not wired here. Use
+    the
+    local :func:`~cendor.guardrails.rules.groundedness` over a BYO embedder in the meantime.)*
     """
+    selected = (checks,) if isinstance(checks, str) else tuple(checks)
+    for c in selected:
+        if c not in _AZURE_CHECKS:
+            raise ValueError(f"unknown azure check {c!r}; must be a subset of {_AZURE_CHECKS}")
     docs = list(documents) if documents else []
 
     def check(payload: Any, ctx: Context) -> Verdict | None:
-        resp = client.shield_prompt(options={"userPrompt": _text(payload), "documents": docs})
-        hits = _azure_attacks(resp)
-        if not hits:
-            return None
-        return Verdict(
-            action,
-            reason=f"Azure Prompt Shields: attack detected ({', '.join(hits)})",
-            metadata=_annotation(detected=True, filtered=action != "flag"),
-        )
+        text = _text(payload)
+        if "prompt_shields" in selected:
+            resp = client.shield_prompt(options={"userPrompt": text, "documents": docs})
+            hits = _azure_attacks(resp)
+            if hits:
+                return Verdict(
+                    action,
+                    reason=f"Azure Prompt Shields: attack detected ({', '.join(hits)})",
+                    metadata=_annotation(detected=True, filtered=action != "flag"),
+                )
+        if "harm_categories" in selected:
+            v = _azure_harm(
+                client,
+                text,
+                harm_categories,
+                harm_threshold,
+                blocklist_names,
+                halt_on_blocklist,
+                action,
+            )
+            if v is not None:
+                return v
+        return None
 
     return _mk(check, name=name, stage=stage, timeout=timeout, action=action, on_error=on_error)
+
+
+def _azure_harm(
+    client: Any,
+    text: str,
+    categories: Any,
+    threshold: int,
+    blocklist_names: Any,
+    halt: bool,
+    action: str,
+) -> Verdict | None:
+    """Call Azure's ``analyze_text`` harm classifier + optional blocklists; trip on any category at
+    or above ``threshold`` severity (or a blocklist hit). Reads camelCase (REST) and snake_case
+    (SDK)
+    result shapes; the max severity rides ``metadata["severity"]``."""
+    options: dict[str, Any] = {"text": text, "outputType": "FourSeverityLevels"}
+    if categories:
+        options["categories"] = list(categories)
+    if blocklist_names:
+        options["blocklistNames"] = list(blocklist_names)
+        options["haltOnBlocklistHit"] = bool(halt)
+    resp = client.analyze_text(options=options)
+
+    analysis = _get(resp, "categoriesAnalysis")
+    if analysis is None:
+        analysis = _get(resp, "categories_analysis") or []
+    hits: list[str] = []
+    max_sev = 0
+    for item in analysis:
+        sev = _get(item, "severity")
+        if isinstance(sev, (int, float)) and sev >= threshold:
+            hits.append(f"{_get(item, 'category')}:{int(sev)}")
+            max_sev = max(max_sev, int(sev))
+
+    blocklist_hits = _azure_blocklist_hits(resp)
+    if not hits and not blocklist_hits:
+        return None
+    parts = hits + [f"blocklist:{b}" for b in blocklist_hits]
+    return Verdict(
+        action,
+        reason=f"Azure Content Safety: {', '.join(parts)}",
+        metadata=_annotation(detected=True, filtered=action != "flag", severity=max_sev or None),
+    )
+
+
+def _azure_blocklist_hits(resp: Any) -> list[str]:
+    """The blocklist names/items that matched an ``analyze_text`` call (camel/snake shapes)."""
+    matches = _get(resp, "blocklistsMatch")
+    if matches is None:
+        matches = _get(resp, "blocklists_match") or []
+    out: list[str] = []
+    for m in matches or []:
+        label = _get(m, "blocklistName") or _get(m, "blocklist_name") or "blocklist"
+        out.append(str(label))
+    return _uniq(out)
 
 
 def _azure_attacks(resp: Any) -> list[str]:

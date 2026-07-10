@@ -26,7 +26,7 @@ from typing import Any
 
 from .decision import Context, Guardrail, Verdict, normalize_stages
 
-__all__ = ["groundedness", "denied_topics"]
+__all__ = ["groundedness", "denied_topics", "custom_category"]
 
 Embed = Callable[[str], Sequence[float]]
 
@@ -100,6 +100,63 @@ def groundedness(
 
     return Guardrail(
         name=name,
+        stages=normalize_stages(stage),
+        check=check,
+        timeout=timeout,
+        on_error=_resolve_on_error(action, on_error),
+    )
+
+
+def custom_category(
+    category: str,
+    examples: Sequence[str],
+    *,
+    embed: Embed,
+    threshold: float = 0.8,
+    stage: str | tuple[str, ...] = "input",
+    action: str = "flag",
+    name: str | None = None,
+    timeout: float | None = None,
+    on_error: str | None = None,
+) -> Guardrail:
+    """Trip when the payload is semantically close to a **custom category** you define by example —
+    the local, ``$0`` counterpart to Azure Content Safety's *rapid custom categories* (description +
+    examples → embedding search), with no cloud call and no training step.
+
+    ``category`` is the label recorded on the decision (``metadata["category"]``); ``examples`` are
+    a few exemplar phrases of the category (embedded once on first check). ``embed(text)`` is
+    **bring-your-own** — pass :func:`cendor.guardrails.embeddings.local_embedder` (the
+    ``[embeddings]`` extra, model2vec, offline) or any embeddings endpoint. The check trips when the
+    payload's max cosine similarity to any example is **at or above** ``threshold``, recording the
+    closest example's score in ``metadata["score"]``. This catches paraphrases a
+    :func:`keyword_deny` misses (e.g. a ``"code_requests"`` category defined by ``["write a
+    program", "build an app"]`` fires on *"create a hello-world app"*).
+
+    Defaults to ``action="flag"`` — a similarity threshold is a tuned heuristic, so keep it advisory
+    until you have calibrated it on your own inputs; switch to ``block`` once measured. There is
+    **no catch-rate claim**: a benchmark on a named corpus opens that gate. Empty ``examples`` never
+    trips.
+    """
+    example_vecs = _lazy_vectors(embed, list(examples))
+
+    def check(payload: Any, ctx: Context) -> Verdict | None:
+        vecs = example_vecs()
+        if not vecs:
+            return None
+        query = embed(_text(payload))
+        sims = [_cosine(query, v) for v in vecs]
+        best_i = max(range(len(sims)), key=sims.__getitem__)
+        best = sims[best_i]
+        if best < threshold:
+            return None
+        return Verdict(
+            action,
+            reason=f"custom category {category!r}: sim {best:.2f} >= {threshold}",
+            metadata={"category": category, "score": round(best, 4)},
+        )
+
+    return Guardrail(
+        name=name or f"custom_category:{category}",
         stages=normalize_stages(stage),
         check=check,
         timeout=timeout,

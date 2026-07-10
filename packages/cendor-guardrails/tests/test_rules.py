@@ -47,6 +47,58 @@ def test_keyword_deny_empty_words_never_trips():
     assert _v(rules.keyword_deny([]), "anything") is None
 
 
+def test_keyword_deny_records_matched_term_in_metadata():
+    v = _v(rules.keyword_deny(["bomb"]), "a bomb")
+    assert v.metadata.get("matched") == "bomb"
+
+
+# G1 — matching maturity: match modes + normalization (default stays substring, byte-for-byte)
+
+
+def test_keyword_deny_substring_is_the_default():
+    # back-compat: "cat" fires inside "category"
+    assert _v(rules.keyword_deny(["cat"]), "the category is x") is not None
+
+
+def test_keyword_deny_word_mode_respects_boundaries():
+    word = rules.keyword_deny(["cat"], match="word")
+    assert _v(word, "the category is x") is None  # no boundary inside "category"
+    assert _v(word, "a cat sat") is not None  # a standalone word matches
+
+
+def test_keyword_deny_word_mode_multiword_spans_whitespace():
+    word = rules.keyword_deny(["python code"], match="word")
+    assert _v(word, "write python\n  code now") is not None  # interior whitespace / line-wrap
+    assert _v(word, "a pythoncode blob") is None  # not a word-bounded phrase
+
+
+def test_keyword_deny_normalize_nfkc_folds_fullwidth():
+    assert _v(rules.keyword_deny(["bomb"]), "a ｂｏｍｂ") is None  # raw misses
+    hardened = rules.keyword_deny(["bomb"], normalize=("nfkc",))
+    assert _v(hardened, "a ｂｏｍｂ") is not None  # nfkc catches full-width
+
+
+def test_keyword_deny_normalize_strips_zero_width():
+    hardened = rules.keyword_deny(["bomb"], normalize=("strip_zero_width",))
+    assert _v(hardened, "a b​omb here") is not None  # zero-width split removed
+
+
+def test_keyword_deny_normalize_redact_returns_folded_text():
+    hardened = rules.keyword_deny(["bomb"], action="redact", normalize=("nfkc",))
+    v = _v(hardened, "a ｂｏｍｂ")
+    assert v.action == "redact" and "[redacted]" in v.replacement
+
+
+def test_keyword_deny_unknown_match_mode_raises():
+    with pytest.raises(ValueError, match="unknown match"):
+        rules.keyword_deny(["x"], match="fuzzy")
+
+
+def test_keyword_deny_unknown_normalize_step_raises():
+    with pytest.raises(ValueError, match="unknown normalize"):
+        rules.keyword_deny(["x"], normalize=("nope",))
+
+
 # --------------------------------------------------------------------------- regex_rule
 
 

@@ -2,6 +2,27 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.4.0] — 2026-07-10
+From substring to meaning (plan-guardrails-v04): close the semantic gap Raghav found in the playground (a keyword deny-list matches `"python code"` but not the paraphrase `"create an app"`) without changing any existing behaviour by default. Additive and backward-compatible — the deterministic matcher's default is byte-for-byte unchanged; new capability is opt-in, `$0`/offline in the default path, and **no new hard dependency**. Three new claim gates ship **shut** (paraphrase catch-rate, intent accuracy, injection-preset coverage) — none opens without a published run on a named public corpus.
+
+### Added (G1 — matching maturity for `keyword_deny`)
+- **`keyword_deny(..., match=…, normalize=…)`** — opt-in hardening, all defaulting to the original substring behaviour (a deny-list is a security primitive, so nothing changes silently in a minor). `match="word"` anchors each term on Unicode word boundaries (`"cat"` stops firing inside `"category"`) and lets a multi-word term span line-wraps; `normalize=("nfkc", "strip_zero_width", "casefold", "collapse_whitespace", …)` folds both the payload and the terms before comparing, closing the trivial full-width / zero-width / spacing evasions (`"ｂｏｍｂ"`, `"b​omb"`). The decision now records `metadata["matched"]` (the term that fired).
+
+### Added (G2 — the semantic tier becomes usable: local embedder + custom categories)
+- **`embeddings.local_embedder(model="minishlab/potion-base-8M")`** behind a new `[embeddings]` extra — a free, offline `embed(text)` backed by **model2vec** static embeddings (numpy-only, **no torch**; mirrors `cendor-cassette[embeddings]`). Model weights are **never bundled** — pulled from Hugging Face at your choice on first use. The zero-config ignition the semantic checks needed.
+- **`rules.custom_category(name, examples, *, embed, threshold=0.8, action="flag")`** — the local, `$0` counterpart to Azure Content Safety's *rapid custom categories* (description + examples → embedding search): trips when the payload is semantically close to any example, catching paraphrases `keyword_deny` misses. Records `metadata["category"]`/`["score"]`. `embed` is explicit (no rule silently downloads a model). No catch-rate claim.
+
+### Added (G3 — a first-class pre-LLM intent gate)
+- **`rules.intent(intents, *, embed=None, classify=None, mode="deny"|"allow", threshold=0.8, action="flag")`** — screen a request by intent before the model runs: embedding-exemplar backend (`{label: [examples]}` + a BYO `embed`), or a BYO `classify(text) -> label | {label: score}`. `mode="deny"` trips on a match (topics you never serve); `mode="allow"` trips when it matches none (an off-topic gate). Records `metadata["intent"]`/`["score"]`.
+- **`judge.intent_prompt(intents, *, mode=…)`** — the LLM-judge backend: builds the policy string for `judge.judge` + `rules.llm_judge` (the small-model pre-screen pattern; its own spend budgeted + audited). No accuracy claim, no bundled taxonomy.
+
+### Added (G4 — shipped starter data + policy schema)
+- **`presets.PROMPT_INJECTION_EN`** (+ `presets.prompt_injection()` factory) — a curated, versioned list of common English prompt-injection / jailbreak opener phrases (inline code, the acttrace detector-catalogue precedent — **not** a bundled data file), so a fresh install is not an empty gate. Honest limit: a deterministic *starter*, not detection — mutation attacks walk past any fixed list; **no coverage claim** without a published red-team run.
+- **`policy.schema.json`** shipped in the package (the first shipped file — config tooling, not model data) + **`policy_schema()`** to read it + **`load_policy(..., validate=True)`** for an opt-in, stdlib-only structural check (clear `$.path` errors, no `jsonschema` dependency). Point your policy file's `$schema` at it for editor autocomplete.
+
+### Added (G5 — Azure adapter breadth)
+- **`rules.azure_content_safety(client, *, checks=("prompt_shields",), harm_categories=…, harm_threshold=4, blocklist_names=…)`** — the adapter now optionally wraps Azure's harm-category classifier (`analyze_text`: hate/sexual/violence/self-harm with a severity threshold → block/flag, severity carried in `metadata["severity"]`) and custom blocklists, alongside the existing Prompt Shields. Default `checks=("prompt_shields",)` is unchanged. Still duck-typed (no Azure SDK imported), metered on your account, every verdict a **local** `GuardrailDecision` — cloud check, local evidence. *(Groundedness-as-a-service is a planned follow-up — its preview API needs the grounding sources plumbed in; use the local `rules.groundedness` meanwhile.)*
+
 ## [1.3.0] — 2026-07-09
 Three local-first, no-vendor-lock capabilities inspired by Azure Foundry Guardrails (plan-guardrails-v03). Additive and backward-compatible — no event-shape change, no new hard dependency, `$0` and offline in the default path. Cendor's local gate stays the default; the hosted-vendor adapters remain opt-in extras (A2 only enriches their evidence, it does not promote them).
 

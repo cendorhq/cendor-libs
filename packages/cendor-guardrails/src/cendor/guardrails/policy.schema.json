@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cendor.ai/schemas/guardrails-policy.schema.json",
+  "title": "cendor-guardrails policy",
+  "description": "A config-as-data guardrails policy for cendor.guardrails.load_policy(). Only the deterministic built-in rules are constructible from a file; rules needing a callable or a live client are wired in code.",
+  "type": "object",
+  "required": ["guardrails"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Your policy version (any string). Recorded as policy_version on every decision, alongside the content hash (policy_hash), so the audit chain proves which policy was active."
+    },
+    "guardrails": {
+      "type": "array",
+      "description": "The ordered list of deterministic guardrails.",
+      "items": { "$ref": "#/$defs/guardrail" }
+    }
+  },
+  "$defs": {
+    "stage": {
+      "enum": ["input", "tool_call", "tool_output", "output"]
+    },
+    "guardrail": {
+      "type": "object",
+      "required": ["rule"],
+      "additionalProperties": false,
+      "properties": {
+        "rule": {
+          "description": "Which deterministic built-in to construct.",
+          "enum": [
+            "keyword_deny",
+            "regex_rule",
+            "url_allowlist",
+            "url_deny",
+            "length_bounds",
+            "json_schema"
+          ]
+        },
+        "args": {
+          "type": "object",
+          "description": "Keyword arguments splatted into the rule factory (e.g. {\"words\": [\"...\"]} for keyword_deny)."
+        },
+        "stage": {
+          "description": "One intervention point or a list of them.",
+          "oneOf": [
+            { "$ref": "#/$defs/stage" },
+            { "type": "array", "items": { "$ref": "#/$defs/stage" }, "minItems": 1 }
+          ]
+        },
+        "action": {
+          "enum": ["block", "redact", "flag"]
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional label recorded on every decision this guardrail emits."
+        }
+      }
+    }
+  }
+}

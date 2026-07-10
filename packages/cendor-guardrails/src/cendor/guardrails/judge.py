@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from .decision import Context, Verdict
@@ -32,6 +32,7 @@ __all__ = [
     "parse_verdict",
     "judge",
     "task_adherence",
+    "intent_prompt",
     "DEFAULT_SYSTEM",
     "ADHERENCE_SYSTEM",
 ]
@@ -52,6 +53,52 @@ def verdict_prompt(policy: str, *, template: str = DEFAULT_SYSTEM) -> str:
     should trip). Override ``template`` to customise, keeping the ``{policy}`` placeholder and the
     strict-JSON verdict contract :func:`parse_verdict` expects."""
     return template.format(policy=policy)
+
+
+def _intent_labels(intents: Any) -> list[str]:
+    """Label names from an intent spec — a ``{label: examples}`` mapping's keys, or a plain
+    collection of labels (a single string is one label)."""
+    if isinstance(intents, Mapping):
+        return [str(k) for k in intents]
+    if isinstance(intents, str):
+        return [intents]
+    return [str(x) for x in intents]
+
+
+def intent_prompt(intents: Any, *, mode: str = "deny") -> str:
+    """Build the ``policy`` string for the **LLM-judge intent backend** — feed it to
+    :func:`judge` (which wraps it in :func:`verdict_prompt` + :func:`parse_verdict`) and hand the
+    result to ``rules.llm_judge``. The small-LLM tier of
+    :func:`cendor.guardrails.rules.intent`.
+
+    ``intents`` is a ``{label: examples}`` mapping or a list of label names (only the labels are
+    used
+    in the prompt). ``mode="deny"`` trips when the request is about any listed topic;
+    ``mode="allow"``
+    trips when it falls outside all of them (off-topic). Reuses the strict-JSON verdict contract, so
+    the judge's own model call is budgeted + audited through your instrumented client.
+
+    ```python
+    from cendor.guardrails import judge, rules
+
+    policy = judge.intent_prompt({"support": ..., "billing": ...}, mode="allow")
+    rail = rules.llm_judge(judge.judge(respond, policy), stage="input", action="flag")
+    ```
+    """
+    if mode not in ("deny", "allow"):
+        raise ValueError(f"unknown mode {mode!r}; must be 'deny' or 'allow'")
+    labels = _intent_labels(intents)
+    joined = ", ".join(labels) if labels else "(none given)"
+    if mode == "allow":
+        return (
+            f"The assistant may only help with these topics: {joined}. "
+            "Trip if the user's request falls outside all of them (it is off-topic for this "
+            "assistant)."
+        )
+    return (
+        f"The assistant must refuse these topics: {joined}. "
+        "Trip if the user's request is about any of them."
+    )
 
 
 def _coerce_json(text: str) -> dict[str, Any]:

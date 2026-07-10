@@ -32,10 +32,11 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .decision import Guardrail
+from .decision import ACTIONS, STAGES, Guardrail
 from .rules import (
     json_schema,
     keyword_deny,
@@ -45,7 +46,7 @@ from .rules import (
     url_deny,
 )
 
-__all__ = ["load_policy", "LoadedPolicy", "POLICY_RULES"]
+__all__ = ["load_policy", "LoadedPolicy", "POLICY_RULES", "policy_schema"]
 
 #: The rules that can be built from data alone (deterministic, no callable/client argument). A file
 #: policy is a *declarative* artifact — a rule needing a Python callable or a cloud client is wired
@@ -103,8 +104,54 @@ def _coerce_stage(stage: Any) -> Any:
     return tuple(stage) if isinstance(stage, list) else stage
 
 
+@lru_cache(maxsize=1)
+def policy_schema() -> dict[str, Any]:
+    """The JSON Schema (Draft 2020-12) for a policy document — the same ``policy.schema.json``
+    shipped in the package. Reference it from your policy file's ``$schema`` for editor
+    autocomplete, or use it in your own tooling. Passing ``validate=True`` to :func:`load_policy`
+    checks a document against this shape with the stdlib (no ``jsonschema`` dependency)."""
+    from importlib.resources import files
+
+    text = (files("cendor.guardrails") / "policy.schema.json").read_text(encoding="utf-8")
+    return json.loads(text)
+
+
+def _validate_document(config: Mapping[str, Any]) -> None:
+    """A small, stdlib-only structural check of a policy document (opt-in via ``validate=True``) —
+    clearer, earlier errors than letting a factory raise. Verifies the top-level shape, that each
+    entry names a known declarative rule, and that ``stage`` / ``action`` are in range. It is not a
+    full JSON-Schema engine; the shipped ``policy.schema.json`` is the reference for tooling."""
+    if "version" in config and not isinstance(config["version"], str):
+        raise ValueError("policy 'version' must be a string")
+    entries = config.get("guardrails")
+    if not isinstance(entries, list):
+        raise ValueError("policy document must have a 'guardrails' list")
+    for i, entry in enumerate(entries):
+        where = f"guardrails[{i}]"
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"{where} must be a mapping, got {type(entry).__name__}")
+        rule = entry.get("rule")
+        if str(rule) not in POLICY_RULES:
+            raise ValueError(
+                f"{where}: unknown or non-declarative rule {rule!r}; "
+                f"policy files support {sorted(POLICY_RULES)}"
+            )
+        if "args" in entry and not isinstance(entry["args"], Mapping):
+            raise ValueError(f"{where}.args must be a mapping")
+        if "action" in entry and entry["action"] not in ACTIONS:
+            raise ValueError(f"{where}.action {entry['action']!r} must be one of {list(ACTIONS)}")
+        if "stage" in entry:
+            stages = entry["stage"] if isinstance(entry["stage"], list) else [entry["stage"]]
+            for s in stages:
+                if s not in STAGES:
+                    raise ValueError(f"{where}.stage {s!r} must be one of {list(STAGES)}")
+
+
 def load_policy(
-    source: str | Path | Mapping[str, Any], *, format: str | None = None
+    source: str | Path | Mapping[str, Any],
+    *,
+    format: str | None = None,
+    validate: bool = False,
 ) -> LoadedPolicy:
     """Build a :class:`LoadedPolicy` (a ``list[Guardrail]``) from a JSON/YAML file or a parsed
     mapping.
@@ -113,6 +160,8 @@ def load_policy(
         source: A path to a ``.json`` / ``.yaml`` / ``.yml`` file, or a mapping already parsed.
         format: Force ``"json"`` / ``"yaml"`` instead of inferring from the file suffix. Ignored
             when ``source`` is a mapping.
+        validate: When ``True``, run a stdlib structural check (:func:`policy_schema`) first, so a
+            malformed document fails with a clear ``$.path`` error before any rule is built.
 
     Returns:
         A :class:`LoadedPolicy` — usable anywhere a guardrail list is. Every guardrail is stamped
@@ -125,6 +174,8 @@ def load_policy(
         ImportError: for a YAML source without the ``[yaml]`` extra.
     """
     config: Mapping[str, Any] = source if isinstance(source, Mapping) else _read(source, format)
+    if validate:
+        _validate_document(config)
     entries = config.get("guardrails")
     if not isinstance(entries, list):
         raise ValueError("policy document must have a 'guardrails' list")

@@ -1,6 +1,6 @@
 [project]
 name = "cendor-guardrails"
-version = "1.3.0"
+version = "1.4.0"
 description = "A local-first gate for LLM apps: define a check — keyword, regex, URL, length, JSON-schema — attach it to a stage (input, tool call, tool output, output). Deterministic, microsecond, $0, and every decision is audit-grade evidence."
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -25,6 +25,10 @@ dependencies = ["cendor-core>=1.1,<2.0"]
 # only the runtime; you download the (license-gated) model from Hugging Face yourself.
 promptguard = ["transformers>=4.40"]  # a prompt-injection classifier adapter (rules.prompt_guard)
 langid = ["py3langid>=0.3"]           # a local language detector (rules.language default detect)
+# A free, offline embedder for the semantic checks (rules.custom_category / denied_topics /
+# groundedness / intent). model2vec is numpy-only (no torch); model WEIGHTS are never bundled — you
+# pull the (small, static) checkpoint from Hugging Face yourself. Mirrors cendor-cassette[embeddings].
+embeddings = ["model2vec>=0.3"]       # embeddings.local_embedder (semantic rules ignition)
 # Config-as-data: load_policy() reads JSON with the stdlib; YAML needs PyYAML.
 yaml = ["pyyaml>=6"]
 # Hosted-rail convenience extras. The adapters DUCK-TYPE the client (nothing here imports these), so
@@ -44,3 +48,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cendor"]     # contributes cendor/guardrails only — NEVER add src/cendor/__init__.py
+# Ship the policy JSON Schema (config tooling — NOT model data): editors resolve `$schema`, and
+# load_policy(validate=True) / policy_schema() read it at runtime via importlib.resources.
+artifacts = ["src/cendor/guardrails/policy.schema.json"]

@@ -37,7 +37,7 @@ from cendor.core.instrument import (
 )
 from cendor.core.types import LLMCall, ToolCall
 
-from . import adapters, judge, policy, redteam, rules, semantic
+from . import adapters, embeddings, intent, judge, policy, presets, redteam, rules, semantic
 from .decision import (
     ACTIONS,
     ALLOW,
@@ -51,7 +51,7 @@ from .decision import (
     guardrail,
     normalize_stages,
 )
-from .policy import LoadedPolicy, load_policy
+from .policy import LoadedPolicy, load_policy, policy_schema
 from .redteam import AttackCase, RedTeamReport, load_corpus, run_redteam, run_redteam_async
 
 __all__ = [
@@ -79,6 +79,7 @@ __all__ = [
     # config-as-data
     "load_policy",
     "LoadedPolicy",
+    "policy_schema",
     # red-team evaluation (measure trip rate against a labeled corpus you supply)
     "load_corpus",
     "run_redteam",
@@ -90,6 +91,9 @@ __all__ = [
     "judge",
     "adapters",
     "semantic",
+    "intent",
+    "embeddings",
+    "presets",
     "policy",
     "redteam",
 ]

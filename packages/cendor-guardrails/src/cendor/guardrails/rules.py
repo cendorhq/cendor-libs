@@ -16,7 +16,8 @@ from __future__ import annotations
 import base64
 import json
 import re
-from collections.abc import Callable, Iterable, Iterator
+import unicodedata
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -85,6 +86,80 @@ def _is_text_part(part: Any) -> bool:
     return isinstance(part, dict) and isinstance(part.get("text"), str)
 
 
+# --------------------------------------------------------------------------- matching helpers
+
+#: Normalizations a matcher can apply to *both* the payload and the deny terms before comparing.
+#: All are opt-in via ``normalize=`` (default off, so matching stays byte-for-byte back-compatible).
+MATCH_MODES: tuple[str, ...] = ("substring", "word")
+NORMALIZATIONS: tuple[str, ...] = (
+    "nfkc",
+    "nfc",
+    "nfkd",
+    "nfd",
+    "casefold",
+    "strip_zero_width",
+    "collapse_whitespace",
+)
+
+#: Zero-width / invisible characters an attacker can splice into a term to slip a substring match
+#: ("b​omb"). Stripped only when ``"strip_zero_width"`` is in ``normalize``.
+_ZERO_WIDTH = dict.fromkeys((0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD, 0x180E), None)
+_WORD_CHAR = re.compile(r"\w", re.UNICODE)
+
+
+def _normalizer(steps: Sequence[str] | None) -> Callable[[str], str]:
+    """Build a text normalizer from ``steps`` (a subset of :data:`NORMALIZATIONS`). Returns identity
+    when ``steps`` is empty/``None`` — so the default matcher is unchanged. Applied to both sides of
+    a comparison so a deny term and the payload fold the same way."""
+    if not steps:
+        return lambda s: s
+
+    _forms: dict[str, Callable[[str], str]] = {
+        "nfc": lambda s: unicodedata.normalize("NFC", s),
+        "nfd": lambda s: unicodedata.normalize("NFD", s),
+        "nfkc": lambda s: unicodedata.normalize("NFKC", s),
+        "nfkd": lambda s: unicodedata.normalize("NFKD", s),
+    }
+
+    ops: list[Callable[[str], str]] = []
+    for step in steps:
+        key = step.lower()
+        if key in _forms:
+            ops.append(_forms[key])
+        elif key == "casefold":
+            ops.append(str.casefold)
+        elif key == "strip_zero_width":
+            ops.append(lambda s: s.translate(_ZERO_WIDTH))
+        elif key == "collapse_whitespace":
+            ops.append(lambda s: re.sub(r"\s+", " ", s).strip())
+        else:
+            raise ValueError(f"unknown normalize step {step!r}; must be one of {NORMALIZATIONS}")
+
+    def run(s: str) -> str:
+        for op in ops:
+            s = op(s)
+        return s
+
+    return run
+
+
+def _term_regex(term: str, match: str) -> str:
+    """The regex fragment for one deny ``term`` under the chosen ``match`` mode. ``"substring"`` is
+    the escaped literal; ``"word"`` anchors it on word boundaries (Unicode-aware) and lets interior
+    whitespace span line-wraps (``\\s+``), so ``"python code"`` still hits across a newline but not
+    inside ``"pythoncoder"``. A boundary is only added where the term's edge is a word character."""
+    if match == "substring":
+        return re.escape(term)
+    stripped = term.strip()
+    parts = [p for p in re.split(r"\s+", stripped) if p]
+    if not parts:
+        return ""
+    body = r"\s+".join(re.escape(p) for p in parts)
+    left = r"\b" if _WORD_CHAR.match(stripped[0]) else ""
+    right = r"\b" if _WORD_CHAR.match(stripped[-1]) else ""
+    return f"{left}{body}{right}"
+
+
 # --------------------------------------------------------------------------- rules
 
 
@@ -95,27 +170,57 @@ def keyword_deny(
     action: str = "block",
     name: str | None = None,
     ignore_case: bool = True,
+    match: str = "substring",
+    normalize: Sequence[str] | None = None,
 ) -> Guardrail:
-    """Trip when any of ``words`` appears in the payload (substring match, case-insensitive by
-    default). ``action="redact"`` scrubs the matches to ``[redacted]`` instead of blocking."""
-    terms = [w for w in words if w]
+    """Trip when any of ``words`` appears in the payload. ``action="redact"`` scrubs the matches to
+    ``[redacted]`` instead of blocking. The decision's ``metadata["matched"]`` records the term that
+    fired.
+
+    Matching options (all default to the original, byte-for-byte behaviour — a deny-list is a
+    security primitive, so nothing changes silently in a minor release; opt into the hardening):
+
+    * ``match="substring"`` (default) matches anywhere, so ``"cat"`` fires inside ``"category"``.
+      ``match="word"`` anchors each term on Unicode word boundaries (``"cat"`` no longer fires
+      inside
+      ``"category"``), and a multi-word term tolerates any run of whitespace between its words
+      (matching across a line-wrap).
+    * ``normalize=`` folds both the payload and the terms before comparing, closing trivial evasions
+      the raw matcher misses. Recommended hardening: ``normalize=("nfkc", "strip_zero_width")``
+      (maps
+      full-width ``"ｂｏｍｂ"`` → ``"bomb"`` and strips zero-width splits ``"b​omb"``). Also
+      available: ``"casefold"``, ``"nfc"/"nfkd"/"nfd"``, ``"collapse_whitespace"``. Combining
+      ``normalize`` with ``action="redact"`` also normalizes the surviving text (the match offsets
+      live in normalized space), so redaction returns the folded payload — noted here because it is
+      a
+      visible side effect.
+    * ``ignore_case=True`` (default) is case-insensitive via the regex flag, independent of
+      ``normalize`` (``"casefold"`` is a stronger, opt-in Unicode fold).
+    """
+    if match not in MATCH_MODES:
+        raise ValueError(f"unknown match {match!r}; must be one of {MATCH_MODES}")
+    norm = _normalizer(normalize)
+    fragments = [f for f in (_term_regex(norm(w), match) for w in words if w) if f]
     flags = re.IGNORECASE if ignore_case else 0
-    pattern = re.compile("|".join(re.escape(w) for w in terms), flags) if terms else None
+    pattern = re.compile("|".join(fragments), flags) if fragments else None
 
     def check(payload: Any, ctx: Context) -> Verdict | None:
         if pattern is None:
             return None
-        match = pattern.search(_payload_text(payload))
-        if match is None:
+        match_obj = pattern.search(norm(_payload_text(payload)))
+        if match_obj is None:
             return None
-        reason = f"denied keyword: {match.group(0)!r}"
+        hit = match_obj.group(0)
+        reason = f"denied keyword: {hit!r}"
+        meta = {"matched": hit}
         if action == "redact":
             return Verdict(
                 "redact",
                 reason=reason,
-                replacement=_redact_payload(payload, lambda s: pattern.sub("[redacted]", s)),
+                replacement=_redact_payload(payload, lambda s: pattern.sub("[redacted]", norm(s))),
+                metadata=meta,
             )
-        return Verdict(action, reason=reason)
+        return Verdict(action, reason=reason, metadata=meta)
 
     return Guardrail(name=name or "keyword_deny", stages=normalize_stages(stage), check=check)
 
@@ -469,7 +574,8 @@ from .adapters import (  # noqa: E402  (bottom import breaks the rules↔adapter
     openai_moderation,
     prompt_guard,
 )
-from .semantic import denied_topics, groundedness  # noqa: E402
+from .intent import intent  # noqa: E402
+from .semantic import custom_category, denied_topics, groundedness  # noqa: E402
 
 __all__ = [  # noqa: F822 - names are the module's public factories
     "keyword_deny",
@@ -490,4 +596,6 @@ __all__ = [  # noqa: F822 - names are the module's public factories
     "model_armor",
     "groundedness",
     "denied_topics",
+    "custom_category",
+    "intent",
 ]

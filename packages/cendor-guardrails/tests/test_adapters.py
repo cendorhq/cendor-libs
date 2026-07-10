@@ -263,3 +263,70 @@ def test_hosted_rails_reexported_on_both_surfaces():
     assert adapters.bedrock_guardrail is rules.bedrock_guardrail
     assert adapters.azure_content_safety is rules.azure_content_safety
     assert adapters.model_armor is rules.model_armor
+
+
+# ------------------------------------------------------------------------ G5: Azure adapter breadth
+
+
+def _azure_breadth_client(*, shield=None, analyze=None):
+    return SimpleNamespace(
+        shield_prompt=lambda **kw: shield,
+        analyze_text=lambda **kw: analyze,
+    )
+
+
+def test_azure_prompt_shields_default_is_back_compatible():
+    # checks=("prompt_shields",) by default — the original behaviour, unchanged
+    client = _azure_breadth_client(shield={"userPromptAnalysis": {"attackDetected": True}})
+    with pytest.raises(GuardrailTripped):
+        apply([rules.azure_content_safety(client, action="block")], "input", "attack")
+
+
+def test_azure_harm_categories_trip_over_severity():
+    analyze = {"categoriesAnalysis": [{"category": "Hate", "severity": 6}]}
+    client = _azure_breadth_client(analyze=analyze)
+    g = rules.azure_content_safety(
+        client, checks=("harm_categories",), harm_threshold=4, action="flag"
+    )
+    out = apply([g], "input", "hateful")
+    d = out[-1]
+    assert d.metadata.get("severity") == 6 and "Hate:6" in d.reason
+
+
+def test_azure_harm_below_threshold_passes():
+    analyze = {"categoriesAnalysis": [{"category": "Hate", "severity": 2}]}
+    client = _azure_breadth_client(analyze=analyze)
+    g = rules.azure_content_safety(client, checks=("harm_categories",), harm_threshold=4)
+    assert apply([g], "input", "mild") == []
+
+
+def test_azure_blocklist_hit_reported():
+    analyze = {"categoriesAnalysis": [], "blocklistsMatch": [{"blocklistName": "banned"}]}
+    client = _azure_breadth_client(analyze=analyze)
+    g = rules.azure_content_safety(client, checks=("harm_categories",), action="flag")
+    assert "blocklist:banned" in apply([g], "input", "x")[-1].reason
+
+
+def test_azure_snake_case_shape_read():
+    analyze = {"categories_analysis": [{"category": "Violence", "severity": 4}]}
+    client = _azure_breadth_client(analyze=analyze)
+    g = rules.azure_content_safety(
+        client, checks=("harm_categories",), harm_threshold=4, action="flag"
+    )
+    assert apply([g], "input", "x")[-1].metadata.get("severity") == 4
+
+
+def test_azure_both_checks_prompt_shields_wins_first():
+    client = _azure_breadth_client(
+        shield={"userPromptAnalysis": {"attackDetected": True}},
+        analyze={"categoriesAnalysis": [{"category": "Hate", "severity": 6}]},
+    )
+    g = rules.azure_content_safety(
+        client, checks=("prompt_shields", "harm_categories"), action="flag"
+    )
+    assert "Prompt Shields" in apply([g], "input", "x")[-1].reason
+
+
+def test_azure_unknown_check_raises():
+    with pytest.raises(ValueError, match="unknown azure check"):
+        rules.azure_content_safety(_azure_breadth_client(), checks=("nope",))

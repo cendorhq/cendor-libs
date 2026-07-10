@@ -209,7 +209,7 @@ This is the local-first claim: regex and arithmetic, no ML, no network.
 
 | Rule | Trips when… |
 |---|---|
-| `keyword_deny(words)` | any denied word appears (substring, case-insensitive by default) |
+| `keyword_deny(words)` | any denied word appears (substring, case-insensitive by default; opt into `match="word"` boundaries + `normalize=` Unicode folding) |
 | `regex_rule(pattern)` | the pattern matches; `action="redact"` substitutes each match |
 | `spotlight()` | **always** — a `redact`-action *mitigation* (not a detector): wraps untrusted content in a trust-lowering delimiter (optionally base-64) so the model treats it as data, not instructions |
 | `url_allowlist(domains)` / `url_deny(domains)` | a URL's host is not allowlisted / is denied (subdomains match) |
@@ -246,7 +246,8 @@ PII and secrets, so there's one detection engine, not two.
 ```python
 from cendor.guardrails import rules
 
-rules.keyword_deny(words, *, stage="input", action="block", name=None, ignore_case=True)
+rules.keyword_deny(words, *, stage="input", action="block", name=None, ignore_case=True,
+                   match="substring", normalize=None)   # match="word" + normalize=("nfkc","strip_zero_width")
 rules.regex_rule(pattern, *, action="flag", stage="input", name=None, replacement="[redacted]", flags=0)
 rules.spotlight(*, stage=("input", "tool_output"), delimiter="<untrusted>", encode=False, name="spotlight")
 rules.url_allowlist(domains, *, stage="input", action="block", name=None)
@@ -264,7 +265,8 @@ rules.llm_judge(judge, *, stage="output", action="block", name="llm_judge", time
 ```ts
 import { rules } from '@cendor/guardrails';
 
-rules.keywordDeny(words, { stage: 'input', action: 'block', name, ignoreCase: true });
+rules.keywordDeny(words, { stage: 'input', action: 'block', name, ignoreCase: true,
+                           match: 'word', normalize: ['nfkc', 'strip_zero_width'] });
 rules.regexRule(pattern, { action: 'flag', stage: 'input', name, replacement: '[redacted]' });
 rules.spotlight({ stage: ['input', 'tool_output'], delimiter: '<untrusted>', encode: false, name: 'spotlight' });
 rules.urlAllowlist(domains, { stage: 'input', action: 'block', name });
@@ -319,6 +321,59 @@ from instructions. Payload shape (string / message list / dict) is preserved, so
 with the rules that follow it and with a BYO judge. **Honest limits (from Azure's own page):** it lowers
 trust, it does not *catch* an attack, and `encode=True` **inflates token count** — higher model cost,
 and a large doc can exceed the context window. `encode` defaults **off**.
+
+### Matching maturity — word boundaries & normalization
+`keyword_deny` is a substring matcher: fast, `$0`, and — by design — literal. `"cat"` fires inside
+`"category"`, and `"python code"` matches only that exact run of characters. Two **opt-in** options
+harden it; both default off, so a deny-list (a security primitive) never changes behaviour silently
+in a minor release. For catching *paraphrases* rather than *evasions*, reach for
+[custom categories](#semantic-categories--the-local-embedder) — a different tool.
+
+- `match="word"` anchors each term on Unicode word boundaries (`"cat"` no longer fires inside
+  `"category"`); a multi-word term still matches across a line-wrap (interior whitespace → `\s+`).
+- `normalize=(…)` folds **both** the payload and the terms before comparing. `("nfkc",
+  "strip_zero_width")` maps full-width `"ｂｏｍｂ"` → `"bomb"` and strips zero-width splits
+  (`"b​omb"`) — the trivial evasions a raw matcher misses. Also available: `"casefold"`,
+  `"nfc"/"nfkd"/"nfd"`, `"collapse_whitespace"`. (Combining `normalize` with `action="redact"` also
+  normalizes the surviving text — the match offsets live in normalized space.)
+
+The decision records the term that fired in `metadata["matched"]`. Leetspeak / confusable folding is
+**not** built in — a documented known bypass; layer a classifier or judge for adversarial input.
+
+### Starter presets
+A fresh install is not an empty gate: `presets` ships a curated, versioned list of common English
+prompt-injection / jailbreak **opener phrases** (inline code — the acttrace detector-catalogue
+precedent, not a bundled data file) you compose with `keyword_deny`.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.guardrails import presets, rules
+
+rule = presets.prompt_injection()               # keyword_deny over presets.PROMPT_INJECTION_EN
+# or compose the raw list yourself:
+rule = rules.keyword_deny(presets.PROMPT_INJECTION_EN, match="word")
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { presets, rules } from '@cendor/guardrails';
+
+const rule = presets.promptInjection();          // keywordDeny over presets.PROMPT_INJECTION_EN
+const raw = rules.keywordDeny(presets.PROMPT_INJECTION_EN, { match: 'word' });
+```
+
+<!-- /tabs -->
+
+**Honest limit — this is a starter, not detection.** A determined attacker rewrites, translates, or
+obfuscates around any fixed list (mutation attacks beat keyword filters), and the list will also
+over-match benign text that quotes these phrases. It is a cheap first layer for defense-in-depth,
+never a coverage guarantee — there is **no catch-rate claim** until `run_redteam` is run on a *named
+public corpus* and published to [benchmarks.md](benchmarks.md). Layer it beneath a classifier / judge.
 
 ### `Guardrail` & the `@guardrail` decorator
 Build a guardrail directly, or decorate a `check(payload, ctx) -> Verdict | None` function:
@@ -564,8 +619,10 @@ from cendor.guardrails import rules
 bedrock = boto3.client("bedrock-runtime")
 rail = rules.bedrock_guardrail(bedrock, "gr-abc123", guardrail_version="DRAFT", timeout=2.0)
 
-# Azure AI Content Safety — Prompt Shields (binary attack detection)
-rules.azure_content_safety(azure_client, action="block")
+# Azure AI Content Safety — Prompt Shields (default) + opt-in harm-category classifier
+rules.azure_content_safety(azure_client, action="block")                       # Prompt Shields
+rules.azure_content_safety(azure_client, checks=("harm_categories",),          # hate/sexual/violence/self-harm
+                           harm_threshold=4, action="flag")                    # severity → metadata["severity"]
 
 # Google Model Armor — screens the prompt/response against a template
 rules.model_armor(armor_client, "projects/p/locations/us-central1/templates/t")
@@ -579,7 +636,8 @@ rules.model_armor(armor_client, "projects/p/locations/us-central1/templates/t")
 import { rules } from '@cendor/guardrails';
 
 rules.bedrockGuardrail(bedrock, 'gr-abc123', { guardrailVersion: 'DRAFT', timeout: 2 });
-rules.azureContentSafety(azureClient, { action: 'block' });
+rules.azureContentSafety(azureClient, { action: 'block' });                    // Prompt Shields
+rules.azureContentSafety(azureClient, { checks: ['harm_categories'], harmThreshold: 4, action: 'flag' });
 rules.modelArmor(armorClient, 'projects/p/locations/us-central1/templates/t');
 ```
 
@@ -589,8 +647,12 @@ rules.modelArmor(armorClient, 'projects/p/locations/us-central1/templates/t');
   evaluates text against your configured guardrail **independently of any model**, so it works no
   matter which provider your agent uses. `source` is chosen from the stage (`INPUT`/`OUTPUT`);
   `action="redact"` substitutes Bedrock's masked output.
-- **`azure_content_safety(client)`** — Azure AI Content Safety **Prompt Shields** (binary
-  user-prompt / document attack detection).
+- **`azure_content_safety(client, checks=…)`** — Azure AI Content Safety. `checks=("prompt_shields",)`
+  (default) is binary Prompt Shields (user-prompt / document attack detection); add
+  `"harm_categories"` to also run the harm classifier (hate / sexual / violence / self-harm with a
+  `harm_threshold` on Azure's 0/2/4/6 severity → `metadata["severity"]`) and pass `blocklist_names=`
+  for custom term lists. (Groundedness-as-a-service is a planned follow-up — its preview API needs the
+  grounding sources plumbed in; use the local `rules.groundedness` meanwhile.)
 - **`model_armor(client, template)`** — Google Cloud **Model Armor** (`sanitize_user_prompt` /
   `sanitize_model_response`: prompt-injection & jailbreak, Sensitive Data Protection, malicious URIs).
 
@@ -615,9 +677,9 @@ list. The point is evidence: the file's content hash and its version are stamped
 ```python
 from cendor.guardrails import load_policy
 
-# guardrails.yaml (or .json) — see the shape in the module docstring
-policy = load_policy("guardrails.yaml")     # a list[Guardrail] you use directly...
-agent = Agent(..., guardrails=policy)        # ...in the SDK,
+# guardrails.yaml (or .json) — point its `$schema` at policy_schema() for editor autocomplete
+policy = load_policy("guardrails.yaml", validate=True)   # opt-in structural check (clear $.path errors)
+agent = Agent(..., guardrails=policy)        # a list[Guardrail] you use directly in the SDK,
 install(policy)                              # ...or standalone.
 policy.policy_hash      # "sha256:…"  — also on every decision this policy emits
 policy.policy_version   # "2026-07-09"
@@ -631,7 +693,7 @@ policy.policy_version   # "2026-07-09"
 import { loadPolicy } from '@cendor/guardrails';
 
 // JSON is built in; for YAML pass your own parser: loadPolicy(text, { parse: YAML.parse })
-const policy = loadPolicy(jsonText);
+const policy = loadPolicy(jsonText, { validate: true });   // opt-in structural check
 policy.policyHash;     // "sha256:…"
 policy.policyVersion;  // "2026-07-09"
 ```
@@ -641,7 +703,9 @@ policy.policyVersion;  // "2026-07-09"
 Only the deterministic built-ins are constructible from data (`keyword_deny`, `regex_rule`, `url_*`,
 `length_bounds`, `json_schema`) — a rule needing a callable or a client is wired in code. YAML needs
 the `[yaml]` extra in Python (JSON is stdlib); TypeScript's `loadPolicy` reads JSON and takes a
-bring-your-own `parse` for YAML.
+bring-your-own `parse` for YAML. `validate=True` runs a stdlib structural check first (no `jsonschema`
+dependency); `policy_schema()` (Python) / `policySchema()` (TS) returns the shipped JSON Schema — point
+your file's `$schema` at it for editor autocomplete.
 
 ### Grounding & denied topics
 Two open-ended checks over a **bring-your-own** embedding function (`embed(text) -> vector`) — cendor
@@ -678,6 +742,105 @@ rules.deniedTopics(embed, ['medical diagnosis', 'legal advice'], { threshold: 0.
 These are tuned heuristics, not guarantees — calibrate the threshold on your own data, and keep an
 ungrounded answer advisory (`action="flag"`) unless you have measured it. For open-ended risk you can
 describe in a prompt, the [LLM-judge helpers](#the-llm-judge-helpers) are the alternative.
+
+### Semantic categories & the local embedder
+`custom_category` catches a request by *meaning*, not literal words — the local, `$0` counterpart to
+Azure Content Safety's *rapid custom categories* (examples → embedding search), with no cloud call and
+no training step. Define a category by a handful of exemplar phrases; it trips when the payload is
+close enough to any of them (recording `metadata["category"]`/`["score"]`). This is what catches the
+paraphrase a deny-list misses — `keyword_deny(["python code"])` blocks *"write python code"* but not
+*"create an app"*; a `custom_category` defined by both does.
+
+The similarity checks all take a **bring-your-own** `embed(text)`. For a zero-config default, the
+`[embeddings]` extra ships `embeddings.local_embedder()` — **model2vec** static embeddings (numpy-only,
+**no torch**, ~8–30 MB); the model is pulled from Hugging Face at your choice on first use, never
+bundled.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+<!-- ts-check: skip -->
+
+```python
+from cendor.guardrails import rules, embeddings
+
+embed = embeddings.local_embedder()              # pip install 'cendor-guardrails[embeddings]'
+rule = rules.custom_category(
+    "code_requests",
+    ["write a program", "build an app", "create a script"],
+    embed=embed, threshold=0.8, action="flag",   # flag until you calibrate; then block
+)
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { rules } from '@cendor/guardrails';
+
+// embed is bring-your-own (a transformers.js pipeline, a hosted endpoint …). There is no
+// zero-config localEmbedder in TS yet — model2vec is Python-only; parity 🚧 (see the parity matrix).
+const rule = rules.customCategory(
+  'code_requests',
+  ['write a program', 'build an app', 'create a script'],
+  embed, { threshold: 0.8, action: 'flag' },
+);
+```
+
+<!-- /tabs -->
+
+A similarity threshold is a tuned heuristic — keep it `flag` until you have calibrated it on your own
+inputs, then `block`. There is **no catch-rate claim**: `benchmarks/bench_semantic_gate.py` is the
+reproduction harness, and a paraphrase catch-rate is published only after it is run on a *named public
+corpus* (until then, wording stays "a tuned heuristic").
+
+### Intent screening
+`intent` asks the question every app has before the model runs: *what does the user want, and do we
+serve that?* It is agent-loop-native and — unlike Azure, which keeps intent in a separate AI Language
+service — it lives right in the gate. `mode="deny"` trips on a match (topics you never serve);
+`mode="allow"` trips when it matches **none** (an off-topic gate — a support bot answering only support
+questions). Three backends, all reusing machinery already here: embedding exemplars, a BYO classifier,
+or a small-LLM judge (`judge.intent_prompt` + `rules.llm_judge`).
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+<!-- ts-check: skip -->
+
+```python
+from cendor.guardrails import rules, judge, embeddings
+
+embed = embeddings.local_embedder()
+# off-topic gate: flag anything that isn't support or billing
+rule = rules.intent(
+    {"support": ["reset my password", "cancel my order"], "billing": ["update my card"]},
+    embed=embed, mode="allow", threshold=0.75, action="flag",
+)
+# or the LLM-judge backend (its own spend is budgeted + audited):
+policy = judge.intent_prompt(["support", "billing"], mode="allow")
+rule = rules.llm_judge(judge.judge(respond, policy), stage="input", action="flag")
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { rules, judge } from '@cendor/guardrails';
+
+const rule = rules.intent(
+  { support: ['reset my password'], billing: ['update my card'] },
+  { embed, mode: 'allow', threshold: 0.75, action: 'flag' },
+);
+const policy = judge.intentPrompt(['support', 'billing'], 'allow');
+const rail = rules.llmJudge(judge.judge(respond, policy), { stage: 'input', action: 'flag' });
+```
+
+<!-- /tabs -->
+
+No accuracy claim and no bundled intent taxonomy — a screening heuristic; calibrate `threshold` (and
+prefer `flag`) before you `block`.
 
 ### Red-team evaluation
 The honest path to *any* detection number: run your guardrails over a **labeled corpus** and publish
