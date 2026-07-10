@@ -8,44 +8,37 @@ Seven small libraries, one shared foundation, one brand. Each is useful alone; i
 they cover **the lifecycle of one governed LLM call** — cooperating through one event bus, never
 through imports:
 
-```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}} }%%
-graph TD
-    B["build the prompt"]
-    PRE["pre-flight<br/>before the call"]
-    CALL["the call<br/>core.instrument() = the seam"]
-    POST["after the call<br/>automatic, via the bus"]
-    B --> PRE --> CALL --> POST
-
-    B --- CK["contextkit<br/>assemble to a budget"]
-    B --- SQ["squeeze<br/>compress big blocks"]
-    PRE --- TG1["tokenguard<br/>cap spend"]
-    PRE --- GRI["guardrails<br/>gate input"]
-    PRE --- ATG["acttrace<br/>guard bad input"]
-    POST --- TG2["tokenguard<br/>record spend"]
-    POST --- GRO["guardrails<br/>gate output"]
-    POST --- CS["cassette<br/>record / replay"]
-    POST --- ATA["acttrace<br/>append to the log"]
-
-    classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
-    classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
-    classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
-    classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
-    classDef gr fill:#F97316,color:#111827,stroke:#EA580C;
-    classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
-    classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
-    class CALL seam;
-    class CK ck;
-    class SQ sq;
-    class TG1,TG2 tg;
-    class GRI,GRO gr;
-    class CS cs;
-    class ATG,ATA at;
-```
-
-The spine reads top to bottom — build → pre-flight → the call → after — with each library hanging
-off the stage where it acts. `cendor-core` is the seam at **the call** and the event bus every branch
-rides.
+<div class="mm-strip" aria-label="The lifecycle of one governed LLM call across the seven libraries">
+<div class="mm-flow">
+<div class="mm-phase">
+<div class="mm-plabel">before the call · pre-flight</div>
+<div class="mm-row">
+<div class="mm-lib"><span class="mm-n" style="color:#3B82F6">contextkit</span><span class="mm-sl">assemble</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:#22C55E">squeeze</span><span class="mm-sl">compress</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:#8B5CF6">tokenguard</span><span class="mm-sl">budget</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:#F97316">guardrails</span><span class="mm-sl">gate</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:#F43F5E">acttrace</span><span class="mm-sl">guard</span></div>
+</div>
+</div>
+<div class="mm-arrow" aria-hidden="true">→</div>
+<div class="mm-phase mm-call">
+<div class="mm-plabel">the call</div>
+<div class="mm-row">
+<div class="mm-lib"><span class="mm-n" style="color:#94A3BB">core</span><span class="mm-sl">instrument()</span></div>
+</div>
+</div>
+<div class="mm-arrow" aria-hidden="true">→</div>
+<div class="mm-phase">
+<div class="mm-plabel">after · automatic, via the bus</div>
+<div class="mm-row">
+<div class="mm-lib"><span class="mm-n" style="color:#F97316">guardrails</span><span class="mm-sl">gate output</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:#14B8A6">cassette</span><span class="mm-sl">test</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:#F43F5E">acttrace</span><span class="mm-sl">audit</span></div>
+</div>
+</div>
+</div>
+<div class="mm-bus"><b>cendor-core</b> — the <em>instrument()</em> seam + one event bus beneath every stage. Each library publishes and subscribes here; none imports another.</div>
+</div>
 
 **A lifecycle, not a dependency chain.** Every library works alone; two act on *both* sides of the
 call — **guardrails** gates the input and the output, **acttrace** guards before send and audits
