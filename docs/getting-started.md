@@ -46,14 +46,14 @@ tool observes each call through a shared in-process event bus — no per-call wi
 
 ```python
 from cendor.core import instrument
-client = instrument(OpenAI())   # OpenAI · Anthropic · Bedrock · Gemini · Ollama
+client = instrument(OpenAI())   # OpenAI · Anthropic · Hugging Face · Gemini · Bedrock · Ollama
 ```
 
 <!-- tab: TypeScript -->
 
 ```ts
 import { instrument } from '@cendor/core';
-const client = instrument(new OpenAI());   // OpenAI (Chat + Responses) · Anthropic — more landing
+const client = instrument(new OpenAI());   // OpenAI · Anthropic · Hugging Face · Gemini · Bedrock · Ollama
 ```
 
 <!-- /tabs -->
@@ -167,7 +167,51 @@ console.log(ctx.report());              // the receipt: kept / truncated / dropp
 
 <!-- /tabs -->
 
-## 6. Make runs testable — and audited
+## 6. Gate unsafe input and output
+
+`guardrails` is the deterministic **Gate**: keyword / regex / URL / length / JSON-schema rules that
+`block`, `redact`, or `flag` at four stages (input, tool call, tool output, output) — offline, in
+microseconds, and every decision lands on the audit chain. A `block` raises `GuardrailTripped`
+*before* the model runs, so the call never costs anything.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.guardrails import rules, evaluate, GuardrailTripped
+
+gate = [rules.keyword_deny(["ignore previous instructions"], action="block")]
+try:
+    payload, decisions = evaluate(gate, "input", user_msg)   # runs the input-stage rules
+    resp = client.chat.completions.create(model="gpt-4o", messages=messages)
+except GuardrailTripped as trip:
+    resp = None                                              # blocked pre-flight — $0
+    print("blocked:", [d.guardrail for d in trip.decisions])
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { rules, evaluate, GuardrailTripped } from '@cendor/guardrails';
+
+const gate = [rules.keywordDeny(['ignore previous instructions'], { action: 'block' })];
+try {
+  const { payload } = evaluate(gate, 'input', userMsg);    // runs the input-stage rules
+  const resp = await client.chat.completions.create({ model: 'gpt-4o', messages });
+  console.log(payload, resp);
+} catch (trip) {
+  if (trip instanceof GuardrailTripped) {                  // blocked pre-flight — $0
+    console.log('blocked:', trip.decisions.map((d) => d.guardrail));
+  }
+}
+```
+
+<!-- /tabs -->
+
+Under the [`cendor-sdk`](/docs/sdk/guardrails) agent loop you don't call `evaluate` yourself — you
+pass `Agent(guardrails=[…])` and it gates all four stages in the loop for you.
+
+## 7. Make runs testable — and audited
 
 <!-- tabs: lang -->
 <!-- tab: Python -->

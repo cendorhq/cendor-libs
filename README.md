@@ -55,8 +55,10 @@ graph TD
     B --- CK["contextkit<br/>pack context into a budget"]
     B --- SQ["squeeze<br/>compress oversized blocks"]
     PRE --- TG1["tokenguard<br/>block / downgrade if over budget"]
+    PRE --- GR1["guardrails<br/>gate input / tool calls: block / redact"]
     PRE --- AT1["acttrace<br/>policy guard: flag + block bad input"]
     POST --- TG2["tokenguard<br/>record spend by feature / user"]
+    POST --- GR2["guardrails<br/>gate output: block / flag"]
     POST --- CS["cassette<br/>record the run (replay in tests)"]
     POST --- AT2["acttrace<br/>append to the tamper-evident log"]
 
@@ -64,19 +66,22 @@ graph TD
     classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
     classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
     classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
+    classDef gr fill:#F97316,color:#111827,stroke:#EA580C;
     classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
     classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
     class CALL seam;
     class CK ck;
     class SQ sq;
     class TG1,TG2 tg;
+    class GR1,GR2 gr;
     class CS cs;
     class AT1,AT2 at;
 ```
 
 Read it top to bottom — that's one request's lifecycle, with each library labelled **where it acts**.
-Note that **tokenguard** and **acttrace** each appear twice: they run *before* the call (cap spend /
-guard the input) **and** *after* it (record cost / append to the log).
+Note that **tokenguard**, **guardrails**, and **acttrace** each appear twice: they run *before* the
+call (cap spend / gate the input / guard bad input) **and** *after* it (record cost / gate the output
+/ append to the log).
 
 ## The seven libraries — at a glance
 
@@ -89,13 +94,12 @@ Each solves one production problem, and each works **on its own**:
 | [**tokenguard**](packages/cendor-tokenguard) | runaway cost | Cap spend before a call runs (block/downgrade), and attribute cost per feature/user. |
 | [**guardrails**](packages/cendor-guardrails) | unsafe input / output | A deterministic gate at four stages (input / tool call / tool output / output) — block / redact / flag, offline, audit-evidenced. |
 | [**cassette**](packages/cendor-cassette) | can't test agents | Record a whole run once (LLM + tool calls), replay it forever — offline, deterministic. |
-| [**acttrace**](packages/cendor-acttrace) | no audit trail | Tamper-evident, offline-verifiable decision log + policy flags, with compliance evidence packs. |
+| [**acttrace**](packages/cendor-acttrace) | no audit trail | Pre-send guard for secrets & PII (block / redact) **and** a tamper-evident, offline-verifiable decision log with compliance evidence packs. |
 | [**core**](packages/cendor-core) | the shared glue | Types, token counting, offline prices, the `instrument()` seam, and the event bus every tool rides. |
 
-```
-contextkit  →  squeeze  →  tokenguard  →  guardrails  →  cassette  →  acttrace
- assemble       compress      budget         gate          test         audit
-```
+Read that as **one call's lifecycle, not a dependency chain** — assemble and compress the prompt,
+budget and gate before send, then test, re-gate the output, guard, and audit after — every library
+standalone, all cooperating on `cendor-core`'s bus.
 
 All seven are **published on PyPI** and green in CI (offline tests · ruff · mypy).
 

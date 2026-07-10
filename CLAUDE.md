@@ -5,7 +5,7 @@ Project **constitution**. Always in effect. Locked decisions → `MEMORY.md` (a 
 ## What this is
 Cendor — *"Production plumbing for LLM applications."* A monorepo publishing a family of small, composable Python libraries that sit **beneath** agent frameworks: context, cost, testing, governance. Framework-agnostic. Local-first. Apache-2.0.
 
-Pipeline: `contextkit` (assemble) → `squeeze` (compress) → `tokenguard` (budget) → `cassette` (test) → `acttrace` (audit), on a shared foundation `cendor-core`. All under the `cendor.*` import namespace.
+Lifecycle of one governed call: `contextkit` (assemble) → `squeeze` (compress) → `tokenguard` (budget) → `guardrails` (gate) → `cassette` (test) → `acttrace` (guard + audit), on a shared foundation `cendor-core`. Seven libraries, not a dependency chain — each stands alone and they cooperate only on core's bus. All under the `cendor.*` import namespace.
 
 ## Cardinal rules — DO NOT BREAK
 1. **NEVER create `src/cendor/__init__.py`.** `cendor` is a PEP 420 implicit namespace package. A top-level `__init__.py` breaks every cross-package import. Each package owns only `src/cendor/<tool>/` (which *does* have its own `__init__.py`).
@@ -27,10 +27,10 @@ cendor-libs/                  # repo root (cendorhq/cendor-libs)
 └── packages/
     ├── cendor-core/          # src/cendor/core/   (NO src/cendor/__init__.py)
     ├── cendor-tokenguard/    # src/cendor/tokenguard/
-    ├── cendor-libs/          # umbrella meta-package (pins the six): pyproject only, no src/
+    ├── cendor-libs/          # umbrella meta-package (pins all seven): pyproject only, no src/
     └── cendor/               # brand alias (depends on cendor-libs): pyproject only, no src/
 ```
-`contextkit`, `squeeze`, `cassette`, and `acttrace` each live under `packages/cendor-<tool>/` alongside these; add any future package with the `new-package` skill.
+`contextkit`, `squeeze`, `guardrails`, `cassette`, and `acttrace` each live under `packages/cendor-<tool>/` alongside these; add any future package with the `new-package` skill.
 
 ## Tech stack
 Python ≥ 3.11 · **uv** (workspace, envs, build, publish) · **hatchling** (build backend) · **ruff** (lint+format) · **mypy** or **ty** (types) · **pytest** (+ pytest-asyncio) · OpenTelemetry GenAI semconv for spans.
@@ -45,7 +45,7 @@ Python ≥ 3.11 · **uv** (workspace, envs, build, publish) · **hatchling** (bu
 
 ## Build order (current focus)
 1. `cendor-core` (MVP slice: `types`, `tokens`, `prices`, `instrument`, `bus`, `otel`) + `cendor-tokenguard` → first release.
-2. `contextkit` → 3. `squeeze` → 4. `cassette` → 5. `acttrace`. Grow `core` only as each needs it.
+2. `contextkit` → 3. `squeeze` → 4. `cassette` → 5. `acttrace` → 6. `guardrails`. Grow `core` only as each needs it.
 
 ## Working in the monorepo
 - `uv sync` — set up the workspace.

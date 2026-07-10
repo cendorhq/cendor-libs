@@ -130,7 +130,7 @@ when a runtime owns the call loop.
 <!-- tab: Python -->
 
 ```python
-client = instrument(openai_client)     # OpenAI · Anthropic · Bedrock · Gemini · Ollama
+client = instrument(openai_client)     # OpenAI · Anthropic · Hugging Face · Gemini · Bedrock · Ollama
 
 @instrument_tool("search")             # wrap a tool so ToolCall events join the stream
 def search(q): ...
@@ -141,7 +141,7 @@ def search(q): ...
 ```ts
 import { instrument, instrumentTool } from '@cendor/core';
 
-const client = instrument(new OpenAI());       // OpenAI (Chat + Responses) · Anthropic — more landing
+const client = instrument(new OpenAI());       // OpenAI · Anthropic · Hugging Face · Gemini · Bedrock · Ollama
 
 const search = instrumentTool('search')(       // wrap a tool so ToolCall events join the stream
   (q) => { /* ... */ });
@@ -306,7 +306,7 @@ graph LR
     SEAM["normalize the call"]
     INT["interceptors<br/>replay · reroute"]
     BUS["event bus<br/>LLMCall / ToolCall"]
-    SUBS["subscribers<br/>tokenguard · cassette<br/>acttrace · contextkit"]
+    SUBS["subscribers<br/>tokenguard · guardrails · cassette<br/>acttrace · contextkit"]
     OT["OpenTelemetry<br/>gen_ai span"]
 
     APP -->|"create / stream"| WRAP --> SEAM

@@ -227,6 +227,15 @@ remain out of scope. `llm_judge(judge)` is an **adapter contract**, not a bundle
 supply the model call; the [`cendor.guardrails.judge` helpers](#the-llm-judge-helpers) package the
 verdict prompt + strict-JSON parsing so you don't hand-roll them.
 
+### Guardrails vs acttrace's `guard()`
+Two libraries can block a call — deliberately, because they gate different things. **guardrails** is
+the deterministic Gate *you configure*: keyword / regex / URL / length / JSON-schema rules at four
+stages, with opt-in detection tiers up to hosted rails. [**acttrace**'s
+`guard()`](acttrace.md#enforcing-a-policy-with-guard) is the *detection engine* — a secrets & PII
+catalogue under a Policy. Both act **before send**, and both chain their decisions as tamper-evident
+evidence. Reach for guardrails for rule-based gating with per-request scope; reach for `guard()` for
+PII and secrets, so there's one detection engine, not two.
+
 ## Functions & classes
 
 ### The rules
@@ -759,12 +768,13 @@ graph LR
 
 ## Plugs into the stack
 
-**Inbound, at the seam.** `guardrails` is the **Gate** in the pipeline — `contextkit → squeeze →
-tokenguard → guardrails → cassette → acttrace`. It imports **only** `cendor-core`: checks ride the
-same `instrument()` interceptor and event bus every other library uses, so the same guardrail
-applies under the `cendor-sdk` loop, a bare instrumented OpenAI/Anthropic/Gemini/Bedrock/Ollama
-client, or beneath another framework — in Python and TypeScript alike. Decisions flow to `acttrace`
-over the bus; nothing is imported in either direction.
+**On both sides of the call, at the seam.** `guardrails` is the **Gate** in one call's lifecycle — it
+gates the input and tool calls *before send* and the output *after*, on `cendor-core`'s event bus,
+not a dependency chain. It imports **only** `cendor-core`: checks ride the same `instrument()`
+interceptor and event bus every other library uses, so the same guardrail applies under the
+`cendor-sdk` loop, a bare instrumented OpenAI/Anthropic/Gemini/Bedrock/Ollama client, or beneath
+another framework — in Python and TypeScript alike. Decisions flow to `acttrace` over the bus;
+nothing is imported in either direction.
 
 ## Threat model
 

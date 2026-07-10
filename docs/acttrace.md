@@ -1,8 +1,9 @@
-# `cendor-acttrace` — audit
+# `cendor-acttrace` — guard + audit
 
-A tamper-evident, append-only record of every AI decision — what model ran, on what
-context, at what cost, with which tools, and who signed off. Integrity comes from a hash
-chain you can verify offline, not from a server: no database, no infrastructure, no account.
+Two jobs, one library. **Guard**: detect secrets & PII offline and **block or redact them before
+they're sent**. **Audit**: keep a tamper-evident, append-only record of every AI decision — what
+model ran, on what context, at what cost, with which tools, and who signed off. Integrity comes from
+a hash chain you can verify offline, not from a server: no database, no infrastructure, no account.
 
 > **Not legal advice.** `acttrace` produces *evidence to support* compliance (e.g. EU AI Act
 > record-keeping and human-oversight obligations) — it is not a compliance guarantee, and the
@@ -71,6 +72,15 @@ acttrace verify evidence_q3.jsonl --key "…"   # re-walks the chain + signature
 > budgeting, context assembly, and record/replay — is in the [Cookbook](/cookbook).
 
 ## Core concepts
+
+### Guard + audit — the two halves
+`acttrace` acts on **both sides of a call**. *Before send*, `guard(Policy…)` runs an offline
+detector catalogue over the input and **blocks or redacts** secrets & PII on `core`'s interceptor
+seam — the sensitive value never leaves the process. *After send*, the `AuditLog` chains every call,
+decision, and refusal into a tamper-evident record. Both halves share one detection engine, so what
+you blocked or redacted is itself on the record. Jump to [Enforcing a policy with
+`guard()`](#enforcing-a-policy-with-guard) for the pre-send half; the rest of this section covers the
+log.
 
 ### Auto-population
 Construct an `AuditLog` and it subscribes to `core`'s event bus. From then on every
@@ -508,6 +518,10 @@ graph LR
    completeness header.
 4. **Verify.** `verify()` re-walks the chain (and signatures, with a key) offline, returning
    `(ok, detail)`.
+
+Those four steps are the **audit** half — they observe after the fact. The **guard** half runs
+*before* the call: [`guard(Policy…)`](#enforcing-a-policy-with-guard) blocks or redacts secrets & PII
+on the interceptor seam, and every decision it makes is chained into the same log.
 
 ## Enforcing a policy with guard()
 

@@ -75,7 +75,7 @@ graph TD
     classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
     classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
     classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
-    classDef gr fill:#F59E0B,color:#111827,stroke:#D97706;
+    classDef gr fill:#F97316,color:#111827,stroke:#EA580C;
     classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
     classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
     class CALL seam;
@@ -102,13 +102,14 @@ Each solves one of those problems, and each works on its own:
 | [tokenguard](tokenguard.md) | runaway cost | Cap spend before a call runs (block / downgrade), and attribute cost per feature / user. |
 | [guardrails](guardrails.md) | unsafe input / output | A deterministic gate at four stages (input / tool call / tool output / output) — block / redact / flag, offline, audit-evidenced. |
 | [cassette](cassette.md) | can't test agents | Record a whole run once (LLM + tool calls), replay it forever — offline, deterministic. |
-| [acttrace](acttrace.md) | no audit trail | Tamper-evident, offline-verifiable decision log + policy flags, with compliance evidence packs. |
+| [acttrace](acttrace.md) | no audit trail | Pre-send guard for secrets & PII (block / redact) **and** a tamper-evident, offline-verifiable decision log with compliance evidence packs. |
 | [core](core.md) | the shared glue | Types, token counting, offline-first prices, the `instrument()` seam, and the event bus every tool rides. |
 
-```
-contextkit  →  squeeze  →  tokenguard  →  guardrails  →  cassette  →  acttrace
- assemble       compress      budget         gate          test         audit
-```
+Read the table as **one call's lifecycle, not a dependency chain**: contextkit and squeeze shape the
+prompt; tokenguard and guardrails act before send; then cassette records, guardrails re-gates the
+output, and acttrace guards and audits — every library works standalone, all cooperating on
+`cendor-core`'s event bus. The [architecture](architecture.md#the-mental-model) diagram shows exactly
+where each one acts.
 
 All seven are **published on PyPI** (Python) and as **`@cendor/*` on npm** (TypeScript/JS), green
 in CI in both languages. Cross-language artifacts interoperate byte-for-byte — a cassette

@@ -126,7 +126,7 @@ the callback path never touches the client. See
 ### Does it work for multi-agent / multi-process systems?
 Multi-agent within a process: yes — the LangChain callback path correlates each `agent.invoke`
 under its own root-run `trace_id`, and for direct-SDK agents `core.trace("run-id")` sets an ambient
-`trace_id`. Multi-*process*: state is process-local by design (no server — CLAUDE.md rule 4), so
+`trace_id`. Multi-*process*: state is process-local by design (local-first, no server), so
 correlate by `trace_id` and aggregate durably via a `tokenguard` sink into your own store. cendor
 provides a correlation *hook*, not a distributed orchestrator (see [architecture.md](architecture.md)).
 

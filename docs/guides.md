@@ -12,14 +12,16 @@ sequenceDiagram
     participant A as Agent
     participant CK as contextkit (+squeeze)
     participant TG as tokenguard
+    participant GR as guardrails
     participant LLM as instrumented client
     participant AT as acttrace
     U->>A: question
     A->>CK: assemble(blocks) within budget
     CK-->>A: messages (+ receipt on bus)
     A->>TG: enter @budget / track
+    A->>GR: gate input (block / redact / flag)
     A->>LLM: chat.completions.create(messages)
-    Note over LLM,AT: bus emit — tokenguard prices + records, acttrace logs, cassette records
+    Note over LLM,AT: bus emit — tokenguard prices + records, guardrails gates output, acttrace logs, cassette records
     LLM-->>A: response
     A-->>U: answer
 ```
@@ -246,6 +248,41 @@ addInterceptor((call) => {                               // a pre-flight guard o
   }
   return MISS;
 });  // the blocked call never reaches the model — flag() is its only record
+```
+
+<!-- /tabs -->
+
+## Recipe: gate input & output with cendor-guardrails
+
+Where `acttrace.guard()` is the PII/secrets *detection engine*, `guardrails` is the deterministic
+**Gate you configure** — keyword / regex / URL / length / JSON-schema rules at four stages.
+`install()` wires them onto the same `instrument()` seam; an attached `AuditLog` chains every
+decision as tamper-evident evidence, and a `block` raises before the call is billed. (Under the
+[`cendor-sdk`](/docs/sdk/guardrails) loop, pass `Agent(guardrails=[…])` instead of `install()`.)
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.guardrails import rules, install
+
+install([
+    rules.keyword_deny(["ignore previous instructions"], action="block"),    # input, pre-flight
+    rules.url_deny(["evil.example"], stage="output", action="redact"),       # scrub bad links out
+])
+# every instrumented call is now gated; a block raises GuardrailTripped before spend
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { rules, install } from '@cendor/guardrails';
+
+install([
+  rules.keywordDeny(['ignore previous instructions'], { action: 'block' }),   // input, pre-flight
+  rules.urlDeny(['evil.example'], { stage: 'output', action: 'redact' }),      // scrub bad links out
+]);
+// every instrumented call is now gated; a block throws GuardrailTripped before spend
 ```
 
 <!-- /tabs -->

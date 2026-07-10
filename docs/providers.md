@@ -151,7 +151,7 @@ model.generate_content("…")     # model id read from the GenerativeModel, so t
 import { GoogleGenAI } from '@google/genai';
 import { instrument } from '@cendor/core';
 const client = instrument(new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY }));
-await client.models.generateContent({ model: 'gemini-2.0-flash', contents: '…' });  // detected as google
+await client.models.generateContent({ model: 'gemini-1.5-pro', contents: '…' });  // detected as google
 ```
 
 <!-- /tabs -->

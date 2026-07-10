@@ -5,27 +5,54 @@ How the Cendor tools work, how they connect, and how they plug into your agent.
 ## The mental model
 
 Seven small libraries, one shared foundation, one brand. Each is useful alone; installed together
-they cover the lifecycle of a production LLM call:
+they cover **the lifecycle of one governed LLM call** — cooperating through one event bus, never
+through imports:
 
+```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}} }%%
+flowchart LR
+    subgraph BEFORE["before the call · pre-flight"]
+        direction TB
+        CK["contextkit · assemble"]
+        SQ["squeeze · compress"]
+        TG["tokenguard · budget"]
+        GRI["guardrails · gate input"]
+        ATG["acttrace · guard"]
+    end
+    subgraph CALL["the call"]
+        direction TB
+        LLM["your LLM / tool call<br/>rides core's instrument() seam"]
+    end
+    subgraph AFTER["after · automatic, via the bus"]
+        direction TB
+        GRO["guardrails · gate output"]
+        CS["cassette · test"]
+        ATA["acttrace · audit"]
+    end
+    BEFORE --> CALL --> AFTER
+    CORE["cendor-core — the instrument() seam + one event bus beneath every stage"]
+    BEFORE -.-> CORE
+    CALL -.-> CORE
+    AFTER -.-> CORE
 ```
-contextkit  →  squeeze  →  tokenguard  →  guardrails  →  cassette  →  acttrace
- assemble       compress      budget         gate          test         audit
-```
 
-Everything ships under the `cendor.*` import namespace. The foundation, `cendor-core`, defines the
-common vocabulary — what an "LLM call" is, how tokens are counted and priced, how events are emitted
-— that lets the tools interlock without coupling.
+**A lifecycle, not a dependency chain.** Every library works alone; two act on *both* sides of the
+call — **guardrails** gates the input and the output, **acttrace** guards before send and audits
+after — and adding one changes nothing at your call site. Everything ships under the `cendor.*`
+import namespace. The foundation, `cendor-core`, defines the common vocabulary — what an "LLM call"
+is, how tokens are counted and priced, how events are emitted — that lets the tools interlock
+without coupling.
 
-| Role | PyPI package | Import |
-|---|---|---|
-| Foundation | `cendor-core` | `cendor.core` |
-| Assemble | `cendor-contextkit` | `cendor.contextkit` |
-| Compress | `cendor-squeeze` | `cendor.squeeze` |
-| Budget | `cendor-tokenguard` | `cendor.tokenguard` |
-| Gate | `cendor-guardrails` | `cendor.guardrails` |
-| Test | `cendor-cassette` | `cendor.cassette` |
-| Audit | `cendor-acttrace` | `cendor.acttrace` |
-| Umbrella (meta) | `cendor` | *(installs them all)* |
+| Role | When it acts | PyPI package | Import |
+|---|---|---|---|
+| Foundation | the seam + the bus | `cendor-core` | `cendor.core` |
+| Assemble | before the call | `cendor-contextkit` | `cendor.contextkit` |
+| Compress | before the call | `cendor-squeeze` | `cendor.squeeze` |
+| Budget | before + after | `cendor-tokenguard` | `cendor.tokenguard` |
+| Gate | before + after | `cendor-guardrails` | `cendor.guardrails` |
+| Test | after (record / replay) | `cendor-cassette` | `cendor.cassette` |
+| Guard + Audit | before + after | `cendor-acttrace` | `cendor.acttrace` |
+| Umbrella (meta) | — | `cendor` | *(installs them all)* |
 
 ## How they connect (three layers)
 
@@ -41,8 +68,9 @@ The layering is what lets each tool stand alone *and* compose.
 - **Primitives:** `tokens.count(...)`, a tokenizer registry, and a `prices` table.
 
 ### Layer 2 — One instrumentation point
-`tokenguard`, `cassette`, and `acttrace` all need to *observe* LLM and tool calls. Rather than each
-patching the provider client (and fighting each other), `core` owns a single interception point:
+`tokenguard`, `guardrails`, `cassette`, and `acttrace` all need to *see* LLM and tool calls — to
+budget, gate, record, or audit them. Rather than each patching the provider client (and fighting
+each other), `core` owns a single interception point:
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -70,23 +98,27 @@ for free:
 
 - `tokenguard` prices the call and records spend by tag.
 - `contextkit` attaches its assembly decisions (kept / dropped) to the stream.
-- `acttrace` subscribes and produces an audit log that **already knows** the context, the cost, and
-  the tools — without importing `tokenguard` or `contextkit`.
+- `guardrails` gates the input, tool calls, and output; each decision emits on the bus.
+- `acttrace` subscribes and produces an audit log that **already knows** the context, the cost, the
+  tools, and the guardrail decisions — without importing `tokenguard`, `contextkit`, or `guardrails`.
 
 ```mermaid
 sequenceDiagram
     participant App as Your agent
     participant C as instrument(client)
     participant Bus as core.bus
+    participant GR as guardrails
     participant TG as tokenguard
     participant CS as cassette
     participant AT as acttrace
+    App->>GR: gate input (block / redact / flag)
+    GR-->>Bus: emit(GuardrailDecision)
     App->>C: chat.completions.create(...)
     C->>C: build LLMCall, count + price usage
     C-->>Bus: emit(LLMCall)
     Bus-->>TG: record spend, enforce budget
     Bus-->>CS: record (or replay) the call
-    Bus-->>AT: append to the hash-chained audit log
+    Bus-->>AT: append to the hash-chained log (calls + guardrail decisions)
     C-->>App: response
 ```
 
@@ -116,7 +148,7 @@ graph TD
     classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
     classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
     classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
-    classDef gr fill:#F59E0B,color:#111827,stroke:#D97706;
+    classDef gr fill:#F97316,color:#111827,stroke:#EA580C;
     classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
     classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
     class core co; class ck ck; class sq sq; class tg tg; class gr gr; class cs cs; class at at;
