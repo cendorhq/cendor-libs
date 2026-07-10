@@ -138,8 +138,9 @@ cassette.semanticMatch(actual, expected, 0.6, scorer)   // -> boolean
 <!-- /tabs -->
 
 The default `lexical_score` is offline, deterministic, and recall-oriented (it tolerates extra
-text but accepts negations/supersets). Pass a `scorer` for negation-sensitive checks — see
-[Semantic matching](#semantic-matching) below.
+text but accepts negations/supersets). Pass a `scorer` for meaning/topic-aware checks — see
+[Semantic matching](#semantic-matching) below (a negation that must flip the verdict needs a
+Tier-4 LLM-judge scorer, not a static-embedding one).
 
 ### Other functions
 | Name | Signature | What it does |
@@ -210,7 +211,9 @@ pip install 'cendor-cassette[embeddings]'
 ```python
 score = cassette.local_embedding_scorer()   # downloads/caches the model once, then offline
 assert cassette.semantic_match(result.answer, "offers a refund", scorer=score)
-assert not cassette.semantic_match("we will not offer a refund", "offers a refund", scorer=score)
+# Note: static embeddings are bag-of-token — they capture topic, not compositional *negation*.
+# "we will not offer a refund" still scores high against "offers a refund". If a negation must
+# flip the verdict, use a Tier-4 LLM-judge scorer (below), not a static-embedding one.
 ```
 <!-- tab: TypeScript -->
 
@@ -273,7 +276,10 @@ server-side loops you don't control, `promote()` a recorded OTel/`acttrace` trac
 ## Honest limits
 
 - **The default `semantic_match` is a lexical heuristic** — recall-oriented, so it accepts
-  negations/supersets. For meaning-aware or negation-sensitive checks, pass a `scorer` (start with
-  the free, offline `local_embedding_scorer`).
+  negations/supersets. For **meaning/topic-aware** checks, pass the free, offline
+  `local_embedding_scorer` (Tier 2). But static embeddings are bag-of-token: they can't represent
+  compositional **negation** ("we will *not* offer a refund" still scores high against "offers a
+  refund"). If a negation must flip the verdict, that needs a **Tier-4 LLM-judge scorer**, not a
+  static-embedding one.
 - **Tool calls with real side effects:** cassette records the *result* and stubs the side effect
   on replay — wrap your dispatcher with `core.instrument_tool` so tool calls join the stream.

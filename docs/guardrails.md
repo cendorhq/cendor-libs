@@ -986,10 +986,14 @@ published, `prompt_guard` is described only as a *prompt-injection classifier ad
   precisely so that cost is yours to see and own — measure it; don't assume it. Bound it with
   `timeout=` and choose `on_error` (fail-closed by default) so a judge outage doesn't silently open
   the gate. A judge is only as good as its prompt — there is **no jailbreak-detection claim** here.
-- **The standalone `output` stage is post-flight.** Via `install()`, output guardrails inspect the
-  *completed* call and raise after it ran (and was billed). Streamed deltas already shown can't be
-  unshown. The SDK's in-loop output stage evaluates before the terminal event, but the same
-  already-streamed caveat applies.
+- **The standalone `output` stage is post-flight.** Via `install()`/`scoped()`, output guardrails
+  inspect the *completed* call — including a **streamed** response, whose delta chunks are
+  reconstructed into the full text so the gate runs (it doesn't silently skip streamed replies) —
+  and raise after it ran (and was billed). Streamed deltas already shown can't be unshown. And a
+  `redact` at the *standalone* `output` stage **records the decision but cannot clean the response
+  the caller already holds** — only the SDK's in-loop output stage can rewrite the returned text; use
+  `block` (or the SDK) when you must withhold the content. The SDK's in-loop output stage evaluates
+  before the terminal event, but the same already-streamed caveat applies.
 - **PII/secret detection isn't a built-in here** — one detection engine, kept in `acttrace`. Bridge
   it with `rules.custom` + `acttrace.scan`/`redact`, or use the SDK's ready-made `rules.pii()` /
   `secrets()` / `entropy()`. Coverage is exactly acttrace's catalogue (measured per-category on a

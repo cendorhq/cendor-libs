@@ -32,7 +32,7 @@ from cendor.core import tokens, prices
 
 n = tokens.count([{"role": "user", "content": "Summarize this in 3 bullets."}], model="claude-opus-4-8")
 cost = prices.estimate("claude-opus-4-8", input_tokens=n, output_tokens=200)
-print(n, cost, tokens.method("claude-opus-4-8"))   # e.g. 13  0.005065 USD  bpe-estimate
+print(n, cost, tokens.method("claude-opus-4-8"))   # e.g. 16  0.00508000 USD  bpe-estimate
 ```
 
 <!-- tab: TypeScript -->
@@ -42,7 +42,7 @@ import { tokens, prices } from '@cendor/core';
 
 const n = tokens.count([{ role: 'user', content: 'Summarize this in 3 bullets.' }], 'claude-opus-4-8');
 const cost = prices.estimate('claude-opus-4-8', n, { outputTokens: 200 });
-console.log(n, cost.toString(), tokens.method('claude-opus-4-8'));  // e.g. 13  0.005065 USD  bpe-estimate
+console.log(n, cost.toString(), tokens.method('claude-opus-4-8'));  // e.g. 16  0.00508000 USD  bpe-estimate
 ```
 
 <!-- /tabs -->
@@ -73,8 +73,8 @@ you which path is active:
 
 | Tier | When | Accuracy |
 |---|---|---|
-| `exact` | a model-native OpenAI encoding exists (the default — `tiktoken` ships with `cendor-core`) | exact |
-| `bpe-estimate` | non-native model (Claude/Gemini, or unknown OpenAI id) | close — real BPE (`o200k`), not native |
+| `exact` | a model-native OpenAI encoding exists (the default — `tiktoken` ships with `cendor-core`); OpenAI fine-tunes (`ft:gpt-4o:…`) map to their base model | exact |
+| `bpe-estimate` | any non-native model — Claude/Gemini **and** open/hosted weights (llama, mistral, deepseek, qwen), new o-series ids, unknown OpenAI ids | close — real BPE (`o200k`), not native |
 | `registered` | you plugged a counter in via `tokens.register(family, fn)` | as good as your counter |
 | `heuristic` | `tiktoken` failed to import (a broken/partial install) — a defensive fallback, never the default | rough (~3–6 chars/token by content) |
 

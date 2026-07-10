@@ -435,14 +435,20 @@ def _response_text(call: LLMCall) -> str | None:
     """Best-effort assistant text off a completed ``LLMCall`` for the standalone output stage.
 
     Reads the raw provider response at ``call.metadata["response"]`` across common shapes (OpenAI
-    Chat Completions / Responses, Anthropic, Ollama, Gemini, Bedrock). Returns ``None`` when nothing
-    is extractable, so output guardrails simply skip rather than misfire. The SDK's in-loop output
-    stage has the parsed text directly and does not rely on this.
+    Chat Completions / Responses, Anthropic, Ollama, Gemini, Bedrock). For a **streamed** call
+    ``cendor-core`` stores the raw delta chunks as a *list* there, so the completed text is
+    reconstructed by joining the per-chunk deltas — otherwise the output stage silently no-ops on
+    streamed responses (the banned text is delivered). Returns ``None`` when nothing is extractable,
+    so output guardrails simply skip rather than misfire. The SDK's in-loop output stage has the
+    parsed text directly and does not rely on this.
     """
     response = call.metadata.get("response")
     if response is None:
         return None
     try:
+        if isinstance(response, list):  # a streamed call: core stored the raw delta chunks
+            text = "".join(_chunk_text(ch) for ch in response)
+            return text or None
         return _extract_text(response)
     except Exception:  # noqa: BLE001 - extraction must never break the passthrough
         return None
@@ -452,6 +458,44 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
+
+
+def _chunk_text(chunk: Any) -> str:
+    """Text carried by one streamed delta chunk, across providers. A chunk matches exactly one
+    provider shape, so trying each and joining reconstructs the full assistant text. Mirrors
+    ``cendor.core``'s internal per-provider stream-delta join (kept local — guardrails imports only
+    core's public surface)."""
+    # OpenAI / HuggingFace Chat Completions: choices[].delta.content
+    choices = _get(chunk, "choices")
+    if isinstance(choices, list) and choices:
+        parts = [
+            _get(_get(c, "delta"), "content")
+            for c in choices
+            if isinstance(_get(_get(c, "delta"), "content"), str)
+        ]
+        if parts:
+            return "".join(parts)
+    # OpenAI Responses API: response.output_text.delta events carry incremental text
+    if _get(chunk, "type") == "response.output_text.delta":
+        delta = _get(chunk, "delta")
+        return delta if isinstance(delta, str) else ""
+    # Anthropic: content_block_delta events with delta.text
+    if _get(chunk, "type") == "content_block_delta":
+        text = _get(_get(chunk, "delta"), "text")
+        return text if isinstance(text, str) else ""
+    # Ollama: message.content
+    message = _get(chunk, "message")
+    if message is not None:
+        text = _get(message, "content")
+        if isinstance(text, str):
+            return text
+    # Gemini: chunk.text
+    text = _get(chunk, "text")
+    if isinstance(text, str):
+        return text
+    # Bedrock Converse: contentBlockDelta.delta.text
+    text = _get(_get(_get(chunk, "contentBlockDelta"), "delta"), "text")
+    return text if isinstance(text, str) else ""
 
 
 def _extract_text(response: Any) -> str | None:

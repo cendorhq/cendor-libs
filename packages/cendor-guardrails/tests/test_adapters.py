@@ -60,6 +60,15 @@ def test_prompt_guard_fail_closed_blocks_on_missing_extra():
 # --------------------------------------------------------------------------- language
 
 
+def test_language_defaults_to_flag_not_block():
+    # M3: the default action is "flag" (advisory) — matching the signature/docstring — so a
+    # disallowed language is recorded, not blocked (a false language-ID must not hard-block calls).
+    out = apply([rules.language(["en"], detect=lambda t: "fr")], "input", "bonjour le monde")
+    assert len(out) == 1
+    assert out[0].action == "flag"
+    assert "'fr'" in out[0].reason
+
+
 def test_language_trips_on_disallowed():
     g = rules.language(["en"], detect=lambda t: "fr", action="block")
     with pytest.raises(GuardrailTripped) as ei:

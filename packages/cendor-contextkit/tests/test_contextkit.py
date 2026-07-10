@@ -385,6 +385,17 @@ def test_history_block_peels_oldest_turns():
     assert d.action == "truncated" and "kept" in d.note and "of 3 turns" in d.note
 
 
+def test_empty_history_block_reports_kept_not_dropped():
+    # L5: Block(messages=[]) with plenty of budget must not claim "dropped all 0 turns (no room)".
+    ctx = Context(budget_tokens=1000, model="gpt-4o")
+    ctx.add(Block(messages=[], priority=5))
+    ctx.assemble()
+    hist = [d for d in ctx.report().decisions if d.role == "history"]
+    if hist:  # an empty history may or may not emit a decision; if it does, it's not a false drop
+        assert hist[0].action == "kept"
+        assert "dropped all 0" not in hist[0].note
+
+
 def test_history_block_kept_whole_when_it_fits():
     turns = [
         {"role": "user", "content": "hi"},

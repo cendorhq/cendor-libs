@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.0.2] — 2026-07-10
+Deep-QA fix.
+
+### Fixed
+- **`Block(messages=[])` no longer reports a misleading "dropped all 0 turns (no room)".** An empty history block is recorded as `kept` with no note, even with a large budget.
+
 ## [1.0.1] — 2026-07-05
 ### Changed
 - Repository moved to `github.com/cendorhq/cendor-libs`; `[project.urls]` updated. No API or behavior change.

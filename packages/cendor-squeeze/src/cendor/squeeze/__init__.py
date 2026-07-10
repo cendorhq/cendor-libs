@@ -12,6 +12,7 @@ Satisfies ``cendor.core.protocols.Compressor`` by shape, so ``contextkit`` uses 
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -261,7 +262,14 @@ def compress(
     if isinstance(content, str):
         original = content
     else:
-        original = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+        try:
+            original = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+        except TypeError as exc:
+            raise TypeError(
+                f"squeeze.compress() takes a string or a JSON-serializable object (dict/list/int/"
+                f"float/bool/None); got {type(content).__name__}, which cannot be encoded as JSON. "
+                f"Convert it to one of those first."
+            ) from exc
         if kind == "auto":
             kind = "json"
 
@@ -331,32 +339,52 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
+def _peel_one(obj: Any) -> bool:
+    """Remove one structural unit from ``obj`` **in place**, returning ``True`` if anything was
+    removed (``False`` for an un-peelable scalar / empty container).
+
+    Descends through single-child wrappers, so a payload nested under one key — the dominant real
+    shape, ``{"data":[…]}`` / ``{"results":{…}}`` — is peeled element-by-element instead of being
+    deleted wholesale (which used to collapse the whole thing to ``{}``). Dicts drop the
+    largest-valued key; lists drop the trailing element (keeping a valid chronological prefix)."""
+    if isinstance(obj, dict) and obj:
+        if len(obj) == 1:
+            (key,) = obj.keys()
+            val = obj[key]
+            if isinstance(val, (dict, list)) and val and _peel_one(val):
+                return True
+            del obj[key]  # sole key wraps a scalar / now-empty container — drop it (→ {})
+            return True
+        biggest = max(obj, key=lambda k: len(_dumps(obj[k])))  # first max on ties (insertion order)
+        del obj[biggest]
+        return True
+    if isinstance(obj, list) and obj:
+        tail = obj[-1]
+        if len(obj) == 1 and isinstance(tail, (dict, list)) and tail and _peel_one(tail):
+            return True
+        obj.pop()
+        return True
+    return False
+
+
 def _fit_json(obj: Any, target_tokens: int, model: str) -> tuple[str, bool]:
     """Shrink a JSON value to ``target_tokens`` by dropping keys/elements **structurally**, so the
     result stays valid JSON (prefix-cutting a JSON string yields a parse error).
 
-    Drops top-level dict keys largest-value-first, or trailing list elements, until it fits. Returns
-    ``(json_text, dropped)``. Only if even the emptied container overflows does it fall back to a
-    raw prefix cut — the one case where the output may not parse (see the module docs)."""
+    Peels one unit at a time — the largest dict key, or a trailing list element — recursing into a
+    payload nested under a single wrapper key so ``{"data":[…]}`` keeps some elements instead of
+    collapsing to ``{}``. Returns ``(json_text, dropped)``. Only if even the emptied container
+    overflows (a single giant scalar) does it fall back to a raw prefix cut — the one case where the
+    output may not parse (see the module docs)."""
     small = _dumps(obj)
     if tokens.count(small, model) <= target_tokens:
         return small, False
-    if isinstance(obj, dict):
-        kept = dict(obj)
-        for key in sorted(obj, key=lambda k: len(_dumps(obj[k])), reverse=True):
-            if tokens.count(_dumps(kept), model) <= target_tokens:
-                break
-            del kept[key]
-        small = _dumps(kept)
-        if tokens.count(small, model) <= target_tokens:
-            return small, True
-    elif isinstance(obj, list):
-        kept_list = list(obj)
-        while kept_list and tokens.count(_dumps(kept_list), model) > target_tokens:
-            kept_list.pop()
-        small = _dumps(kept_list)
-        if tokens.count(small, model) <= target_tokens:
-            return small, True
+    kept = copy.deepcopy(obj)  # never mutate the caller's value
+    while tokens.count(_dumps(kept), model) > target_tokens and _peel_one(kept):
+        pass
+    small = _dumps(kept)
+    if tokens.count(small, model) <= target_tokens:
+        return small, True
     # last resort: a single giant scalar/leaf value — prefix-cut (may not parse; documented)
     return _truncate_to_tokens(small, target_tokens, model), True
 

@@ -213,7 +213,17 @@ on strings/objects — identical across any SDK, never touching the client.
 - **Structural compressors are deterministic and need no LLM.** Prose is extractive
   (deterministic); an LLM-summarization backend isn't bundled, but the technique is pluggable.
 - **Token-reduction *percentage* depends on the tokenizer;** reversibility is exact regardless.
-- **The benchmarks are the honest numbers.** Headline ratios (JSON ~49% / code ~53% / prose
-  ~49%, and logs anywhere from ~99% on repetition-heavy logs down to ~30% on high-entropy logs)
-  come from the harness on realistic corpora — see [Benchmarks](benchmarks.md), the source of
-  truth. Eye-popping figures on synthetic, highly-repetitive data are not representative.
+- **`expand()` is byte-for-byte for *string* input.** When you pass an **object** (dict/list),
+  `compress()` first serializes it with compact `json.dumps` and stores *that* — so `expand()`
+  returns the canonical JSON **string**, not your original object (key order is preserved, but
+  incidental whitespace and an int-valued float like `1.0` are normalized). Pass a string if you
+  need the exact original bytes back.
+- **The benchmarks are the honest numbers.** Headline ratios (JSON ~49% / prose ~49%, and logs
+  anywhere from ~99% on repetition-heavy logs down to ~30% on high-entropy logs) come from the
+  harness on realistic corpora — see [Benchmarks](benchmarks.md), the source of truth.
+  Eye-popping figures on synthetic, highly-repetitive data are not representative.
+- **Code compresses modestly (~10–17%), not dramatically.** The code path strips only comments,
+  blank lines, and trailing whitespace, and it is string-literal-aware — **string literals and
+  docstrings are preserved**. So the ratio tracks the input's comment density: comment-sparse code
+  saves little; a comment-heavy or auto-generated file saves much more. For the same reason
+  `fidelity="aggressive"` ≈ `"balanced"` on normally-spaced code.

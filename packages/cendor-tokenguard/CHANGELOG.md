@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.2] — 2026-07-10
+Deep-QA fix.
+
+### Fixed
+- **`on_exceed="clamp"` now always injects the provider output ceiling** (`max_completion_tokens` / `max_tokens` = the tokens left in the budget) on every call under a token budget — not only when the 256-token reserve heuristic would breach. A single surprise-long call can no longer overshoot the `tokens=` cap while headroom exists. The input-alone-exceeds → hard-block fallback and a caller's own tighter cap are unchanged.
+
 ## [1.1.1] — 2026-07-05
 ### Changed
 - Repository moved to `github.com/cendorhq/cendor-libs`; `[project.urls]` updated. No API or behavior change.

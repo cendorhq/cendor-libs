@@ -139,6 +139,23 @@ def test_reopen_corrupt_file_raises_instead_of_truncating(tmp_path):
     assert path.read_text(encoding="utf-8").startswith(before)
 
 
+def test_reopen_export_pack_gives_a_clear_error(tmp_path):
+    # L6: pointing AuditLog at an export() evidence pack (a read-only artifact) must explain that,
+    # not emit the generic "corrupt or unparseable" (the pack's `_meta` header + framework-annotated
+    # entries aren't an appendable log).
+    path = tmp_path / "audit.jsonl"
+    log = AuditLog(system="s", path=str(path))
+    pack = tmp_path / "pack.jsonl"
+    try:
+        _write_entries(log, 3)
+        log.export(str(pack), framework="eu_ai_act")
+    finally:
+        log.detach()
+
+    with pytest.raises(ValueError, match="evidence pack"):
+        AuditLog(system="s", path=str(pack))
+
+
 def test_reopen_bounded_rehydrates_tail_and_exports_full_chain(tmp_path):
     # Reopening with max_entries loads only the tail into the ring, marks the rest evicted, and
     # export() still re-reads the full chain from the file.

@@ -123,7 +123,28 @@ def test_ner_redactor_raises_clear_error_when_extra_absent():
         ner_redactor()
 
 
-@pytest.mark.skipif(not ner_available(), reason="requires the [ner] extra")
+def test_ner_available_false_without_a_spacy_model(monkeypatch):
+    # M5: the [ner] extra installs Presidio + spaCy but NOT a language model. Even with Presidio
+    # importable, ner_available() must report False when no model is loadable.
+    from cendor.acttrace import ner as ner_mod
+
+    monkeypatch.setattr(ner_mod, "_presidio_importable", lambda: True)
+    monkeypatch.setattr(ner_mod, "_spacy_model_available", lambda model: False)
+    assert ner_available() is False
+
+
+def test_ner_redactor_raises_model_hint_when_model_missing(monkeypatch):
+    # M5: Presidio present but no spaCy model -> a clear RuntimeError with the download hint,
+    # NOT Presidio's pip/spacy auto-download subprocess (which SystemExits in a pip-less venv).
+    from cendor.acttrace import ner as ner_mod
+
+    monkeypatch.setattr(ner_mod, "_presidio_importable", lambda: True)
+    monkeypatch.setattr(ner_mod, "_spacy_model_available", lambda model: False)
+    with pytest.raises(RuntimeError, match=r"spacy download en_core_web_sm"):
+        ner_redactor()
+
+
+@pytest.mark.skipif(not ner_available(), reason="requires the [ner] extra + a spaCy model")
 def test_ner_redactor_scrubs_a_name_when_installed():
     redactor = ner_redactor()
     out = redactor({"note": "call Alice Smith about the invoice"})

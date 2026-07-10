@@ -446,6 +446,7 @@ class AuditLog:
         if not self.path.exists() or self.path.stat().st_size == 0:
             return []
         entries: list[AuditEntry] = []
+        looks_like_export_pack = False
         try:
             with self.path.open(encoding="utf-8") as fh:
                 for raw in fh:
@@ -454,9 +455,24 @@ class AuditLog:
                         continue
                     row = json.loads(line)
                     if "_meta" in row:  # a header from a previous export in the same file — skip
+                        meta = row["_meta"]
+                        # An export() evidence pack starts with exactly this header shape. Remember
+                        # it so a downstream parse failure explains *why* (an export pack is a
+                        # read-only artifact, not an appendable log), not a generic "corrupt".
+                        if isinstance(meta, dict) and (
+                            "controls_covered" in meta or "disclaimer" in meta
+                        ):
+                            looks_like_export_pack = True
                         continue
                     entries.append(AuditEntry(**row))
         except (json.JSONDecodeError, TypeError, KeyError, ValueError) as e:
+            if looks_like_export_pack:
+                raise ValueError(
+                    f"{self.path} looks like an export() evidence pack, not an appendable audit "
+                    "log — a pack is a read-only artifact (a `_meta` header + framework-annotated "
+                    "entries). Point AuditLog at a raw log file (or omit path=); use export() to "
+                    "produce packs from it, and don't reopen a pack as a log."
+                ) from e
             raise ValueError(
                 f"cannot resume audit log at {self.path}: file is corrupt or unparseable ({e}). "
                 "Refusing to reopen — the existing chain must never be discarded; fix or move the "

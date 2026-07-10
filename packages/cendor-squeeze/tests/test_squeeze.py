@@ -288,6 +288,47 @@ def test_json_list_safety_truncate_stays_valid():
     assert isinstance(parsed, list) and 0 < len(parsed) < 40
 
 
+def test_json_nested_list_wrapper_keeps_elements_not_empty():
+    # H1: a single wrapper key around the payload (the dominant API/tool-response shape) must be
+    # peeled element-by-element, not deleted wholesale — the old fitter emitted `{}` at any budget.
+    data = {"data": [{"id": i, "name": f"item-{i}", "tag": "x" * 10} for i in range(100)]}
+    original = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    for target in (50, 100, 200, 400):
+        small, handle = compress(data, kind="json", target_tokens=target, model="gpt-4o")
+        parsed = json.loads(small)  # valid JSON despite the budget
+        assert parsed != {}, f"collapsed to empty at target={target}"
+        assert isinstance(parsed.get("data"), list) and len(parsed["data"]) > 0
+        assert tokens.count(small, "gpt-4o") <= target
+        assert handle.expand() == original  # the full original is still restorable
+
+
+def test_json_nested_dict_wrapper_recurses():
+    # {"results": {…}} — a dict nested under one key must keep some inner keys, not collapse to {}.
+    payload = {"results": {f"k{i}": {"score": i, "text": "y" * 20} for i in range(60)}}
+    small, _ = compress(payload, kind="json", target_tokens=150, model="gpt-4o")
+    parsed = json.loads(small)
+    assert "results" in parsed and isinstance(parsed["results"], dict)
+    assert len(parsed["results"]) > 0
+    assert tokens.count(small, "gpt-4o") <= 150
+
+
+def test_compress_non_serializable_raises_friendly_error():
+    # L4: a non-JSON-serializable object gives a clear squeeze error, not a raw stdlib TypeError.
+    with pytest.raises(TypeError, match=r"JSON-serializable"):
+        compress({1, 2, 3})  # a set is not JSON-serializable
+
+
+def test_json_bigger_budget_keeps_more_elements():
+    # Monotonicity: a larger budget must keep at least as many wrapped elements.
+    data = {"items": [{"i": i, "text": "padding text here"} for i in range(80)]}
+    kept = []
+    for target in (60, 120, 240):
+        small, _ = compress(data, kind="json", target_tokens=target, model="gpt-4o")
+        kept.append(len(json.loads(small)["items"]))
+    assert kept[0] <= kept[1] <= kept[2]
+    assert kept[0] > 0
+
+
 def test_logs_normalize_ips_hex_and_integers():
     # Lines differing only in an IP, a request id (hex), and a counter must collapse to one pattern.
     lines = [

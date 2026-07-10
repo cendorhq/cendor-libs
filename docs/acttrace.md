@@ -209,16 +209,23 @@ defaults** — you turn each on explicitly:
   **noisy** by nature (hashes, base64, long random ids look high-entropy), which is why it ships
   off by default — enable it only where the recall is worth the false positives.
 - **NER-backed redaction** — regex can't catch free-text **names/addresses**; `ner_redactor(...)`
-  plugs a local NER engine in as a `redactor=` for `AuditLog`. `ner_available()` reports whether the
-  optional backend is installed; `ner_redactor()` raises a clear error (with the install hint) when it
-  isn't. The backend runs locally — still no network. **Different engine per language:** Python uses
-  [Microsoft Presidio](https://microsoft.github.io/presidio/) (`pip install "cendor-acttrace[ner]"`);
-  TypeScript uses the optional [`compromise`](https://compromise.cool) engine (`npm install compromise`).
+  plugs a local NER engine in as a `redactor=` for `AuditLog`. The backend runs locally — still no
+  network. **Different engine per language:** Python uses
+  [Microsoft Presidio](https://microsoft.github.io/presidio/); TypeScript uses the optional
+  [`compromise`](https://compromise.cool) engine (`npm install compromise`).
+  **Python needs two things**, and the extra ships only the first: (1) the backend —
+  `pip install "cendor-acttrace[ner]"` (Presidio + spaCy); and (2) a spaCy **language model**, which
+  isn't a normal PyPI dependency — install it once: `python -m spacy download en_core_web_sm`.
+  `ner_available()` returns `True` only when **both** are present; if the backend is missing
+  `ner_redactor()` raises an `ImportError` with the install hint, and if only the model is missing it
+  raises a `RuntimeError` with the `spacy download` hint — it never shells out to auto-download (which
+  would hard-exit in a pip-less venv).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
 
 ```python
+# pip install "cendor-acttrace[ner]" && python -m spacy download en_core_web_sm
 from cendor.acttrace import AuditLog, enable_locale_pack, ner_redactor, default_redactor
 
 enable_locale_pack("uk", "in")                         # + UK NINO, India Aadhaar
@@ -334,6 +341,11 @@ verify('audit.jsonl', { expectedHead: log.head });   // validates the complete o
   entirely (there's nowhere to keep them) — acttrace raises a `BoundedMemoryWithoutPathWarning`.
 - `log.evicted_from_memory` counts entries evicted from memory (a property; `0` when unbounded).
 - `max_entries` must be a positive `int` or `None` (else `ValueError`).
+- **One writer per `path=`.** A log's hash chain is a single append-only sequence. Two live
+  `AuditLog`s pointed at the *same* file interleave their appends, so each computes `prev_hash`
+  against a different tail and the merged file fails `verify()`. Give each writer its own path (as
+  `cassette` requires one recording per xdist worker), and pass a *raw log* path — not an
+  `export()` evidence pack, which is a read-only artifact and raises a clear error if reopened.
 
 > **Why the file write stays synchronous.** Unlike `tokenguard`'s spend logging — where you can
 > put a durable sink behind a background [`QueueSink`](tokenguard.md#queuesink--low-latency-durable-logging)

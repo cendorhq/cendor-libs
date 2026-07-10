@@ -99,6 +99,49 @@ def test_output_subscriber_blocks_post_flight():
     assert calls["n"] == 1  # post-flight: the call already ran (documented overshoot)
 
 
+def _stream_chunks(*words: str) -> list:
+    # Chat Completions streamed delta chunks + a final usage-only chunk (empty choices).
+    chunks = [
+        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=w))]) for w in words
+    ]
+    chunks.append(
+        SimpleNamespace(choices=[], usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1))
+    )
+    return chunks
+
+
+def _stream_client(chunks: list):
+    class Completions:
+        def create(self, **kwargs):
+            def gen():
+                yield from chunks
+
+            return gen()
+
+    return instrument(SimpleNamespace(chat=SimpleNamespace(completions=Completions())))
+
+
+def test_output_subscriber_blocks_streamed_response():
+    # M2: core stores a streamed response's metadata["response"] as a LIST of delta chunks. The
+    # output stage must reconstruct the completed text from the chunks and still block — before the
+    # fix it read None off the list and silently no-oped, delivering the banned text.
+    client = _stream_client(_stream_chunks("the ", "secret ", "plan"))
+    install([rules.keyword_deny(["secret"], stage="output", action="block")])
+    with pytest.raises(GuardrailTripped):
+        stream = client.chat.completions.create(model="gpt-4o", messages=msgs("hi"), stream=True)
+        for _ in stream:  # consuming finalizes the stream -> emits -> output stage reconstructs
+            pass
+
+
+def test_output_subscriber_passes_clean_streamed_response():
+    # The mirror: a streamed response with no banned text must NOT raise (no false positive).
+    client = _stream_client(_stream_chunks("a ", "perfectly ", "fine ", "answer"))
+    install([rules.keyword_deny(["secret"], stage="output", action="block")])
+    stream = client.chat.completions.create(model="gpt-4o", messages=msgs("hi"), stream=True)
+    for _ in stream:
+        pass  # no raise expected
+
+
 def test_uninstall_removes_interceptor_and_subscriber():
     calls = {"n": 0}
     client = make_client(calls)

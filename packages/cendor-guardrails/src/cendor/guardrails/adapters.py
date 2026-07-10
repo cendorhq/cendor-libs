@@ -208,7 +208,7 @@ def language(
     *,
     detect: Callable[[str], str] | None = None,
     stage: str | tuple[str, ...] = "input",
-    action: str = "block",
+    action: str = "flag",
     name: str = "language",
     timeout: float | None = None,
     on_error: str | None = None,
@@ -217,8 +217,12 @@ def language(
     against the language-switch bypass, a documented real-world jailbreak vector.
 
     ``detect(text) -> str`` is bring-your-own; without it, the optional ``[langid]`` extra provides
-    a local detector (``py3langid``, BSD). Language ID on short/mixed text is unreliable — keep this
-    advisory (``action="flag"``) unless you control the input distribution.
+    a local detector (``py3langid``, BSD). Language ID on short/mixed text is unreliable, so this
+    defaults to **advisory** (``action="flag"``) — keep it that way unless you control the input
+    distribution. Note the footgun of ``action="block"`` here: with no ``detect=`` **and** the
+    ``[langid]`` extra not installed, the lazy ``ImportError`` fails closed (``on_error`` defaults
+    to fail-closed for a blocking guardrail), so *every* call would be blocked; pass ``detect=`` or
+    install the extra before switching to ``block``.
     """
     allow = {a.lower() for a in allowed}
 

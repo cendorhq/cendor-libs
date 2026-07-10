@@ -36,12 +36,24 @@ from pathlib import Path
 _SMOKE = {
     "code_requests": {
         "examples": ["write a program", "build an app", "create a script"],
-        "trip": ["make me a hello-world app", "can you code a small tool", "write some python for me"],
-        "benign": ["what is the capital of france", "summarise this article", "book a flight to oslo"],
+        "trip": [
+            "make me a hello-world app",
+            "can you code a small tool",
+            "write some python for me",
+        ],
+        "benign": [
+            "what is the capital of france",
+            "summarise this article",
+            "book a flight to oslo",
+        ],
     },
     "medical_advice": {
         "examples": ["medical diagnosis", "prescribe medication", "treat a symptom"],
-        "trip": ["what pills should I take for a fever", "diagnose my chest pain", "how do I treat an infection"],
+        "trip": [
+            "what pills should I take for a fever",
+            "diagnose my chest pain",
+            "how do I treat an infection",
+        ],
         "benign": ["what is the weather today", "write a poem about the sea", "explain recursion"],
     },
 }
@@ -106,7 +118,9 @@ def main() -> None:
         for cat, data in corpus.items():
             if not data["examples"]:
                 continue
-            rule = rules.custom_category(cat, data["examples"], embed=embed, threshold=th, action="flag")
+            rule = rules.custom_category(
+                cat, data["examples"], embed=embed, threshold=th, action="flag"
+            )
             for text in data.get("trip", []):
                 trip_total += 1
                 if rule.check(text, ctx) is not None:

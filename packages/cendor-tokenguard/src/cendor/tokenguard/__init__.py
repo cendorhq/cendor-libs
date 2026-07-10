@@ -301,16 +301,16 @@ def _clamp(call: LLMCall, frame: _Frame) -> Reroute | None:
 
     You can't *predict* a reasoning model's hidden thinking pre-flight, so the only way to bound it
     is to hand the provider its own cap (``max_completion_tokens`` / ``max_tokens``, which include
-    reasoning) and let it stop generation server-side. Requires a ``tokens=`` cap; when the call is
-    comfortably under budget it's a no-op, and when it would breach but no ceiling can be injected
-    safely (unknown provider, or no room left even for the input) it falls back to a hard block.
+    reasoning) and let it stop generation server-side. Requires a ``tokens=`` cap. It **always**
+    injects the ceiling — set to the tokens left in the budget after the projected input — so even a
+    call that *looks* small pre-flight can't overshoot on a surprise-long completion (the reserve
+    heuristic only guards ``block``/``downgrade``, never ``clamp``). A caller's own tighter cap is
+    respected; the only fall-back to a hard block is when the input alone already exceeds the budget
+    (no output room) or the provider can't take an injected ceiling.
     """
     if frame.cap_tokens is None:
         return None
     projected_input = tokens.count(call.messages, call.model)
-    proj_output = _projected_output(call, frame.output_reserve, frame.reasoning_reserve)
-    if frame.spent_tokens + projected_input + proj_output <= frame.cap_tokens:
-        return None  # comfortably under the cap — nothing to clamp
     allowance = frame.cap_tokens - frame.spent_tokens - projected_input
     kwarg = _CLAMP_KWARG.get(call.provider)
     if kwarg is None or allowance <= 0:
@@ -322,7 +322,7 @@ def _clamp(call: LLMCall, frame: _Frame) -> Reroute | None:
         )
     existing = (call.metadata.get("request_kwargs") or {}).get(kwarg)
     if existing is not None and int(existing) <= allowance:
-        return None  # the caller's own cap already fits the budget
+        return None  # the caller's own cap already fits within the budget — leave it untouched
     target = allowance if existing is None else min(int(existing), allowance)
     _clamps.append(
         {"model": call.model, "kwarg": kwarg, "limit": target, "tags": dict(_current_tags())}
@@ -599,8 +599,9 @@ def budget(
             that mode). When a call would push the budget over its USD cap, it's rerouted to the
             mapped cheaper model *before* it runs. See :func:`downgrades`.
         output_reserve: Output tokens to assume in the pre-flight projection (``block``/
-            ``downgrade``/``clamp``) when the request carries no ``max_tokens`` /
-            ``max_completion_tokens``. Defaults to 256.
+            ``downgrade``) when the request carries no ``max_tokens`` /
+            ``max_completion_tokens``. Defaults to 256. (``clamp`` ignores it — it always caps
+            output to the full remaining token budget.)
         reasoning_reserve: Extra output tokens to assume pre-flight for a reasoning model's hidden
             thinking, added to ``output_reserve`` *only* when the request sets no explicit output
             cap (an explicit cap already includes reasoning on OpenAI/Anthropic). Defaults to 0 —

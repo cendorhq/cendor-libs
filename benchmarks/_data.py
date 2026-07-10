@@ -108,37 +108,49 @@ def noisy_logs_mixed(n_lines: int = 1200) -> str:
 
 
 def code_sample(repeat: int = 14) -> str:
-    """A source file with comments and blank lines — squeeze's code path strips those, keeps logic."""
+    """A **representative** source module — typical comment density, real docstrings, normal
+    spacing. squeeze's code path strips only comments + blank lines + trailing whitespace and is
+    string-literal-aware (docstrings are preserved), so ordinary comment-sparse code compresses
+    modestly. A comment-heavy or auto-generated file compresses far more — that is a property of the
+    input, not the compressor (see the code caveat in docs/benchmarks.md)."""
     unit = '''\
-# ---------------------------------------------------------------------------
-# Module: payments helper. Auto-generated header, safe to strip.
-# ---------------------------------------------------------------------------
+"""cendor.example — a small representative payments module."""
 
-import math               # stdlib only
+from __future__ import annotations
+
 from decimal import Decimal
 
+# Currency math is Decimal end to end; a stray float here would round wrong.
+CENTS = Decimal("0.01")
 
-def settle(amount, rate):
-    # Convert to Decimal first to avoid float noise in money math.
-    base = Decimal(str(amount))
 
-    fee = base * Decimal(str(rate))      # provider fee
-
-    # Round half-up to cents.
-    return (base + fee).quantize(Decimal("0.01"))
+def settle(amount: str, rate: str) -> Decimal:
+    """Return the settled total for ``amount`` at fee ``rate``, rounded to cents."""
+    base = Decimal(amount)
+    fee = base * Decimal(rate)  # provider fee, applied before rounding
+    return (base + fee).quantize(CENTS)
 
 
 class Ledger:
-    """A tiny in-memory ledger. The docstring and blank lines below are noise."""
+    """An in-memory ledger of ``(entry_id, amount)`` rows with a running total."""
 
-    def __init__(self):
-        self.entries = []          # list of (id, amount)
+    def __init__(self) -> None:
+        self.entries: list[tuple[str, Decimal]] = []
+        self._total = Decimal("0")
 
-
-    def add(self, entry_id, amount):
-        # Append; no validation here on purpose.
+    def add(self, entry_id: str, amount: Decimal) -> None:
+        # No validation here on purpose — the caller has already priced the row.
         self.entries.append((entry_id, amount))
+        self._total += amount
 
+    def total(self) -> Decimal:
+        return self._total.quantize(CENTS)
+
+    def largest(self) -> tuple[str, Decimal] | None:
+        """The single biggest entry, or None when the ledger is empty."""
+        if not self.entries:
+            return None
+        return max(self.entries, key=lambda row: row[1])
 '''
     return "\n".join(unit for _ in range(repeat))
 

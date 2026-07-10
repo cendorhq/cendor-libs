@@ -96,7 +96,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | cassette `local_embedding_scorer` (bundled model2vec) | ✅ | **Py-only** | no JS static-embedding package exists; TS uses the BYO `embeddingScorer(embedFn)` / `openaiEmbeddingScorer` seam instead |
 | cassette storage | fs | fs + memory (+ IndexedDB-shaped) | pluggable adapters |
 | **acttrace** chain / verify / sign | ✅ | ✅ | cross-language verify (HMAC + `_meta`) |
-| acttrace detectors | ✅ regex **+ Presidio NER** | ✅ regex/pattern (20 detectors) **+ NER** | 🚧 NER via optional `compromise` (English-only, lighter than Presidio — not parity); `nerAvailable()` reports presence |
+| acttrace detectors | ✅ regex **+ Presidio NER** (the `[ner]` extra + a `spacy download` model) | ✅ regex/pattern (20 detectors) **+ NER** | 🚧 NER via optional `compromise` (English-only, lighter than Presidio — not parity); `nerAvailable()` reports presence. Python's `[ner]` needs a spaCy model installed separately (see Honest limits) |
 
 ## Parity matrix — SDK
 
@@ -142,9 +142,12 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
   `@cendor/core/langchain`; keyless Entra-ID auth for Azure is in both too — TS via the
   `azureADTokenProvider` option.)
 - **NER backends differ by language, and it's not parity.** Python uses Microsoft Presidio (spaCy
-  transformer models); TypeScript uses the optional `compromise` engine (`npm install compromise`) —
+  models); TypeScript uses the optional `compromise` engine (`npm install compromise`) —
   synchronous (acttrace's tamper-evident append is sync, so an async transformer NER can't plug in),
   English-only, and with lower recall/precision. Treat the TS NER as an extra layer, not a sole PII
-  control. `nerAvailable()` reports whether the backend is installed.
+  control. **The Python `[ner]` extra installs Presidio + spaCy but not a language model** —
+  install one once (`python -m spacy download en_core_web_sm`); `ner_available()` returns `True` only
+  when both are present and `ner_redactor()` raises a clear error (never a pip auto-download) if the
+  model is missing. `nerAvailable()` (TS) reports whether `compromise` is installed.
 - **Docs code samples default to Python** where a tab pair isn't shown; the mapping rules above
   translate mechanically.

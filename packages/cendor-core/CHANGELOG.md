@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.5.0] — 2026-07-10
+Deep-QA fixes: token accuracy for the open/hosted-model class, and honest top-level exports.
+
+### Changed
+- **Non-OpenAI / unrecognized models now count via the `o200k` BPE proxy, not the character heuristic.** Any model whose family resolves to `default` — llama, mistral, deepseek, qwen, new o-series ids (`o5-mini`), and OpenAI fine-tunes (`ft:gpt-4o:*`) — routes through tiktoken's `o200k_base` estimate (reported as `bpe-estimate`), exactly like Claude/Gemini, instead of the rough char heuristic. **This changes token counts** for the whole open/hosted-model class — hence a minor — and every `tokenguard` budget / `clamp` that calls `tokens.count` inherits the correction. The o-series match is generalized (`^o\d`, so new ids don't fall through) and an `ft:` fine-tune strips to its base model, counting `exact`. The character heuristic is now only ever reached if tiktoken fails to import.
+
+### Added
+- **`add_interceptor`, `remove_interceptor`, and `MISS` are re-exported from `cendor.core`** (top-level), matching `core.md` and `@cendor/core`'s top-level exports — no more importing from the private `cendor.core.instrument`.
+
 ## [1.4.0] — 2026-07-08
 ### Changed
 - **`tiktoken` is now a required dependency** (was the optional `[tiktoken]` extra), so a plain

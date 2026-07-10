@@ -571,7 +571,9 @@ class Context:
 
         n, k = len(turns), len(kept)
         after = sum(self._content_tokens(t.get("content", "")) for t in kept)
-        if k == 0:
+        if n == 0:
+            action, note = "kept", ""  # empty history: nothing to place, nothing dropped
+        elif k == 0:
             action, note = "dropped", f"history: dropped all {n} turns (no room)"
         elif k < n:
             action, note = "truncated", f"history: kept {k} of {n} turns"

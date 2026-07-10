@@ -31,7 +31,7 @@ One `instrument()` seam, provider-aware token counting, and offline pricing — 
 | Offline heuristic error vs tiktoken — json | **18.4%** | heuristic 62 vs exact 76 tokens |
 | Exact mode error (default) | **0.0%** | OpenAI counts are exact out of the box — `tiktoken` is a required dependency |
 | Offline subword fallback vs o200k (Claude/Gemini) | **33.2%** | the defensive no-tiktoken fallback; by default Claude/Gemini use o200k directly |
-| Counting path (default) | **OpenAI=exact, Claude=bpe-estimate** | method() picks exact / bpe-estimate automatically; heuristic only if tiktoken fails to import |
+| Counting path (default) | **OpenAI=exact, everything else=bpe-estimate** | method() picks the tier automatically: OpenAI (incl. fine-tunes) exact, and Claude/Gemini **plus every open/hosted model** (llama, mistral, deepseek, …) via the o200k BPE proxy; the char heuristic is reached only if tiktoken fails to import |
 | tokens.count throughput — OpenAI heuristic | **1.17M ops/s** | on a 1.4 KB string |
 | tokens.count throughput — subword estimate | **16.4K ops/s** | on a 1.4 KB string |
 | tokens.count throughput — tiktoken exact | **9.7K ops/s** | on a 1.4 KB string |
@@ -59,10 +59,17 @@ Content-aware, reversible compression: how much each kind shrinks (by characters
 | JSON compression | **48.9%** | 90.1 KB → 46.0 KB; 50.1% fewer tokens |
 | Logs (repetitive) compression | **99.7%** | 70.1 KB → 0.2 KB; 99.8% fewer tokens |
 | Logs (mixed-entropy) compression | **30.1%** | 80.9 KB → 56.5 KB; 35.9% fewer tokens |
-| Code compression | **52.5%** | 11.9 KB → 5.7 KB; 42.4% fewer tokens |
+| Code compression | **16.8%** | 17.2 KB → 14.3 KB; 14.3% fewer tokens (on representative code — see caveat) |
 | Prose compression | **49.1%** | 8.6 KB → 4.4 KB; 46.6% fewer tokens |
 | Reversibility (expand() == original) | **5/5 exact** | every kind restores byte-for-byte from the content-addressed store |
 | compress() throughput (JSON) | **46 MB/s** | 90 KB payload, 1.90 ms/call |
+
+> **Code caveat (honest).** The code path strips only comments, blank lines, and trailing whitespace,
+> and it is **string-literal-aware** — string literals and docstrings are preserved verbatim. So the
+> ratio tracks the input's comment/whitespace density, not a fixed savings: ordinary comment-sparse
+> code compresses **~10–17%** (the number above, measured on a representative module), while a
+> comment-heavy or auto-generated file can exceed 50%. Because docstrings are kept, `fidelity="aggressive"`
+> ≈ `"balanced"` for normally-spaced code (aggressive only collapses *runs* of inner whitespace).
 
 ## cendor-tokenguard
 

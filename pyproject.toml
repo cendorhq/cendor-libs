@@ -73,5 +73,11 @@ explicit_package_bases = true
 # Optional provider/telemetry SDKs are imported lazily behind try/except — they aren't
 # installed by default, so don't fail type-checking when their stubs are absent.
 [[tool.mypy.overrides]]
-module = ["tiktoken.*", "opentelemetry.*", "presidio_analyzer.*", "presidio_anonymizer.*"]
+module = [
+  "tiktoken.*",
+  "opentelemetry.*",
+  "presidio_analyzer.*",
+  "presidio_anonymizer.*",
+  "spacy.*",
+]
 ignore_missing_imports = true

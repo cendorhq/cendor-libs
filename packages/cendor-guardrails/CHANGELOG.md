@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.5.0] — 2026-07-10
+Deep-QA fixes: security-gate correctness, plus a security-relevant default change.
+
+### Changed
+- **`rules.language` default action is now `flag` (was `block`)** — matching the signature and docstring. A security-relevant default change: language ID on short/mixed text is unreliable, so it defaults to advisory. A false detection no longer hard-blocks every call, and — with no `[langid]` extra and no `detect=` — it no longer fails closed on every request. Pass `action="block"` explicitly to gate.
+
+### Fixed
+- **Output-stage guardrails now run on streamed responses.** Via `install()` / `scoped()`, the output stage reconstructs a streamed response's delta chunks into the completed text before gating, so a `block` fires (post-flight) instead of silently no-oping and delivering the banned text.
+
 ## [1.4.0] — 2026-07-10
 From substring to meaning (plan-guardrails-v04): close the semantic gap Raghav found in the playground (a keyword deny-list matches `"python code"` but not the paraphrase `"create an app"`) without changing any existing behaviour by default. Additive and backward-compatible — the deterministic matcher's default is byte-for-byte unchanged; new capability is opt-in, `$0`/offline in the default path, and **no new hard dependency**. Three new claim gates ship **shut** (paraphrase catch-rate, intent accuracy, injection-preset coverage) — none opens without a published run on a named public corpus.
 

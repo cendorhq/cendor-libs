@@ -2,6 +2,13 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.4.1] — 2026-07-10
+Deep-QA fixes: honest `[ner]` availability + a clearer reopen error.
+
+### Fixed
+- **`[ner]` now reports availability honestly and fails with a clear error.** The `[ner]` extra installs Presidio + spaCy but no language model. `ner_available()` returns `True` only when a spaCy model is also loadable, and `ner_redactor()` builds an explicit `NlpEngineProvider` and raises a clear `ImportError` (backend missing) / `RuntimeError` (model missing — with the `python -m spacy download en_core_web_sm` hint) instead of letting Presidio shell out to `pip` (which hard-exits in a pip-less venv). Documented the model-download step.
+- **Reopening an `export()` evidence pack as a log** now raises a clear "this is a read-only export pack, not an appendable log" error instead of a generic "corrupt or unparseable".
+
 ## [1.4.0] — Unreleased
 ### Added
 - **Guardrail decisions now carry their `metadata` into the chain.** The `guardrail_decision` entry gains a `metadata` field, so a decision's provenance is recorded as tamper-evident evidence — notably `cendor-guardrails`' `load_policy()` stamps `policy_hash` / `policy_version`, letting an audit prove **which** policy was active when a call was gated. Still duck-typed (no sibling import); `metadata` defaults to `{}`, so a chain with no metadata is byte-identical to before.

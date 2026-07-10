@@ -36,7 +36,11 @@ def test_clamp_requires_a_tokens_cap():
         budget(usd=0.01, on_exceed="clamp")
 
 
-def test_clamp_injects_provider_ceiling_when_budget_runs_low():
+def test_clamp_always_injects_a_ceiling_bounding_each_call():
+    # M1: clamp must ALWAYS hand the provider a max_completion_tokens ceiling = the tokens left in
+    # the budget — even a call that looks small pre-flight — so a surprise-long completion can't
+    # overshoot the tokens= cap. (Old bug: with headroom no ceiling was injected and the call ran
+    # uncapped; the reserve heuristic gated the injection.)
     seen: list = []
     client = _openai(
         {
@@ -47,17 +51,31 @@ def test_clamp_injects_provider_ceiling_when_budget_runs_low():
         seen,
     )
     with budget(tokens=1000, on_exceed="clamp"):
-        # Call 1 is comfortably under the cap -> untouched. It spends ~950 of the 1000.
         client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
-        # Call 2 would breach -> clamp injects a max_completion_tokens ceiling instead of blocking.
         client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
 
+    rows = clamps()
+    assert len(rows) == 2  # BOTH calls capped server-side (not just the one that runs low)
+    assert all(r["kwarg"] == "max_completion_tokens" for r in rows)
+    # First call: ceiling ~= full remaining budget minus the tiny input, and it reached the client.
+    assert seen[0]["max_completion_tokens"] == rows[0]["limit"]
+    assert 0 < rows[0]["limit"] <= 1000
+    # Second call: the budget is mostly spent, so a much tighter ceiling.
+    assert seen[1]["max_completion_tokens"] == rows[1]["limit"]
+    assert rows[1]["limit"] < rows[0]["limit"]
+
+
+def test_clamp_caps_a_single_oversized_call_even_with_headroom():
+    # M1 (the finding's exact repro): a budget with plenty of headroom and one tiny-looking call
+    # that returns far more than the 256-token reserve. Clamp must still inject a ceiling <= the
+    # remaining budget so the single call cannot overshoot (old bug: injected nothing, uncapped).
+    seen: list = []
+    client = _openai({"prompt_tokens": 5, "completion_tokens": 5}, seen)
+    with budget(tokens=1200, on_exceed="clamp"):
+        client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
     assert len(clamps()) == 1
-    row = clamps()[0]
-    assert row["kwarg"] == "max_completion_tokens"
-    assert 0 < row["limit"] < 1000  # a real remaining-budget ceiling
-    assert "max_completion_tokens" not in seen[0]  # first call untouched
-    assert seen[1]["max_completion_tokens"] == row["limit"]  # ceiling reached the provider
+    injected = seen[0].get("max_completion_tokens")
+    assert injected is not None and injected <= 1200
 
 
 def test_clamp_falls_back_to_block_on_unsupported_provider():

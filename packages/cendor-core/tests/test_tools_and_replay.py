@@ -8,6 +8,21 @@ from cendor.core.instrument import MISS, Reroute, add_interceptor, remove_interc
 from cendor.core.types import LLMCall, ToolCall
 
 
+def test_interceptor_symbols_are_exported_from_cendor_core():
+    # M7: add_interceptor / remove_interceptor / MISS are documented top-level in core.md and
+    # exported top-level by @cendor/core — they must import from `cendor.core` too (parity), not
+    # only from the private `cendor.core.instrument`.
+    from cendor.core import MISS as MISS_public
+    from cendor.core import add_interceptor as add_public
+    from cendor.core import remove_interceptor as remove_public
+    from cendor.core.instrument import MISS as MISS_private
+    from cendor.core.instrument import add_interceptor as add_private
+
+    assert add_public is add_private
+    assert MISS_public is MISS_private
+    assert callable(add_public) and callable(remove_public)
+
+
 @pytest.fixture
 def events():
     bus._reset()

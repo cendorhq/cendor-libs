@@ -228,7 +228,7 @@ requires-dist = [{ name = "cendor-libs", editable = "packages/cendor-libs" }]
 
 [[package]]
 name = "cendor-acttrace"
-version = "1.4.0"
+version = "1.4.1"
 source = { editable = "packages/cendor-acttrace" }
 dependencies = [
     { name = "cendor-core" },
@@ -270,7 +270,7 @@ provides-extras = ["embeddings"]
 
 [[package]]
 name = "cendor-contextkit"
-version = "1.0.1"
+version = "1.0.2"
 source = { editable = "packages/cendor-contextkit" }
 dependencies = [
     { name = "cendor-core" },
@@ -290,7 +290,7 @@ provides-extras = ["squeeze"]
 
 [[package]]
 name = "cendor-core"
-version = "1.4.0"
+version = "1.5.0"
 source = { editable = "packages/cendor-core" }
 dependencies = [
     { name = "tiktoken" },
@@ -324,7 +324,7 @@ provides-extras = ["openai", "anthropic", "otel", "tiktoken", "langchain"]
 
 [[package]]
 name = "cendor-guardrails"
-version = "1.4.0"
+version = "1.5.0"
 source = { editable = "packages/cendor-guardrails" }
 dependencies = [
     { name = "cendor-core" },
@@ -393,7 +393,7 @@ requires-dist = [
 
 [[package]]
 name = "cendor-squeeze"
-version = "1.0.1"
+version = "1.0.2"
 source = { editable = "packages/cendor-squeeze" }
 dependencies = [
     { name = "cendor-core" },
@@ -404,7 +404,7 @@ requires-dist = [{ name = "cendor-core", editable = "packages/cendor-core" }]
 
 [[package]]
 name = "cendor-tokenguard"
-version = "1.1.1"
+version = "1.1.2"
 source = { editable = "packages/cendor-tokenguard" }
 dependencies = [
     { name = "cendor-core" },
