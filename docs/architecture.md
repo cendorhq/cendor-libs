@@ -9,48 +9,43 @@ they cover **the lifecycle of one governed LLM call** — cooperating through on
 through imports:
 
 ```mermaid
-%%{init: {"flowchart": {"htmlLabels": false, "nodeSpacing": 34, "rankSpacing": 52}} }%%
-flowchart TB
-    subgraph BEFORE["1 · before the call — pre-flight"]
-        direction LR
-        CK["contextkit<br/>assemble"]
-        SQ["squeeze<br/>compress"]
-        TG["tokenguard<br/>budget"]
-        GRI["guardrails<br/>gate input"]
-        ATG["acttrace<br/>guard"]
-    end
-    subgraph CALL["2 · the call"]
-        LLM["your LLM / tool call<br/>rides core's instrument() seam"]
-    end
-    subgraph AFTER["3 · after the call — automatic, via the bus"]
-        direction LR
-        GRO["guardrails<br/>gate output"]
-        CS["cassette<br/>test"]
-        ATA["acttrace<br/>audit"]
-    end
-    CORE["cendor-core<br/>the instrument() seam + one event bus<br/>— beneath every stage"]
-    BEFORE ==> CALL ==> AFTER
-    BEFORE -.-> CORE
-    CALL -.-> CORE
-    AFTER -.-> CORE
+%%{init: {"flowchart": {"htmlLabels": false}} }%%
+graph TD
+    B["build the prompt"]
+    PRE["pre-flight<br/>before the call"]
+    CALL["the call<br/>core.instrument() = the seam"]
+    POST["after the call<br/>automatic, via the bus"]
+    B --> PRE --> CALL --> POST
 
-    classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB,stroke-width:1px;
-    classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A,stroke-width:1px;
-    classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED,stroke-width:1px;
-    classDef gr fill:#F97316,color:#111827,stroke:#EA580C,stroke-width:1px;
-    classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488,stroke-width:1px;
-    classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48,stroke-width:1px;
-    classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF,stroke-width:1px;
-    classDef co fill:#94A3BB,color:#0F172A,stroke:#64748B,stroke-width:1px;
+    B --- CK["contextkit<br/>assemble to a budget"]
+    B --- SQ["squeeze<br/>compress big blocks"]
+    PRE --- TG1["tokenguard<br/>cap spend"]
+    PRE --- GRI["guardrails<br/>gate input"]
+    PRE --- ATG["acttrace<br/>guard bad input"]
+    POST --- TG2["tokenguard<br/>record spend"]
+    POST --- GRO["guardrails<br/>gate output"]
+    POST --- CS["cassette<br/>record / replay"]
+    POST --- ATA["acttrace<br/>append to the log"]
+
+    classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
+    classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
+    classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
+    classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
+    classDef gr fill:#F97316,color:#111827,stroke:#EA580C;
+    classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
+    classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
+    class CALL seam;
     class CK ck;
     class SQ sq;
-    class TG tg;
+    class TG1,TG2 tg;
     class GRI,GRO gr;
     class CS cs;
     class ATG,ATA at;
-    class LLM seam;
-    class CORE co;
 ```
+
+The spine reads top to bottom — build → pre-flight → the call → after — with each library hanging
+off the stage where it acts. `cendor-core` is the seam at **the call** and the event bus every branch
+rides.
 
 **A lifecycle, not a dependency chain.** Every library works alone; two act on *both* sides of the
 call — **guardrails** gates the input and the output, **acttrace** guards before send and audits
