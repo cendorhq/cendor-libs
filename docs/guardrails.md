@@ -358,8 +358,6 @@ rule = rules.keyword_deny(presets.PROMPT_INJECTION_EN, match="word")
 
 <!-- tab: TypeScript -->
 
-<!-- ts-check: skip -->
-
 ```ts
 import { presets, rules } from '@cendor/guardrails';
 
@@ -751,15 +749,17 @@ close enough to any of them (recording `metadata["category"]`/`["score"]`). This
 paraphrase a deny-list misses — `keyword_deny(["python code"])` blocks *"write python code"* but not
 *"create an app"*; a `custom_category` defined by both does.
 
-The similarity checks all take a **bring-your-own** `embed(text)`. For a zero-config default, the
-`[embeddings]` extra ships `embeddings.local_embedder()` — **model2vec** static embeddings (numpy-only,
-**no torch**, ~8–30 MB); the model is pulled from Hugging Face at your choice on first use, never
-bundled.
+The similarity checks all take a **bring-your-own** `embed(text)`. For a zero-config default, both
+languages ship a local embedder behind an optional extra: **Python** — `embeddings.local_embedder()`
+(the `[embeddings]` extra, **model2vec** static embeddings, numpy-only, **no torch**, ~8–30 MB, a
+*sync* embed); **TypeScript** — `embeddings.localEmbedder()` (the optional `@huggingface/transformers`
+peer, an *async* embed). The model is pulled from Hugging Face at your choice on first use, never
+bundled. `embed` may be sync **or** async: a sync embed keeps the check usable via `apply()`; an async
+embed (a hosted endpoint or the TS `localEmbedder`) makes the check async — gate through the SDK loop
+or `apply_async`/`applyAsync`.
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
-
-<!-- ts-check: skip -->
 
 ```python
 from cendor.guardrails import rules, embeddings
@@ -774,13 +774,11 @@ rule = rules.custom_category(
 
 <!-- tab: TypeScript -->
 
-<!-- ts-check: skip -->
-
 ```ts
 import { rules } from '@cendor/guardrails';
 
-// embed is bring-your-own (a transformers.js pipeline, a hosted endpoint …). There is no
-// zero-config localEmbedder in TS yet — model2vec is Python-only; parity 🚧 (see the parity matrix).
+// `embed` is bring-your-own — a hosted endpoint, a transformers.js pipeline, or the zero-config
+// `embeddings.localEmbedder()` (an async embed → gate via applyAsync / the SDK loop).
 const rule = rules.customCategory(
   'code_requests',
   ['write a program', 'build an app', 'create a script'],
@@ -789,6 +787,19 @@ const rule = rules.customCategory(
 ```
 
 <!-- /tabs -->
+
+The TS `localEmbedder` is async (transformers.js), so pass it to a rule and gate with `applyAsync` /
+the SDK loop:
+
+<!-- ts-check: skip -->
+
+```ts
+import { rules, embeddings, applyAsync } from '@cendor/guardrails';
+
+const embed = await embeddings.localEmbedder();  // npm i @huggingface/transformers  (async embed)
+const rule = rules.customCategory('code_requests', ['write a program', 'build an app'], embed);
+const decisions = await applyAsync([rule], 'input', 'create a hello-world app');
+```
 
 A similarity threshold is a tuned heuristic — keep it `flag` until you have calibrated it on your own
 inputs, then `block`. There is **no catch-rate claim**: `benchmarks/bench_semantic_gate.py` is the
@@ -806,8 +817,6 @@ or a small-LLM judge (`judge.intent_prompt` + `rules.llm_judge`).
 <!-- tabs: lang -->
 <!-- tab: Python -->
 
-<!-- ts-check: skip -->
-
 ```python
 from cendor.guardrails import rules, judge, embeddings
 
@@ -823,8 +832,6 @@ rule = rules.llm_judge(judge.judge(respond, policy), stage="input", action="flag
 ```
 
 <!-- tab: TypeScript -->
-
-<!-- ts-check: skip -->
 
 ```ts
 import { rules, judge } from '@cendor/guardrails';
