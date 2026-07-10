@@ -17,6 +17,12 @@ right one. This page just makes that knowledge copy-pasteable.
 > assistant's context, or drop the trap table into your repo's `AGENTS.md` /
 > `.github/copilot-instructions.md` / `.cursor/rules`. The types teach the rest on install.
 
+> **Or run one command.** `npx @cendor/init` (Node) / `uvx cendor-init` (Python) writes the rules
+> files from [§3](#wire-up-your-ai-assistant) into your repo for you — idempotently, never clobbering
+> your own content — and can add the MCP config and a working starter. Offline, no key. It ships a
+> `doctor` too: `npx @cendor/init doctor` static-checks your wiring (namespace, provider deps,
+> `instrument()` once, money-as-`Decimal`, versions) and exits non-zero on hard problems, so it fits CI.
+
 ## The trap table
 
 Every row is verified against the current source in both languages. `snake_case` (Python) ↔
@@ -270,6 +276,10 @@ edit — no need to paste this page each time. Each block carries the same short
 library does what, the one call that matters, and the shapes assistants most often get wrong. Keep
 them short on purpose — an over-long rules file gets truncated or ignored.
 
+> **Shortcut:** `npx @cendor/init` (or `uvx cendor-init`) writes the right file(s) for you — detected
+> from your repo, idempotent, never clobbering your own content. The blocks below are exactly what it
+> writes; they're also here to paste by hand.
+
 > These are a *different artifact* from Cendor's own maintainer `CLAUDE.md` (which says things like
 > "never create `__init__.py`"). Don't copy that one — it's about developing Cendor, not calling it.
 
@@ -418,6 +428,9 @@ a pasted snapshot.
 It is **read-only** and **pull-based**: your assistant calls a tool, the server answers, your
 assistant writes the code — your codebase never flows to the server. The tools are `search_docs`,
 `get_page`, `get_api` (the anti-hallucination call-shape lookup), `example`, and `list_recipes`.
+
+`npx @cendor/init --mcp` (or `uvx cendor-init --mcp`) can drop the connect config into your repo for
+you (`.cursor/mcp.json` / `.vscode/mcp.json`), so you don't have to hand-edit it.
 
 **Honest limit:** MCP is only called by *agent* modes — inline autocomplete does not call it. For that
 path, rely on the types Cendor ships in every package (the `@example` + correct-shape signatures
