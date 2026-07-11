@@ -2,6 +2,18 @@
 
 All notable changes to this meta-package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org). This package ships no code; it pins the suite — see each component package's own `CHANGELOG.md` for their changes.
 
+## [1.2.0] — 2026-07-09
+### Changed
+- Raised member floors so a fresh install always resolves the current capabilities:
+  `cendor-acttrace>=1.4.0` (guardrail-decision chaining) and `cendor-guardrails>=1.2.0`
+  (hosted rails, config-as-data, grounding). All members stay capped below 2.0.
+
+## [1.1.0] — 2026-07-09
+### Added
+- `cendor-guardrails` joins the umbrella — the seventh library (the deterministic gate).
+  `pip install cendor-libs` now pulls all seven: core, tokenguard, contextkit, squeeze,
+  guardrails, cassette, acttrace.
+
 ## [1.0.0] — 2026-07-03
 ### Added
 - First release of `cendor-libs` — the umbrella meta-package for the Cendor stack. `pip install cendor-libs` pulls the whole suite of composable Python primitives for context, cost, testing, and governance. (This is the canonical umbrella name; the brand alias `cendor` depends solely on it.)
