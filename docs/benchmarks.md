@@ -31,7 +31,7 @@ One `instrument()` seam, provider-aware token counting, and offline pricing — 
 | Offline heuristic error vs tiktoken — json | **18.4%** | heuristic 62 vs exact 76 tokens |
 | Exact mode error (default) | **0.0%** | OpenAI counts are exact out of the box — `tiktoken` is a required dependency |
 | Offline subword fallback vs o200k (Claude/Gemini) | **33.2%** | the defensive no-tiktoken fallback; by default Claude/Gemini use o200k directly |
-| Counting path (default) | **OpenAI=exact, everything else=bpe-estimate** | method() picks the tier automatically: OpenAI (incl. fine-tunes) exact, and Claude/Gemini **plus every open/hosted model** (llama, mistral, deepseek, …) via the o200k BPE proxy; the char heuristic is reached only if tiktoken fails to import |
+| Counting path (default) | **OpenAI=exact, everything else=bpe-estimate** | method() picks the tier automatically: tiktoken-mapped OpenAI families (gpt-4o/gpt-4.1/o-series, incl. fine-tunes) exact, and Claude/Gemini, gpt-5.x (no upstream tiktoken mapping yet) **plus every open/hosted model** (llama, mistral, deepseek, …) via the o200k BPE proxy; the char heuristic is reached only if tiktoken fails to import |
 | tokens.count throughput — OpenAI heuristic | **1.13M ops/s** | on a 1.4 KB string |
 | tokens.count throughput — subword estimate | **17.5K ops/s** | on a 1.4 KB string |
 | tokens.count throughput — tiktoken exact | **10.1K ops/s** | on a 1.4 KB string |

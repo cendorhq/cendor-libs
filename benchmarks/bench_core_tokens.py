@@ -116,9 +116,11 @@ def run() -> list[Result]:
                     "core",
                     "Counting path (default)",
                     f"OpenAI={tokens.method('gpt-4o')}, everything else={tokens.method('claude-opus-4-8')}",
-                    "method() picks the tier automatically: OpenAI (incl. fine-tunes) exact, and "
-                    "Claude/Gemini **plus every open/hosted model** (llama, mistral, deepseek, …) via "
-                    "the o200k BPE proxy; the char heuristic is reached only if tiktoken fails to import",
+                    "method() picks the tier automatically: tiktoken-mapped OpenAI families "
+                    "(gpt-4o/gpt-4.1/o-series, incl. fine-tunes) exact, and Claude/Gemini, gpt-5.x "
+                    "(no upstream tiktoken mapping yet) **plus every open/hosted model** (llama, "
+                    "mistral, deepseek, …) via the o200k BPE proxy; the char heuristic is reached "
+                    "only if tiktoken fails to import",
                 )
             )
         else:

@@ -73,8 +73,8 @@ you which path is active:
 
 | Tier | When | Accuracy |
 |---|---|---|
-| `exact` | a model-native OpenAI encoding exists (the default — `tiktoken` ships with `cendor-core`); OpenAI fine-tunes (`ft:gpt-4o:…`) map to their base model | exact |
-| `bpe-estimate` | any non-native model — Claude/Gemini **and** open/hosted weights (llama, mistral, deepseek, qwen), new o-series ids, unknown OpenAI ids | close — real BPE (`o200k`), not native |
+| `exact` | a model-native OpenAI encoding exists in `tiktoken` (gpt-4o / gpt-4.1 / o-series / earlier — the default; `tiktoken` ships with `cendor-core`); OpenAI fine-tunes (`ft:gpt-4o:…`) map to their base model | exact |
+| `bpe-estimate` | any non-native model — Claude/Gemini **and** open/hosted weights (llama, mistral, deepseek, qwen), **the gpt-5.x line** (no upstream `tiktoken` mapping yet — this tier upgrades to `exact` automatically when tiktoken ships one), new o-series ids, unknown OpenAI ids | close — real BPE (`o200k`), not native |
 | `registered` | you plugged a counter in via `tokens.register(family, fn)` | as good as your counter |
 | `heuristic` | `tiktoken` failed to import (a broken/partial install) — a defensive fallback, never the default | rough (~3–6 chars/token by content) |
 
@@ -408,14 +408,25 @@ one another. That's what keeps `core` the whole stack's small, stable blast radi
 
 ## Honest limits
 
-- **Token counts are exact for OpenAI by default** — `tiktoken` is a required dependency, so a
-  normal install counts exactly (no opt-in). Claude/Gemini use tiktoken's `o200k` BPE as a close
-  cross-tokenizer proxy (not their native tokenizer); `register()` a precise counter to override a
-  family. Money is always exact (`Decimal`).
+- **Token counts are exact for the OpenAI families `tiktoken` maps** (gpt-4o, gpt-4.1, the
+  o-series, and earlier) — `tiktoken` is a required dependency, so a normal install counts those
+  exactly (no opt-in). **The gpt-5.x line has no upstream `tiktoken` mapping yet**, so gpt-5.x ids
+  count via the `o200k` BPE proxy (`tokens.method()` reports `bpe-estimate`, and upgrades to
+  `exact` automatically once tiktoken ships a mapping). Claude/Gemini use the same `o200k` proxy
+  (not their native tokenizer) — note Anthropic states its newest models (Opus 4.7+, Fable 5,
+  Mythos 5, Sonnet 5) use a new tokenizer producing **~30% more tokens** for the same text, so the
+  proxy systematically under-counts for that family. `register()` a precise counter to override
+  any family. Money is always exact (`Decimal`).
 - **Capture is best-effort, not a billing guarantee.** A call that *raises* before returning
   emits no `usage`/`cost`; a streamed response whose provider reports no usage is priced from
   an offline estimate (flagged `usage_estimated`). Bedrock's separate `converse_stream`
   entrypoint isn't wrapped — use `converse`.
+- **Some provider entrypoints bypass `instrument()` entirely (silent — no bus event):** OpenAI's
+  structured-output helpers `chat.completions.parse` / `responses.parse`, Anthropic's
+  `messages.stream()` helper and `tool_runner`, the Batch APIs, and embeddings calls are **not
+  wrapped** — calls through them never reach the bus, so budgets/audit/tests don't see them. Call
+  the wrapped entrypoints (`chat.completions.create`, `responses.create`, `messages.create`, or
+  Anthropic `messages.create(stream=True)`) when you need governed calls.
 - **`refresh()` never reaches a running service or needs an account** — it fetches static JSON
   over http(s), maps it in memory, and falls back to the bundled snapshot. AWS/GCP catalogs
   need credentials/SDKs and are intentionally out of core (bring your own `mapper=`).

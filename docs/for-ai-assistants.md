@@ -59,6 +59,7 @@ differ or where a plausible guess is wrong.
 | Red-team a gate | `from cendor.guardrails import load_corpus, run_redteam` | `import { loadCorpus, runRedteam } from '@cendor/guardrails'` | `redteam` / `load_corpus` live in `cendor.guardrails`, deliberately **not** SDK re-exports — cendor vends no attack data. |
 | Python-only SDK output gates | `Agent(reask_on_output_trip=2, stream_check_window=200)` | *Python-first — the TS port lands later* | Bounded re-ask on an output block + streaming output-window checks are Python-first in `cendor-sdk`; see the [parity matrix](languages.md). |
 | SDK provider ids | `Agent(model="…", provider="huggingface")` | `new Agent({ model, provider: 'huggingface' })` | HF Hub ids & Azure deployment names aren't prefix-inferable — always pass `provider=`. Provider SDKs are extras (Py) / peers (TS). |
+| Calls `instrument()` does **not** capture | `chat.completions.parse` / `responses.parse`, Anthropic `messages.stream()` helper + `tool_runner`, Batch APIs, embeddings | same entrypoints — the helpers bypass the wrapped `create` seam | These emit **no bus event** (silent — budgets/audit never see them). For governed calls use `chat.completions.create`, `responses.create`, or `messages.create` (`stream=True` / `stream: true`). |
 
 A few cross-cutting rules that don't fit a row:
 

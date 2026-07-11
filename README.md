@@ -113,7 +113,7 @@ below is directional — timing rows vary by machine.
 
 | What | Measured |
 |---|---|
-| OpenAI token counting | **exact** — 0% error vs the real tokenizer (`tiktoken` ships with core) |
+| OpenAI token counting | **exact** for the families `tiktoken` maps (gpt-4o / gpt-4.1 / o-series) — 0% error vs the real tokenizer; gpt-5.x counts via the o200k BPE proxy until tiktoken ships a mapping |
 | Log compression (squeeze) | **~99% on repetition-heavy logs, ~30% on high-entropy logs** — always **fully reversible** |
 | Replayed run vs live (cassette) | **orders of magnitude faster**, no API key (modeled at 4 ms/call; real LLMs are far slower) |
 | `instrument()` overhead per call | **~15 µs** — bus emit + usage extraction + Decimal pricing |
@@ -256,7 +256,7 @@ ok, detail = verify("evidence.jsonl", key="k")   # tamper-evident, verified offl
 - **LangChain / LangGraph** — `cendor.core.langchain.CendorCallbackHandler` (optional `cendor-core[langchain]`) records usage + **reasoning** + tools + a **run-correlated `trace_id`** from the framework's callbacks — the SDK-aligned way to observe a framework, no client touch. Recording-only; enforcement stays on the `instrument()` seam. (`core.trace("run-id")` gives direct-SDK agents the same correlation.)
 - **Event bus** — `subscribe` / `emit`; **thread-safe within a process**; one failing subscriber never starves another (the first exception re-raises after all run).
 - **Interceptor seam** — `add_interceptor` + `Reroute` / `MISS` powers replay (cassette) and reroute/block (tokenguard) **without a second patch point**.
-- **Token counting, exact by default** — `tiktoken` is a required dependency, so OpenAI counts are exact out of the box (Claude/Gemini use its `o200k` BPE as a close estimate); a character heuristic remains only as a defensive fallback if `tiktoken` fails to import. `tokens.method(model)` reports which tier is active; `tokens.register()` plugs in a precise counter.
+- **Token counting, exact by default** — `tiktoken` is a required dependency, so the OpenAI families it maps (gpt-4o / gpt-4.1 / o-series) count exactly out of the box (Claude/Gemini **and gpt-5.x**, which tiktoken doesn't map yet, use its `o200k` BPE as a close estimate); a character heuristic remains only as a defensive fallback if `tiktoken` fails to import. `tokens.method(model)` reports which tier is active; `tokens.register()` plugs in a precise counter.
 - **Offline-first *and* refreshable prices** — bundled dated snapshot; `estimate() -> Decimal Money` (never `float`); optional `refresh(source="litellm"|"openrouter"|"azure")` from live no-auth, no-deps sources, with an `age_days()`/`is_stale()` staleness signal. A provider/gateway-reported cost (e.g. OpenRouter's `usage.cost`) is preferred over the estimate and labeled `cost_reported` vs `cost_estimated`.
 - **OpenTelemetry** — emit `gen_ai.*` spans, or `otel.ingest()` a managed runtime's spans onto the bus (so tokenguard/acttrace work even when you don't own the loop).
 - **Structural protocols** — `Compressor`, `EvictionStrategy`, `Sink`, `Subscriber`, `Handle` — how the tools interlock without coupling.
