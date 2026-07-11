@@ -72,6 +72,13 @@ Key points a port must replicate exactly:
   `1.25 × input` when unpriced.
 - **Unknown model → error** (`UnknownModelError`), not a silent `0`. (Callers that must not fail on
   unpriced models handle that at a higher layer — see `tokenguard`'s `on_unpriced`.)
+- **Lookup normalization.** The table keys are bare ids. When the exact id misses the table, the
+  implementation retries once with a normalized key before erroring: lowercase; drop a
+  `provider/`-style prefix; drop leading **alpha-only** dotted segments (Bedrock vendor/region
+  namespaces — `anthropic.`, `us.anthropic.` — never in-name dots like `gpt-4.1`); drop a trailing
+  Bedrock version (`-v1:0`, `-v2`); drop a trailing date (`-20260115` or `-2025-11-13`). So
+  `us.anthropic.claude-sonnet-4-6-20260115-v1:0` prices like `claude-sonnet-4-6`. Normalization
+  never invents a price — a decorated unknown still raises.
 - The token subset conventions match the [`Usage` event shape](bus-events.md): `cached_tokens ⊆ input`,
   `reasoning_tokens ⊆ output` (reasoning is already billed inside output, so it is **not** a separate
   term here).

@@ -75,6 +75,19 @@ def test_unknown_model_raises():
         prices.estimate("does-not-exist", 100)
 
 
+def test_lookup_normalizes_wire_level_ids():
+    # Bedrock modelId (vendor + region prefixes, -vN:0 suffix) prices like the base model.
+    base = prices.estimate("claude-sonnet-4-6", 1000, 500)
+    assert prices.estimate("anthropic.claude-sonnet-4-6-v1:0", 1000, 500) == base
+    assert prices.estimate("us.anthropic.claude-sonnet-4-6-20260115-v1:0", 1000, 500) == base
+    # Anthropic dated ids and OpenAI dated snapshots also resolve.
+    assert prices.estimate("claude-sonnet-4-6-20260115", 1000, 500) == base
+    assert prices.estimate("gpt-5.1-2025-11-13", 1000, 500) == prices.estimate("gpt-5.1", 1000, 500)
+    # Normalization never invents a price: decorated unknowns still raise.
+    with pytest.raises(prices.UnknownModelError):
+        prices.estimate("us.anthropic.claude-nonexistent-v1:0", 100)
+
+
 def test_bundled_snapshot_metadata():
     assert prices.source() == "bundled"
     assert prices.source_name() == "bundled"

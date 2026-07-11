@@ -13,6 +13,7 @@ cloud catalog (Azure Retail Prices), all of which *do* publish per-model rates a
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections.abc import Callable
 from datetime import date
@@ -81,11 +82,33 @@ def _ensure_loaded() -> dict:
     return _table
 
 
+# Wire-level id decorations stripped at LOOKUP time (the table keys stay bare). Alpha-only dotted
+# prefixes cover Bedrock vendor/region namespaces (`anthropic.`, `us.anthropic.`) without touching
+# in-name dots like `gpt-4.1` / `gemini-2.5-pro` (those have digits adjacent to the dot).
+_PROVIDER_PREFIX_RE = re.compile(r"^(?:[a-z]+\.)+")
+_BEDROCK_VERSION_RE = re.compile(r"-v\d+(?::\d+)?$")  # trailing `-v1:0` / `-v2`
+_DATE_SUFFIX_RE = re.compile(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$")  # `-20260115` / `-2025-11-13`
+
+
+def _lookup_id(mid: str) -> str:
+    """Reduce a wire-level model id to a bare table key, e.g.
+    ``us.anthropic.claude-sonnet-4-6-20260115-v1:0`` → ``claude-sonnet-4-6`` and
+    ``gpt-5.1-2025-11-13`` → ``gpt-5.1``. Applied only when the exact id misses the table."""
+    s = _normalize_model_id(mid)
+    s = _PROVIDER_PREFIX_RE.sub("", s)
+    s = _BEDROCK_VERSION_RE.sub("", s)
+    s = _DATE_SUFFIX_RE.sub("", s)
+    return _ALIASES.get(s, s)
+
+
 def _rates(model: str) -> dict:
     models = _ensure_loaded().get("models", {})
-    if model not in models:
+    r = models.get(model)
+    if r is None:
+        r = models.get(_lookup_id(model))  # Bedrock/dated/prefixed ids price like their base model
+    if r is None:
         raise UnknownModelError(model)
-    return models[model]
+    return r
 
 
 def estimate(
