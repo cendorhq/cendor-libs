@@ -47,45 +47,41 @@ const client = instrument(new OpenAI());   // ← the one line you change
 
 That single wrap publishes every LLM and tool call onto an in-process **event bus**. Each library
 *subscribes* — none patches your client, none imports another — so you add budgeting, recording, or
-auditing with **zero per-call wiring**. Read the diagram top to bottom: it's one request's lifecycle,
-with each library labelled **where it acts**.
+auditing with **zero per-call wiring**. Read it start to finish: it's one request's lifecycle, with
+each library labelled **where it acts**.
 
-```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}} }%%
-graph TD
-    YOU["your agent code"]
-    B["1. Build the prompt"]
-    PRE["2. Pre-flight<br/>(before the call runs)"]
-    CALL["3. The LLM call<br/>core.instrument() = the seam"]
-    POST["4. After the call<br/>(automatic, via the event bus)"]
-
-    YOU --> B --> PRE --> CALL --> POST
-
-    B --- CK["contextkit<br/>pack context into a budget"]
-    B --- SQ["squeeze<br/>compress oversized blocks"]
-    PRE --- TG1["tokenguard<br/>block / downgrade if over budget"]
-    PRE --- GR1["guardrails<br/>gate input / tool calls: block / redact"]
-    PRE --- AT1["acttrace<br/>policy guard: flag + block bad input"]
-    POST --- TG2["tokenguard<br/>record spend by feature / user"]
-    POST --- GR2["guardrails<br/>gate output: block / flag"]
-    POST --- CS["cassette<br/>record the run (replay in tests)"]
-    POST --- AT2["acttrace<br/>append to the tamper-evident log"]
-
-    classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
-    classDef ck fill:#3B82F6,color:#ffffff,stroke:#2563EB;
-    classDef sq fill:#22C55E,color:#0F172A,stroke:#16A34A;
-    classDef tg fill:#8B5CF6,color:#ffffff,stroke:#7C3AED;
-    classDef gr fill:#F97316,color:#111827,stroke:#EA580C;
-    classDef cs fill:#14B8A6,color:#ffffff,stroke:#0D9488;
-    classDef at fill:#F43F5E,color:#ffffff,stroke:#E11D48;
-    class CALL seam;
-    class CK ck;
-    class SQ sq;
-    class TG1,TG2 tg;
-    class GR1,GR2 gr;
-    class CS cs;
-    class AT1,AT2 at;
-```
+<div class="mm-strip" aria-label="One request's lifecycle across the seven libraries — each labelled where it acts">
+<div class="mm-flow">
+<div class="mm-phase">
+<div class="mm-plabel">before the call · build + pre-flight</div>
+<div class="mm-row">
+<div class="mm-lib"><span class="mm-n" style="color:var(--ck-text)">contextkit</span><span class="mm-sl">pack context</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:var(--sq-text)">squeeze</span><span class="mm-sl">compress</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:var(--tg-text)">tokenguard</span><span class="mm-sl">budget</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:var(--gr-text)">guardrails</span><span class="mm-sl">gate input</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:var(--at-text)">acttrace</span><span class="mm-sl">guard</span></div>
+</div>
+</div>
+<div class="mm-arrow" aria-hidden="true">→</div>
+<div class="mm-phase mm-call">
+<div class="mm-plabel">the call</div>
+<div class="mm-row">
+<div class="mm-lib"><span class="mm-n" style="color:var(--co-text)">core</span><span class="mm-sl">instrument()</span></div>
+</div>
+</div>
+<div class="mm-arrow" aria-hidden="true">→</div>
+<div class="mm-phase">
+<div class="mm-plabel">after · automatic, via the bus</div>
+<div class="mm-row">
+<div class="mm-lib"><span class="mm-n" style="color:var(--tg-text)">tokenguard</span><span class="mm-sl">record spend</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:var(--gr-text)">guardrails</span><span class="mm-sl">gate output</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:var(--cs-text)">cassette</span><span class="mm-sl">record</span></div>
+<div class="mm-lib"><span class="mm-n" style="color:var(--at-text)">acttrace</span><span class="mm-sl">audit</span></div>
+</div>
+</div>
+</div>
+<div class="mm-bus"><b>cendor-core</b> — the <em>instrument()</em> seam + one event bus beneath every stage. Each library publishes and subscribes here; none patches your client, none imports another.</div>
+</div>
 
 **tokenguard**, **guardrails**, and **acttrace** each appear twice: they run *before* the call (cap
 spend / gate the input / guard bad input) **and** *after* it (record cost / gate the output / append
