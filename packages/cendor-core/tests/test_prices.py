@@ -79,7 +79,7 @@ def test_bundled_snapshot_metadata():
     assert prices.source() == "bundled"
     assert prices.source_name() == "bundled"
     assert prices.source_url() is None
-    assert prices.snapshot_date() == "2026-06-26"
+    assert prices.snapshot_date() == "2026-07-11"
     assert "claude-opus-4-8" in prices.models()
 
 

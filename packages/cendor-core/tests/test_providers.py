@@ -37,7 +37,7 @@ def test_gemini_generate_content_instrumented(events):
     # The model id is bound to the GenerativeModel (model_name), not passed to generate_content —
     # instrument() reads it so the LLMCall carries a real, priceable model id.
     class GenerativeModel:
-        model_name = "models/gemini-1.5-pro"
+        model_name = "models/gemini-2.5-pro"
 
         def generate_content(self, contents, **kwargs):
             return SimpleNamespace(
@@ -48,9 +48,9 @@ def test_gemini_generate_content_instrumented(events):
     client.generate_content("hello")  # no model kwarg — comes from the object
     call = events[0]
     assert call.provider == "google"
-    assert call.model == "gemini-1.5-pro"  # captured from model_name, "models/" stripped
+    assert call.model == "gemini-2.5-pro"  # captured from model_name, "models/" stripped
     assert call.usage == Usage(input_tokens=40, output_tokens=20)
-    assert call.cost is not None  # now priceable (gemini-1.5-pro is in the snapshot)
+    assert call.cost is not None  # priceable (gemini-2.5-pro is in the snapshot)
 
 
 def test_ollama_chat_instrumented(events):

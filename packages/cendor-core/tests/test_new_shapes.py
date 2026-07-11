@@ -144,10 +144,10 @@ def test_google_genai_sdk_sync(events):
             )
 
     client = instrument(SimpleNamespace(models=Models()))
-    client.models.generate_content(model="gemini-1.5-pro", contents="hello")
+    client.models.generate_content(model="gemini-2.5-pro", contents="hello")
     call = events[0]
     assert call.provider == "google"
-    assert call.model == "gemini-1.5-pro"  # read from model= kwarg (no GenerativeModel object)
+    assert call.model == "gemini-2.5-pro"  # read from model= kwarg (no GenerativeModel object)
     assert call.usage == Usage(input_tokens=40, output_tokens=20)
     assert call.cost is not None  # priced from the snapshot
 
