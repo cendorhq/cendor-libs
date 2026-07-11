@@ -157,6 +157,7 @@ and move between them without a migration. Unsure which fits?
 
 - **[Getting Started](getting-started.md)** — install, the one idea (`instrument` once), and a first budgeted, audited call.
 - **[Architecture](architecture.md)** — the layers, the `instrument()` seam, the event bus, and the dependency graph.
+- **[For AI assistants](for-ai-assistants.md)** — the call-shape trap sheet, paste-in rules files, the MCP server, and the `init` CLI so Copilot / Claude / Cursor get Cendor right.
 - **[Providers & Integration](providers.md)** — OpenAI / Anthropic / Bedrock / Gemini / Ollama, managed runtimes via OpenTelemetry, and LangChain / LangGraph via a callback handler.
 - **[Guides & Recipes](guides.md)** — copy-paste recipes, including the full-stack support agent.
 - **[Languages & parity](languages.md)** — Python ↔ TypeScript: what's ported, what's Python-only.
