@@ -63,7 +63,7 @@ for (const row of report(['feature', 'userId'])) {
 <!-- /tabs -->
 
 > **See it in the stack.** The connected support-agent recipe (budget + context + audit) is in
-> the [Cookbook](/cookbook).
+> the [Cookbook](https://cendor.ai/cookbook).
 
 ## Core concepts
 

@@ -63,7 +63,7 @@ works in CI:
 | **Provider deps** | a provider SDK your code imports but hasn't installed/declared (Cendor never pulls one for you — they're optional extras) |
 | **`instrument()` once** | Cendor is imported but the client is never wrapped (nothing is observed) |
 | **Money** | a price/cost coerced to `float` / `number` (it should stay `Decimal` / `decimal.js`) |
-| **Versions** | an installed/pinned `cendor-*` / `@cendor/*` version trails the latest release (an offline hint from a bundled snapshot — the live truth is [/releases](/releases)) |
+| **Versions** | an installed/pinned `cendor-*` / `@cendor/*` version trails the latest release (an offline hint from a bundled snapshot — the live truth is [/releases](https://cendor.ai/releases)) |
 
 ### In CI
 
@@ -80,6 +80,6 @@ uvx cendor-init doctor      # Python
 - `init` writes **rules files and config**, and can scaffold a starter — it does **not** install
   Cendor or a provider SDK for you (those stay your explicit choice). It makes no network call.
 - `doctor`'s version check is an **offline hint** from a bundled snapshot; it can lag a very recent
-  release. The live source of truth is [/releases](/releases).
+  release. The live source of truth is [/releases](https://cendor.ai/releases).
 - The rules `init` writes are a static snapshot — for a live lookup use the [MCP
   server](assistant-mcp.md) (agent mode) or the types shipped in every package. All three stack.

@@ -69,7 +69,7 @@ acttrace verify evidence_q3.jsonl --key "…"   # re-walks the chain + signature
 ```
 
 > **Try it end to end.** The full support-agent recipe — `acttrace` wired together with
-> budgeting, context assembly, and record/replay — is in the [Cookbook](/cookbook).
+> budgeting, context assembly, and record/replay — is in the [Cookbook](https://cendor.ai/cookbook).
 
 ## Core concepts
 
@@ -249,7 +249,7 @@ const audit = new AuditLog('intake', {
 > higher recall/precision than TypeScript's `compromise` (a lightweight, synchronous, English-only
 > rule-plus-lexicon engine, chosen because acttrace's tamper-evident append path is synchronous and a
 > transformer NER would be async + heavy). Treat the TS NER as a **useful extra layer, not a sole PII
-> control**. See the [parity matrix](/docs/languages).
+> control**. See the [parity matrix](languages.md).
 
 <!-- /tabs -->
 

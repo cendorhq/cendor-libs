@@ -258,7 +258,7 @@ Where `acttrace.guard()` is the PII/secrets *detection engine*, `guardrails` is 
 **Gate you configure** — keyword / regex / URL / length / JSON-schema rules at four stages.
 `install()` wires them onto the same `instrument()` seam; an attached `AuditLog` chains every
 decision as tamper-evident evidence, and a `block` raises before the call is billed. (Under the
-[`cendor-sdk`](/docs/sdk/guardrails) loop, pass `Agent(guardrails=[…])` instead of `install()`.)
+[`cendor-sdk`](https://cendor.ai/docs/sdk/guardrails) loop, pass `Agent(guardrails=[…])` instead of `install()`.)
 
 <!-- tabs: lang -->
 <!-- tab: Python -->

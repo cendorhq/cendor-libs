@@ -116,7 +116,7 @@ try {
 <!-- /tabs -->
 
 > **Try it end to end.** The guardrails recipe — a blocked call proving `$0.00` spent, plus a redact
-> round-trip and the `guardrail_decision` audit entry — is in the [Cookbook](/cookbook).
+> round-trip and the `guardrail_decision` audit entry — is in the [Cookbook](https://cendor.ai/cookbook).
 
 ## Core concepts
 
@@ -148,7 +148,7 @@ Evaluation runs **in order**, and by default **before** the call (a block is pre
 deterministic built-ins are microsecond-scale, so overlap buys nothing — but a slow tier-3/4 check
 (an LLM judge, a hosted rail) can hide its latency behind the model call: the `cendor-sdk` runner
 offers `guardrail_mode="parallel"` for exactly that (see [Timeouts & error policy](#timeouts--error-policy)
-and the [SDK page](/docs/sdk/guardrails)).
+and the [SDK page](https://cendor.ai/docs/sdk/guardrails)).
 
 ### Evidence, not just enforcement
 Every trip or flag emits a `GuardrailDecision` on `cendor.core`'s bus. If an `AuditLog` is attached,
@@ -202,7 +202,7 @@ advisory. **The reason carries the exception type + message, never the payload.*
   shared, context-gated interceptor. This closes the "process-global" wart for door-1 users that
   `Agent(guardrails=[…])` closed for the SDK.
 - **In an agent loop** — `cendor-sdk`'s `Agent(guardrails=[…])` wires all four stages, with a
-  per-run override. See the [SDK guardrails page](/docs/sdk/guardrails).
+  per-run override. See the [SDK guardrails page](https://cendor.ai/docs/sdk/guardrails).
 
 ### Built-in rules — deterministic only
 This is the local-first claim: regex and arithmetic, no ML, no network.
@@ -220,9 +220,9 @@ This is the local-first claim: regex and arithmetic, no ML, no network.
 **Deliberately not built in.** PII/secret detection lives in `acttrace`'s validator-gated detector
 catalogue — reach for [`guard(Policy…)`](acttrace.md#enforcing-a-policy-with-guard) so there's one
 detection engine, not two. You can bridge that catalogue into a guardrail in ~3 lines with
-`rules.custom(fn)` calling `acttrace.scan`/`redact` (see the [cookbook](/cookbook)), and the
+`rules.custom(fn)` calling `acttrace.scan`/`redact` (see the [cookbook](https://cendor.ai/cookbook)), and the
 `cendor-sdk` ships it ready-made as `rules.pii()` / `secrets()` / `entropy()` across all four stages
-— including tool outputs (see the [SDK page](/docs/sdk/guardrails)). ML classifiers and dialog rails
+— including tool outputs (see the [SDK page](https://cendor.ai/docs/sdk/guardrails)). ML classifiers and dialog rails
 remain out of scope. `llm_judge(judge)` is an **adapter contract**, not a bundled classifier — you
 supply the model call; the [`cendor.guardrails.judge` helpers](#the-llm-judge-helpers) package the
 verdict prompt + strict-JSON parsing so you don't hand-roll them.
@@ -886,7 +886,7 @@ report.summary();
 A run with an `llm_judge` or a hosted rail should be **cassette-recorded** (`run_redteam_async`) so a
 CI run stays offline. The report is a measurement, not a claim: publish a rate only with the corpus
 named, and raise it by *layering tiers* — never by overfitting to the test set. See the
-[cookbook recipe](/cookbook).
+[cookbook recipe](https://cendor.ai/cookbook).
 
 ### Exceptions
 `GuardrailTripped` carries `.decisions` (the list recorded up to and including the block).
@@ -968,7 +968,7 @@ audit chain**: when a check *does* trip, the block is pre-spend and the decision
 evidence. That is what these guardrails guarantee; detection coverage is a spectrum you tune.
 
 **Claims gate.** Cendor cites **no jailbreak-detection rate and no PII catch-rate** anywhere until
-the number is reproduced on a named dataset/corpus and published to [benchmarks](/benchmarks). The
+the number is reproduced on a named dataset/corpus and published to [benchmarks](https://cendor.ai/benchmarks). The
 PII catalogue has per-category precision/recall on a documented synthetic corpus there today; the
 prompt-injection classifier's eval harness is `benchmarks/eval_promptguard.py` — until it is run and
 published, `prompt_guard` is described only as a *prompt-injection classifier adapter*.
@@ -997,5 +997,5 @@ published, `prompt_guard` is described only as a *prompt-injection classifier ad
 - **PII/secret detection isn't a built-in here** — one detection engine, kept in `acttrace`. Bridge
   it with `rules.custom` + `acttrace.scan`/`redact`, or use the SDK's ready-made `rules.pii()` /
   `secrets()` / `entropy()`. Coverage is exactly acttrace's catalogue (measured per-category on a
-  documented corpus in [benchmarks](/benchmarks)); there is **no catch-rate claim**, and free-text
+  documented corpus in [benchmarks](https://cendor.ai/benchmarks)); there is **no catch-rate claim**, and free-text
   names/addresses need the optional `acttrace[ner]` backend.

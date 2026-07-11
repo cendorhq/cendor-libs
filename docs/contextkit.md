@@ -59,7 +59,7 @@ console.log(ctx.report());              // the receipt: kept / truncated / dropp
 <!-- /tabs -->
 
 > **See it in the stack.** The full support-agent recipe that assembles, compresses, budgets,
-> and audits together is in the [Cookbook](/cookbook).
+> and audits together is in the [Cookbook](https://cendor.ai/cookbook).
 
 ## Core concepts
 

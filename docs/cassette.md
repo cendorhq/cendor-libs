@@ -55,7 +55,7 @@ test('triage happy path', () =>
 
 <!-- /tabs -->
 
-> **See it in the stack.** The full agent-under-test recipe is in the [Cookbook](/cookbook).
+> **See it in the stack.** The full agent-under-test recipe is in the [Cookbook](https://cendor.ai/cookbook).
 
 ## Core concepts
 
@@ -220,7 +220,7 @@ assert cassette.semantic_match(result.answer, "offers a refund", scorer=score)
 > **The bundled Tier-2 model is Python-only; TypeScript uses the Tier-3 BYO seam.** There is no
 > model2vec/static-embedding package for JS, so `localEmbeddingScorer` stays a stub. Instead wrap any
 > embedder with `embeddingScorer(embedFn)` (or `openaiEmbeddingScorer(client)`) — the same
-> deterministic cosine scoring, your model. See the [parity matrix](/docs/languages).
+> deterministic cosine scoring, your model. See the [parity matrix](languages.md).
 
 ```ts
 import { embeddingScorer, semanticMatch } from '@cendor/cassette';

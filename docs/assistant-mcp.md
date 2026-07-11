@@ -81,9 +81,9 @@ Swap the remote URL for a stdio command. The docs are bundled, so it runs with n
 
 ## The five tools
 
-Every answer is built from the docs [source of truth](/docs) and stamped with the current published
+Every answer is built from the docs [source of truth](https://cendor.ai/docs) and stamped with the current published
 package versions — so the server never teaches a shape newer than what's on
-[PyPI / npm](/releases).
+[PyPI / npm](https://cendor.ai/releases).
 
 | Tool | What it returns |
 |---|---|
@@ -91,9 +91,9 @@ package versions — so the server never teaches a shape newer than what's on
 | `get_page(slug)` | A full docs page as markdown — `"tokenguard"`, `"getting-started"`, `"sdk/agents"`. |
 | `get_api(symbol, lang?)` | The anti-hallucination call-shape lookup: the current correct shape + the common wrong one. `lang` is `"python"` or `"ts"` (aliases `py` / `js` accepted); omit it for both. |
 | `example(task, lang?)` | A runnable, CI-typechecked snippet for a task (`"budget a loop"`, `"gate input"`). Same `lang` values as `get_api`. |
-| `list_recipes()` | The [cookbook](/cookbook) index — copy-paste recipes that run offline, grouped by category. |
+| `list_recipes()` | The [cookbook](https://cendor.ai/cookbook) index — copy-paste recipes that run offline, grouped by category. |
 
-Full setup for every assistant, with copy buttons: [cendor.ai/mcp](/mcp).
+Full setup for every assistant, with copy buttons: [cendor.ai/mcp](https://cendor.ai/mcp).
 
 ## How it stays honest
 

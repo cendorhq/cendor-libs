@@ -217,7 +217,7 @@ try {
 
 <!-- /tabs -->
 
-Under the [`cendor-sdk`](/docs/sdk/guardrails) agent loop you don't call `evaluate` yourself — you
+Under the [`cendor-sdk`](https://cendor.ai/docs/sdk/guardrails) agent loop you don't call `evaluate` yourself — you
 pass `Agent(guardrails=[…])` and it gates all four stages in the loop for you.
 
 ## 7. Make runs testable — and audited
@@ -259,7 +259,7 @@ audit.export('evidence.jsonl', 'eu_ai_act');           // tamper-evident; verify
 <!-- /tabs -->
 
 > **Want it all wired together?** The full support agent — budget + context + record/replay + audit
-> in one function — is in the [Cookbook](/cookbook).
+> in one function — is in the [Cookbook](https://cendor.ai/cookbook).
 
 ## Next steps
 

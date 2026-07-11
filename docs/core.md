@@ -48,7 +48,7 @@ console.log(n, cost.toString(), tokens.method('claude-opus-4-8'));  // e.g. 16  
 <!-- /tabs -->
 
 > **See it in the stack.** The one-wrap-then-every-tool-subscribes flow is walked end to end
-> in [Architecture](architecture.md) and the [Cookbook](/cookbook).
+> in [Architecture](architecture.md) and the [Cookbook](https://cendor.ai/cookbook).
 
 ## Core concepts
 

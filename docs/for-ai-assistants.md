@@ -74,7 +74,7 @@ A few cross-cutting rules that don't fit a row:
 ## Canonical examples
 
 These are the exact snippets from the two Getting Started pages — the libraries'
-[Getting Started](getting-started.md) and the SDK's [Getting Started](/docs/sdk/getting-started) —
+[Getting Started](getting-started.md) and the SDK's [Getting Started](https://cendor.ai/docs/sdk/getting-started) —
 reproduced here so an assistant has both happy paths in one place. They are typechecked in CI, so
 they can't drift.
 
@@ -236,7 +236,7 @@ try {
 
 <!-- /tabs -->
 
-Under the [`cendor-sdk`](/docs/sdk/guardrails) agent loop you don't call `evaluate` yourself — you
+Under the [`cendor-sdk`](https://cendor.ai/docs/sdk/guardrails) agent loop you don't call `evaluate` yourself — you
 pass `Agent(guardrails=[…])` and it gates all four stages for you.
 
 ### Make runs testable — and audited
@@ -279,8 +279,8 @@ audit.export('evidence.jsonl', 'eu_ai_act');           // tamper-evident; verify
 
 ### Run a governed agent (SDK)
 
-The other door: [`cendor-sdk`](/docs/sdk) gives you the whole agent loop with governance built in.
-This is the exact 10-line snippet from the SDK's [Getting Started](/docs/sdk/getting-started) — a
+The other door: [`cendor-sdk`](https://cendor.ai/docs/sdk) gives you the whole agent loop with governance built in.
+This is the exact 10-line snippet from the SDK's [Getting Started](https://cendor.ai/docs/sdk/getting-started) — a
 budget cap, a PII-redacting `guard`, and a tamper-evident `AuditLog`, all on one `run`:
 
 <!-- tabs: lang -->
@@ -335,7 +335,7 @@ console.log(result.toolSteps.map((s) => s.name));    // ["get_weather"]
 
 `budget`/`guard`/`AuditLog` are the *same* library objects re-exported from `cendor.sdk` — the
 per-agent cap is `Agent(max_usd=…)`, not a `budget=` field. Full walkthrough:
-[SDK Getting Started](/docs/sdk/getting-started).
+[SDK Getting Started](https://cendor.ai/docs/sdk/getting-started).
 
 ## Wire up your assistant — three ways
 

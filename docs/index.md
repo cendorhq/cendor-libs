@@ -140,13 +140,13 @@ supported.
 
 These docs cover the seven libraries — the door for teams that already have a loop (LangChain,
 LlamaIndex, or direct provider-SDK calls) and want governance **beneath** it. Cendor's second
-door is [**cendor-sdk**](/docs/sdk): a governed agent loop (`Agent`, `tool`, `run`) built *on*
+door is [**cendor-sdk**](https://cendor.ai/docs/sdk): a governed agent loop (`Agent`, `tool`, `run`) built *on*
 these libraries, for teams starting fresh. Both doors expose the same primitives — `budget`,
 `guard`, `Policy`, `AuditLog`, `trace` are the same objects — so you can mix them in one process
 and move between them without a migration. Unsure which fits?
-[FAQ → libraries or SDK](/docs/sdk/faq).
+[FAQ → libraries or SDK](https://cendor.ai/docs/sdk/faq).
 
-> **Prefer to read code?** The [Cookbook](/cookbook) has the full-stack support agent — one
+> **Prefer to read code?** The [Cookbook](https://cendor.ai/cookbook) has the full-stack support agent — one
 > `instrument()` call, the whole stack cooperating — as one copy-paste block.
 
 ## Where to go next
@@ -159,4 +159,4 @@ and move between them without a migration. Unsure which fits?
 - **[Languages & parity](languages.md)** — Python ↔ TypeScript: what's ported, what's Python-only.
 - **[Benchmarks](benchmarks.md)** — reproducible, offline numbers for every package.
 - **[FAQ](faq.md)** — common questions.
-- **[The SDK docs](/docs/sdk)** — the second door: a governed agent loop built on these libraries.
+- **[The SDK docs](https://cendor.ai/docs/sdk)** — the second door: a governed agent loop built on these libraries.

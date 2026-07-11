@@ -47,7 +47,7 @@ const original = handle.expand();                                               
 <!-- /tabs -->
 
 > **See it in the stack.** `contextkit` calls `squeeze` for you on any `Block(evict="compress")` —
-> the connected example is in the [Cookbook](/cookbook).
+> the connected example is in the [Cookbook](https://cendor.ai/cookbook).
 
 ## Core concepts
 
