@@ -77,6 +77,19 @@ PACKAGES: list[tuple[str, str, str]] = [
     ),
 ]
 
+# Authored per-package caveats appended verbatim after that package's table. Honest-claims prose
+# lives HERE, never as a hand-edit in docs/benchmarks.md — `--write` regenerates that file wholesale.
+FOOTNOTES: dict[str, str] = {
+    "squeeze": (
+        "> **Code caveat (honest).** The code path strips only comments, blank lines, and trailing whitespace,\n"
+        "> and it is **string-literal-aware** — string literals and docstrings are preserved verbatim. So the\n"
+        "> ratio tracks the input's comment/whitespace density, not a fixed savings: ordinary comment-sparse\n"
+        "> code compresses **~10–17%** (the number above, measured on a representative module), while a\n"
+        '> comment-heavy or auto-generated file can exceed 50%. Because docstrings are kept, `fidelity="aggressive"`\n'
+        '> ≈ `"balanced"` for normally-spaced code (aggressive only collapses *runs* of inner whitespace).\n'
+    ),
+}
+
 _MODULES = [
     bench_core_tokens,
     bench_squeeze,
@@ -155,6 +168,8 @@ def _to_markdown(rows: list[Result], env: dict[str, str]) -> str:
             note = r.note.replace("|", "\\|")
             out.append(f"| {r.metric} | **{r.value}** | {note} |")
         out.append("")
+        if key in FOOTNOTES:
+            out.append(FOOTNOTES[key])
 
     out.append("## Method & caveats\n")
     out.append(

@@ -42,13 +42,15 @@ def run() -> list[Result]:
                 reversible += 1
             # One decimal so an extremely-compressible sample reads honestly (e.g. "99.7%", not a
             # misleading "100%"); KB likewise, so a sub-KB result isn't shown as "0 KB".
+            note = (
+                f"{len(original) / 1024:.1f} KB → {len(small) / 1024:.1f} KB; "
+                f"{pct(_ratio_tokens(original, small), 1)} fewer tokens"
+            )
+            if label == "Code":
+                note += " (on representative code — see caveat)"
             rows.append(
                 Result(
-                    "squeeze",
-                    f"{label} compression",
-                    pct(_ratio_chars(original, small), 1),
-                    f"{len(original) / 1024:.1f} KB → {len(small) / 1024:.1f} KB; "
-                    f"{pct(_ratio_tokens(original, small), 1)} fewer tokens",
+                    "squeeze", f"{label} compression", pct(_ratio_chars(original, small), 1), note
                 )
             )
 

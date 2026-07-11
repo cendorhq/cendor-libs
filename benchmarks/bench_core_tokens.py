@@ -115,9 +115,10 @@ def run() -> list[Result]:
                 Result(
                     "core",
                     "Counting path (default)",
-                    f"OpenAI={tokens.method('gpt-4o')}, Claude={tokens.method('claude-opus-4-8')}",
-                    "method() picks exact / bpe-estimate automatically; heuristic only if tiktoken "
-                    "fails to import",
+                    f"OpenAI={tokens.method('gpt-4o')}, everything else={tokens.method('claude-opus-4-8')}",
+                    "method() picks the tier automatically: OpenAI (incl. fine-tunes) exact, and "
+                    "Claude/Gemini **plus every open/hosted model** (llama, mistral, deepseek, …) via "
+                    "the o200k BPE proxy; the char heuristic is reached only if tiktoken fails to import",
                 )
             )
         else:
