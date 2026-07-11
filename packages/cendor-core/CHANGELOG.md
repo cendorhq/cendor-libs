@@ -2,6 +2,32 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.5.2] — 2026-07-11
+Model-currency patch: today's models price correctly out of the box.
+
+### Changed
+- **Price snapshot regenerated for the current model generation** (`_updated` 2026-07-11; every
+  rate verified against the official provider pricing pages): adds the OpenAI gpt-5.x line
+  (5.6-sol/terra/luna, 5.5, 5.5-pro, the 5.4 family, 5.3-codex, 5.2, 5.1), Anthropic
+  claude-fable-5 / claude-mythos-5 / claude-sonnet-5 (listed at the standard rate effective
+  2026-09-01; the intro rate through 2026-08-31 is noted in `_note`) / opus-4-7/-4-6/-4-5,
+  Gemini 3.x (3.5-flash, 3.1-pro-preview, 3.1-flash-lite, 3-flash-preview), and xAI grok-4.3 /
+  grok-4.5. **claude-haiku-4-5 corrected** to the official $1/$5 (+ $0.10 cache read / $1.25 5m
+  write) — the old row carried Haiku 3.5 rates. Gemini 2.5 cache-read rates updated
+  ($0.125 / $0.03). Dead rows removed: gemini-2.0-flash (shut down 2026-06-01), gemini-1.5-pro.
+  gpt-4o / gpt-4.1 / o-series stay as legacy rows.
+- **Wire-level model ids now price at lookup**: Bedrock modelIds (`anthropic.…-v1:0`,
+  `us.`-region profiles) and dated Anthropic / OpenAI snapshot ids resolve to their base row
+  instead of yielding `cost=None`. Unknown models still raise `UnknownModelError` — normalization
+  never invents a price.
+
+### Docs
+- The token-exactness claim is scoped honestly: `tiktoken` (0.13.0) ships no gpt-5.x mapping yet,
+  so gpt-5.x counts via the `o200k` BPE proxy (`method()` reports `bpe-estimate` and upgrades
+  automatically when a mapping ships). New honest-limits entry + trap-table row for the
+  entrypoints `instrument()` does not capture (`chat.completions.parse` / `responses.parse`,
+  Anthropic's `messages.stream()` helper + `tool_runner`, Batch APIs, embeddings).
+
 ## [1.5.1] — 2026-07-11
 AI-assistant onboarding: inline Type Teach ships inside the package, plus the bundled integration guide. No runtime behavior change for correct code.
 
