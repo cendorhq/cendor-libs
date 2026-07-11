@@ -53,6 +53,12 @@ differ or where a plausible guess is wrong.
 | Audit + export evidence | `AuditLog(system="support", risk_tier="limited")`; `audit.export(path, framework="eu_ai_act")` | `new AuditLog('support', { riskTier: 'limited' })`; `audit.export(path, 'eu_ai_act')` | `export` / `verify` hang off the log. `framework` ∈ `eu_ai_act\|gdpr\|iso_42001\|nist_rmf`. There is no top-level `decisions` — group work with `AuditLog.decision()`. |
 | Spend sink subpath (tokenguard) | `from cendor.tokenguard import sinks` → `sinks.SQLiteSink(path)` | `import { SQLiteSink } from '@cendor/tokenguard/sinks'` | In TS the sinks live at the **`/sinks` subpath**, not the package root. |
 | A governed agent (SDK) | `Agent(name=…, model=…, guardrails=[…], max_usd=0.5)`; `run(agent, "hi")` | `new Agent({ name, model, guardrails: [...], maxUsd: 0.5 })`; `run(agent, 'hi')` | No `budget=` field on `Agent` — the per-agent cap is `max_usd`/`maxUsd`; process-wide budgets use tokenguard's `budget()`. TS ships **OpenAI + Anthropic** first-class; other providers construct lazily. |
+| LLM-judge intent / adherence (SDK) | `from cendor.sdk import judge, rules`; `judge.task_adherence(respond)` / `judge.intent_prompt(i, mode="deny")` | `judge.taskAdherence(respond)` / `judge.intentPrompt(i, 'deny')` | `judge.*` build an LLM-judge **check** (a policy string or a verdict fn), not a guardrail — wire via `rules.llm_judge(check, stage=…)`. Both are re-exported on the SDK surface. |
+| cassette in the SDK | `from cendor import cassette` — **not** `from cendor.sdk` | `import { using } from '@cendor/cassette'` | cassette is **not** re-exported by the SDK; it surfaces only via the eval harness. Import it from the umbrella / `@cendor/cassette`. |
+| spotlight / adapters under the SDK | `rules.spotlight(...)` (on the SDK `rules`) | `import { rules } from '@cendor/guardrails'` | In **TypeScript**, `spotlight` and the detection-tier adapters are **library-only** — not on `@cendor/sdk`. Python's SDK `rules` re-exports them. |
+| Red-team a gate | `from cendor.guardrails import load_corpus, run_redteam` | `import { loadCorpus, runRedteam } from '@cendor/guardrails'` | `redteam` / `load_corpus` live in `cendor.guardrails`, deliberately **not** SDK re-exports — cendor vends no attack data. |
+| Python-only SDK output gates | `Agent(reask_on_output_trip=2, stream_check_window=200)` | *Python-first — the TS port lands later* | Bounded re-ask on an output block + streaming output-window checks are Python-first in `cendor-sdk`; see the [parity matrix](languages.md). |
+| SDK provider ids | `Agent(model="…", provider="huggingface")` | `new Agent({ model, provider: 'huggingface' })` | HF Hub ids & Azure deployment names aren't prefix-inferable — always pass `provider=`. Provider SDKs are extras (Py) / peers (TS). |
 
 A few cross-cutting rules that don't fit a row:
 
@@ -67,8 +73,10 @@ A few cross-cutting rules that don't fit a row:
 
 ## Canonical examples
 
-These are the exact snippets from [Getting Started](getting-started.md), reproduced here so an
-assistant has the whole happy path in one place. They are typechecked in CI, so they can't drift.
+These are the exact snippets from the two Getting Started pages — the libraries'
+[Getting Started](getting-started.md) and the SDK's [Getting Started](/docs/sdk/getting-started) —
+reproduced here so an assistant has both happy paths in one place. They are typechecked in CI, so
+they can't drift.
 
 ### Instrument once
 
@@ -268,6 +276,66 @@ audit.export('evidence.jsonl', 'eu_ai_act');           // tamper-evident; verify
 ```
 
 <!-- /tabs -->
+
+### Run a governed agent (SDK)
+
+The other door: [`cendor-sdk`](/docs/sdk) gives you the whole agent loop with governance built in.
+This is the exact 10-line snippet from the SDK's [Getting Started](/docs/sdk/getting-started) — a
+budget cap, a PII-redacting `guard`, and a tamper-evident `AuditLog`, all on one `run`:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.sdk import Agent, tool, run, budget, guard, Policy, AuditLog
+
+@tool
+def get_weather(city: str) -> str:
+    """Current weather for a city."""      # schema derived from type hints + docstring
+    return f"Sunny in {city}"
+
+agent = Agent(name="assistant", model="gpt-4o", tools=[get_weather],
+              instructions="Answer using tools when helpful.")
+
+log = AuditLog(system="support", risk_tier="limited", path="audit.jsonl")
+with budget(usd=0.25, on_exceed="block"), guard(Policy.default(), audit=log):
+    result = run(agent, "What's the weather in Paris?", audit=log)
+
+print(result.output)                        # the final answer
+print(result.cost, result.usage)            # Decimal money, real token usage
+print([s.name for s in result.tool_steps])  # ["get_weather"]
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { Agent, tool, run, withBudget, guard, Policy, AuditLog } from '@cendor/sdk';
+import { z } from 'zod';
+
+const getWeather = tool(({ city }) => `Sunny in ${city}`, {
+  name: 'get_weather',
+  description: 'Current weather for a city',
+  parameters: z.object({ city: z.string() }),   // TS has no runtime type hints — zod is the schema
+});
+
+const agent = new Agent({ name: 'assistant', model: 'gpt-4o', tools: [getWeather],
+                          instructions: 'Answer using tools when helpful.' });
+
+const audit = new AuditLog('support', { riskTier: 'limited', path: 'audit.jsonl' });
+const result = await withBudget({ usd: 0.25, onExceed: 'block' }, () =>
+  guard({ policy: Policy.default(), audit }, () =>
+    run(agent, "What's the weather in Paris?", { audit })));
+
+console.log(result.output);                          // the final answer
+console.log(result.cost?.toString(), result.usage);  // decimal money, real token usage
+console.log(result.toolSteps.map((s) => s.name));    // ["get_weather"]
+```
+
+<!-- /tabs -->
+
+`budget`/`guard`/`AuditLog` are the *same* library objects re-exported from `cendor.sdk` — the
+per-agent cap is `Agent(max_usd=…)`, not a `budget=` field. Full walkthrough:
+[SDK Getting Started](/docs/sdk/getting-started).
 
 ## Wire up your assistant — three ways
 
