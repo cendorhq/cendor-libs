@@ -228,7 +228,7 @@ requires-dist = [{ name = "cendor-libs", editable = "packages/cendor-libs" }]
 
 [[package]]
 name = "cendor-acttrace"
-version = "1.4.2"
+version = "1.5.0"
 source = { editable = "packages/cendor-acttrace" }
 dependencies = [
     { name = "cendor-core" },
@@ -290,7 +290,7 @@ provides-extras = ["squeeze"]
 
 [[package]]
 name = "cendor-core"
-version = "1.5.2"
+version = "1.6.0"
 source = { editable = "packages/cendor-core" }
 dependencies = [
     { name = "tiktoken" },

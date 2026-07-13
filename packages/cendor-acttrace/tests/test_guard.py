@@ -253,3 +253,85 @@ def test_guard_ignores_non_call_events():
     g = guard(Policy.strict())
     assert g(object()) is MISS  # not an LLMCall/ToolCall -> MISS
     assert g(LLMCall(id="x", provider="openai", model="m", messages=[])) is MISS  # empty -> MISS
+
+
+# --- dual-shape guard (1.5.0): scope form + resolve_findings ------------------------------------
+
+
+def test_guard_scope_form_installs_and_removes_exactly_once():
+    # `with guard(...):` installs the interceptor on core's seam on enter, removes it on exit.
+    from cendor.core.instrument import _interceptors
+
+    calls = {"n": 0}
+    client = _client(calls)
+    g = guard(Policy.pci())  # financial -> block
+
+    base = list(_interceptors)
+    with g as installed:
+        assert installed is g  # the CM yields the interceptor itself (dual shape, same object)
+        assert sum(1 for i in _interceptors if i is g) == 1
+        with pytest.raises(PolicyViolation):
+            client.chat.completions.create(
+                model="gpt-4o", messages=_msgs("card 4111 1111 1111 1111")
+            )
+    assert all(i is not g for i in _interceptors)
+    assert list(_interceptors) == base
+    assert calls["n"] == 0  # blocked while scoped
+
+    # enforcement is really gone after exit
+    client.chat.completions.create(model="gpt-4o", messages=_msgs("card 4111 1111 1111 1111"))
+    assert calls["n"] == 1
+
+
+def test_guard_scope_form_removes_on_exception():
+    from cendor.core.instrument import _interceptors
+
+    g = guard(Policy.strict())
+    with pytest.raises(RuntimeError):
+        with g:
+            assert sum(1 for i in _interceptors if i is g) == 1
+            raise RuntimeError("boom")
+    assert all(i is not g for i in _interceptors)
+
+
+def test_guard_raw_interceptor_form_unchanged():
+    # The returned object is still a plain callable for add_interceptor (shape pin).
+    g = guard(Policy.strict())
+    assert callable(g)
+    assert g(object()) is MISS  # callable without installation, exactly as before
+
+
+def test_resolve_findings_uses_resolved_actions():
+    from cendor.acttrace import resolve_findings, scan
+
+    findings = scan(
+        "email bob@acme.com card 4111 1111 1111 1111 key sk-ant-api03-ABCDEFGH12345678",
+        Policy.gdpr(),
+    )
+    groups = resolve_findings(findings)
+    assert {f.category for f in groups["redact"]} >= {"email", "credit_card"}
+    assert not groups["block"]  # gdpr redacts financial, blocks only special_category/credential
+
+
+def test_resolve_findings_reresolves_under_another_policy():
+    from cendor.acttrace import resolve_findings, scan
+
+    # scan wide under default (never blocks), enforce under pci (financial -> block)
+    findings = scan("card 4111 1111 1111 1111", Policy.default())
+    assert all(f.action != "block" for f in findings)
+    groups = resolve_findings(findings, Policy.pci())
+    assert [f.category for f in groups["block"]] == ["credit_card"]
+    assert groups["block"][0].action == "block"  # the finding is re-stamped
+
+
+def test_resolve_findings_unknown_action_falls_back_to_flag():
+    from dataclasses import replace
+
+    from cendor.acttrace import Finding, resolve_findings
+
+    weird = replace(
+        Finding(category="email", group="pii", severity="warning", action="flag", count=1),
+        action="quarantine",
+    )
+    groups = resolve_findings([weird])
+    assert [f.category for f in groups["flag"]] == ["email"]

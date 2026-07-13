@@ -192,7 +192,9 @@ await prices.refresh(undefined, { source: 'litellm' });  // or 'openrouter' | 'a
 `refresh()` fetches a **static** resource over http(s) only (it rejects `file://` and other
 schemes), maps it to our schema **in memory** (nothing persisted), and normalizes source ids
 to bare keys (`openai/gpt-4o` → `gpt-4o`). See [Providers → Live pricing](providers.md#live-pricing)
-for which sources expose rates.
+for which sources expose rates. Programmatic price registrations (TS `prices.register`; in Python
+the SDK's `register_model_price` writes through core's contractual hook) **survive `refresh()`**
+since 1.6.0 / 0.6.0 — they are re-applied after every table swap.
 
 ### `bus`
 
@@ -270,6 +272,10 @@ new Money(0.0135);   // decimal.js-backed; value-equal with Python's Decimal; Mo
 - In `Usage`, `cached_tokens ⊆ input_tokens` and `reasoning_tokens ⊆ output_tokens` (breakdowns,
   not added to the total). `cache_write` (Anthropic `cache_creation`) is a **separate** billed
   category (~1.25× input), not in the total.
+- **Aggregate usage with core, not by hand** (since 1.6.0 / 0.6.0): `Usage` supports `+` /
+  `sum(...)` and `sum_usage(iterable)` in Python, `sumUsage(usages)` in TS (next to `sumMoney`).
+  The sum is **field-complete by construction** — it iterates the instance's own fields, so a
+  future `Usage` field can never silently vanish from an aggregate.
 
 ### Modules & protocols
 | Module | Responsibility |
@@ -423,10 +429,13 @@ one another. That's what keeps `core` the whole stack's small, stable blast radi
   entrypoint isn't wrapped — use `converse`.
 - **Some provider entrypoints bypass `instrument()` entirely (silent — no bus event):** OpenAI's
   structured-output helpers `chat.completions.parse` / `responses.parse`, Anthropic's
-  `messages.stream()` helper and `tool_runner`, the Batch APIs, and embeddings calls are **not
-  wrapped** — calls through them never reach the bus, so budgets/audit/tests don't see them. Call
-  the wrapped entrypoints (`chat.completions.create`, `responses.create`, `messages.create`, or
-  Anthropic `messages.create(stream=True)`) when you need governed calls.
+  `messages.stream()` helper and `tool_runner`, and the Batch APIs are **not wrapped** — calls
+  through them never reach the bus, so budgets/audit/tests don't see them. Call the wrapped
+  entrypoints (`chat.completions.create`, `responses.create`, `messages.create`, or Anthropic
+  `messages.create(stream=True)`) when you need governed calls. (Since 1.6.0 / 0.6.0,
+  openai-shaped `embeddings.create` **is** wrapped — embedding calls emit an `LLMCall` with
+  `metadata["embedding"] = True`, pre-flight budgets/guards apply, and the snapshot prices the
+  `text-embedding-*` ids; embeddings on non-openai-shaped clients remain uncaptured.)
 - **`refresh()` never reaches a running service or needs an account** — it fetches static JSON
   over http(s), maps it in memory, and falls back to the bundled snapshot. AWS/GCP catalogs
   need credentials/SDKs and are intentionally out of core (bring your own `mapper=`).

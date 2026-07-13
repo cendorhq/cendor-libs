@@ -2,6 +2,14 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.5.0] — 2026-07-14
+The dual-shape guard: `guard()`'s return is now scope-capable, so the SDK can re-export the identical object (`cendor.sdk.guard is cendor.acttrace.guard`). Backward-compatible — the raw interceptor form is unchanged.
+
+### Added
+- **`guard()` returns a dual-shape `GuardInterceptor`.** Still the plain pre-call interceptor you install via `core.add_interceptor` (unchanged behavior, same signature), and now *also* a context manager: `with guard(Policy.gdpr(), audit=log): …` installs the interceptor on core's seam on enter and removes it on exit (exactly once each, exception-safe). Enforcement still lives on core's seam — the recorder/enforcer split is intact.
+- **`resolve_findings(findings, policy=None)`** — the per-category action resolution `guard()` applies, exported: partitions findings into `{"block": […], "redact": […], "flag": […]}`; with `policy` given, each finding is re-resolved against it (scan under one policy, enforce under another). Composers (like the SDK's pii/secrets bridge) can now honor per-category actions instead of flattening to one.
+- `GuardInterceptor` is exported for typing.
+
 ## [1.4.2] — 2026-07-11
 AI-assistant onboarding: inline Type Teach ships inside the package, plus the bundled integration guide. No runtime behavior change for correct code.
 

@@ -44,7 +44,7 @@ from .detectors import (
     group_of,
     register_detector,
 )
-from .guard import PolicyViolation, guard
+from .guard import GuardInterceptor, PolicyViolation, guard, resolve_findings
 from .ner import ner_available, ner_redactor
 from .packs import LOCALE_PACKS, enable_entropy_detector, enable_locale_pack
 from .policy import Finding, Policy, redact, scan
@@ -66,9 +66,11 @@ __all__ = [
     "Finding",
     "scan",
     "redact",
-    # enforcement (roadmap phase 2)
+    # enforcement (roadmap phase 2; guard() returns a dual-shape GuardInterceptor since 1.5.0)
     "guard",
+    "GuardInterceptor",
     "PolicyViolation",
+    "resolve_findings",
     # optional power — all opt-in (roadmap phase 3)
     "enable_locale_pack",
     "enable_entropy_detector",

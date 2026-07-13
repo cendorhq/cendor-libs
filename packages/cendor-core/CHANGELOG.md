@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.6.0] — 2026-07-14
+Embeddings capture, Usage arithmetic, and a survive-refresh price registry — the core half of the SDK↔lib inheritance fixes.
+
+### Added
+- **`instrument()` now captures `embeddings.create`** on openai-shaped clients (OpenAI + Azure-via-openai): the pre-flight interceptor pass runs — budget block/clamp and guard redact-before-send now apply to embedding calls (a `Reroute(messages=…)` maps back to the raw `input` shape) — and the emitted `LLMCall` carries `metadata["embedding"] = True`, usage from `response.usage`, and cost from the price table. Sync + async. Embeddings leave the documented capture-gaps list for openai-shaped clients.
+- **`Usage` arithmetic** — `Usage.__add__` (supports `sum(...)`) and `sum_usage(iterable)`, exported from `cendor.core`. Field-complete **by construction** (iterates the dataclass fields), so a future `Usage` field can never silently vanish from an aggregate.
+- **`prices._register(model, rates)`** — the contractual programmatic write hook (the seam `cendor.sdk.register_model_price` writes through; underscore-named to stay out of the end-user API, but stable within 1.x). Registrations **survive `refresh()`** — re-applied after every table swap instead of being dropped.
+- The bundled price snapshot gains the OpenAI embedding rows (`text-embedding-3-small` $0.02/1M · `text-embedding-3-large` $0.13/1M · `text-embedding-ada-002` $0.10/1M — verified on the official model pages), so USD budgets bind on embedding calls out of the box.
+
 ## [1.5.2] — 2026-07-11
 Model-currency patch: today's models price correctly out of the box.
 

@@ -1,9 +1,11 @@
 """``guard()`` — a batteries-included enforcement callable for ``cendor.core``'s interceptor seam.
 
 The recorder/enforcer split stays intact: ``acttrace`` still only *records*. ``guard()`` returns a
-plain callable you install yourself via ``core.add_interceptor`` — it is ``core`` that stops the
-call, not ``acttrace``. Per call, the active :class:`~cendor.acttrace.Policy` resolves each detected
-category to an action:
+**dual-shape** :class:`GuardInterceptor` — a plain callable you install yourself via
+``core.add_interceptor`` (the raw interceptor form), which is *also* a context manager
+(``with guard(...):`` installs on enter, removes on exit — the scope form). Either way it is
+``core`` that stops the call, not ``acttrace``. Per call, the active
+:class:`~cendor.acttrace.Policy` resolves each detected category to an action:
 
 * **block** → record ``policy_flag(action="blocked")`` → **raise** (the call never runs).
 * **redact** → scrub the outbound messages (via ``core``'s ``Reroute(messages=…)``) so the
@@ -19,10 +21,11 @@ engine, so there is no second detection path to keep in sync.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from cendor.core.instrument import MISS, Reroute
+from cendor.core.instrument import MISS, Reroute, add_interceptor, remove_interceptor
 from cendor.core.types import LLMCall, ToolCall
 
 from .detectors import _scrub
@@ -62,6 +65,60 @@ def _max_severity(findings: list[Finding]) -> str:
     )
 
 
+def resolve_findings(
+    findings: list[Finding], policy: Policy | None = None
+) -> dict[str, list[Finding]]:
+    """Partition findings by their policy-effective action — ``guard()``'s own resolution, exported.
+
+    With ``policy`` given, each finding's action is **re-resolved** against it via
+    :meth:`Policy.action_for` (category → group → default, most specific wins) — so findings
+    scanned under one policy can be enforced under another. Without it, each
+    :class:`~cendor.acttrace.Finding`'s already-resolved ``action`` is used as-is. Every finding
+    lands in exactly one bucket; any action other than ``block``/``redact`` resolves to ``flag``.
+
+    ```python
+    from cendor.acttrace import Policy, resolve_findings, scan
+
+    groups = resolve_findings(scan(payload), Policy.gdpr())
+    if groups["block"]:
+        ...  # any block-tier finding: refuse the payload
+    ```
+    """
+    groups: dict[str, list[Finding]] = {"block": [], "redact": [], "flag": []}
+    for f in findings:
+        action = policy.action_for(f.category, f.group) if policy is not None else f.action
+        if action not in groups:
+            action = "flag"
+        if action != f.action:
+            f = dataclasses.replace(f, action=action)
+        groups[action].append(f)
+    return groups
+
+
+class GuardInterceptor:
+    """What :func:`guard` returns — a plain pre-call interceptor that is *also* a context manager.
+
+    * **Raw interceptor form** — hand it to :func:`cendor.core.instrument.add_interceptor`
+      yourself; it enforces on every instrumented call until you remove it. It gates nothing
+      until installed.
+    * **Scope form** — ``with guard(...):`` installs it on core's seam on enter and removes it on
+      exit (exactly once each, exception-safe), so enforcement covers just the block.
+    """
+
+    def __init__(self, interceptor: Callable[[Any], Any]):
+        self._interceptor = interceptor
+
+    def __call__(self, call: Any) -> Any:
+        return self._interceptor(call)
+
+    def __enter__(self) -> GuardInterceptor:
+        add_interceptor(self)
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        remove_interceptor(self)
+
+
 def _make_block_exception(
     on_block: type[BaseException] | Callable[[list[Finding]], BaseException],
     findings: list[Finding],
@@ -82,19 +139,26 @@ def guard(
     policy: Policy | None = None,
     audit: AuditLog | None = None,
     on_block: type[BaseException] | Callable[[list[Finding]], BaseException] = PolicyViolation,
-) -> Callable[[Any], Any]:
-    """Return a pre-call interceptor that enforces ``policy`` and records refusals via ``audit``.
+) -> GuardInterceptor:
+    """Return a pre-call interceptor (also a context manager) enforcing ``policy``.
 
-    It hands back a plain **pre-call interceptor** — you install it on ``core``'s seam, and it is
-    ``core`` (not acttrace) that blocks or rewrites the call. Redact-before-send works by returning
-    a :class:`~cendor.core.Reroute` (also imported from ``cendor.core``) so the *provider* receives
-    the cleaned messages:
+    The returned :class:`GuardInterceptor` is **dual-shape**. As a plain callable you install it
+    on ``core``'s seam yourself; as a context manager it installs on enter and removes on exit —
+    either way it is ``core`` (not acttrace) that blocks or rewrites the call. Redact-before-send
+    works by returning a :class:`~cendor.core.Reroute` so the *provider* receives the cleaned
+    messages:
 
     ```python
-    from cendor.core import add_interceptor
     from cendor.acttrace import AuditLog, Policy, guard
 
     log = AuditLog(system="support_bot", risk_tier="high")
+
+    # scope form — enforce for the block only (install/remove handled for you):
+    with guard(Policy.gdpr(), log):
+        client.chat.completions.create(model="gpt-4o", messages=msgs)
+
+    # raw interceptor form — install/remove yourself:
+    from cendor.core import add_interceptor
     add_interceptor(guard(Policy.gdpr(), log))   # enforce + record in one line
     ```
 
@@ -109,7 +173,8 @@ def guard(
             :class:`PolicyViolation`.
 
     Returns:
-        A callable for :func:`cendor.core.instrument.add_interceptor`.
+        A :class:`GuardInterceptor` — pass it to
+        :func:`cendor.core.instrument.add_interceptor`, or use it as a context manager.
     """
     policy = policy or Policy.default()
 
@@ -131,9 +196,8 @@ def guard(
         findings = scan(content, policy)
         if not findings:
             return MISS
-        blocked = [f for f in findings if f.action == "block"]
-        to_redact = [f for f in findings if f.action == "redact"]
-        flagged = [f for f in findings if f.action == "flag"]
+        groups = resolve_findings(findings)  # the one shared per-category resolution
+        blocked, to_redact, flagged = groups["block"], groups["redact"], groups["flag"]
         if blocked:
             _record("blocked", blocked, call)  # record the refusal *before* raising
             raise _make_block_exception(on_block, blocked)
@@ -157,4 +221,4 @@ def guard(
             )
         return MISS
 
-    return _interceptor
+    return GuardInterceptor(_interceptor)

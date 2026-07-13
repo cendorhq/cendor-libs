@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal
 
@@ -41,6 +42,42 @@ class Usage:
         """Input + output tokens (cached and reasoning are subsets; cache_write is billed
         separately, not added)."""
         return self.input_tokens + self.output_tokens
+
+    def __add__(self, other: Usage | int) -> Usage:
+        """Field-complete sum — iterates the dataclass fields, so a future ``Usage`` field can
+        never silently vanish from an aggregate (the enumerated-field bug class). ``0`` is
+        accepted so ``sum(usages)`` works.
+
+        ```python
+        from cendor.core import Usage
+        total = sum(step.usage for step in steps if step.usage)   # Usage(...)
+        ```
+        """
+        if isinstance(other, int) and other == 0:  # supports sum([...]) which starts at 0
+            return self
+        if not isinstance(other, Usage):
+            return NotImplemented
+        return Usage(
+            **{f.name: getattr(self, f.name) + getattr(other, f.name) for f in fields(self)}
+        )
+
+    __radd__ = __add__
+
+
+def sum_usage(usages: Iterable[Usage]) -> Usage:
+    """Sum usages field-complete (every ``Usage`` field, by construction — see
+    :meth:`Usage.__add__`). An empty iterable returns an all-zero ``Usage``. The Python twin of
+    the TS port's ``sumUsage``.
+
+    ```python
+    from cendor.core import sum_usage
+    total = sum_usage(u for u in usages if u is not None)
+    ```
+    """
+    total = Usage(0)
+    for u in usages:
+        total = total + u
+    return total
 
 
 @dataclass(frozen=True)

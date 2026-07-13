@@ -92,7 +92,7 @@ def test_bundled_snapshot_metadata():
     assert prices.source() == "bundled"
     assert prices.source_name() == "bundled"
     assert prices.source_url() is None
-    assert prices.snapshot_date() == "2026-07-11"
+    assert prices.snapshot_date() == "2026-07-13"
     assert "claude-opus-4-8" in prices.models()
 
 
@@ -347,3 +347,55 @@ def test_age_days_and_is_stale(monkeypatch):
     _install_fetch(monkeypatch, raw_old)
     assert prices.refresh("https://example.com/p.json") is True
     assert prices.is_stale(max_age_days=30) is True
+
+
+# --- _register: the contractual programmatic write hook (1.6.0) ---------------------------------
+
+
+def test_register_writes_rate_and_estimate_uses_it():
+    prices._register("my-fine-tune", {"input": Decimal("0.000001"), "output": Decimal("0.000002")})
+    assert "my-fine-tune" in prices.models()
+    # 0.000001*1000 + 0.000002*500 = 0.001 + 0.001 = 0.002
+    assert prices.estimate("my-fine-tune", 1000, 500).amount == Decimal("0.002")
+
+
+def test_register_survives_refresh(monkeypatch):
+    import contextlib
+    import io
+    import json
+
+    prices._register("my-fine-tune", {"input": Decimal("0.000001"), "output": Decimal("0")})
+    payload = json.dumps(
+        {"_updated": "2099-02-02", "models": {"gpt-4o": {"input": 0.002, "output": 0}}}
+    )
+
+    @contextlib.contextmanager
+    def fake_urlopen(url, timeout=5.0):
+        yield io.BytesIO(payload.encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert prices.refresh() is True
+    # The refreshed table swapped in — but the registration is re-applied, not dropped.
+    assert prices.estimate("my-fine-tune", 1000).amount == Decimal("0.001")
+    assert prices.estimate("gpt-4o", 1000).amount == Decimal("2")  # refreshed rate active
+
+
+def test_register_coerces_via_str_and_overrides_snapshot():
+    # Snapshot gpt-4o input is 0.0000025; a registration overrides it. str-coercion, no float noise.
+    prices._register("gpt-4o", {"input": "0.00001", "output": 0})
+    rate = prices._ensure_loaded()["models"]["gpt-4o"]["input"]
+    assert isinstance(rate, Decimal) and rate == Decimal("0.00001")
+
+
+def test_reset_clears_registrations():
+    prices._register("my-fine-tune", {"input": Decimal("0.000001")})
+    prices._reset()
+    assert "my-fine-tune" not in prices.models()
+
+
+def test_embedding_models_priced_in_snapshot():
+    # Embedding rows back the new instrument() embeddings capture (USD budgets bind on embed calls).
+    # text-embedding-3-small: $0.02/1M -> 0.00000002/token; 1000 tokens = 0.00002.
+    assert prices.estimate("text-embedding-3-small", 1000).amount == Decimal("0.00002")
+    assert prices.estimate("text-embedding-3-large", 1000).amount == Decimal("0.00013")
+    assert prices.estimate("text-embedding-ada-002", 1000).amount == Decimal("0.0001")

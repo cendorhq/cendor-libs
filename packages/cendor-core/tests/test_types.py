@@ -40,3 +40,28 @@ def test_money_currency_mismatch_raises():
 
 def test_usage_total():
     assert Usage(input_tokens=100, output_tokens=50).total_tokens == 150
+
+
+def test_usage_add_is_field_complete():
+    # __add__ iterates dataclass fields — a future Usage field can't silently vanish from sums.
+    import dataclasses
+
+    from cendor.core import Usage
+
+    a = Usage(
+        input_tokens=100, output_tokens=50, cached_tokens=10, reasoning_tokens=5, cache_write=2
+    )
+    b = Usage(input_tokens=1, output_tokens=2, cached_tokens=3, reasoning_tokens=4, cache_write=5)
+    total = a + b
+    for f in dataclasses.fields(Usage):
+        assert getattr(total, f.name) == getattr(a, f.name) + getattr(b, f.name)
+    assert total.total_tokens == 153
+
+
+def test_usage_sum_builtin_and_sum_usage():
+    from cendor.core import Usage, sum_usage
+
+    usages = [Usage(10, 5), Usage(20, 10, cached_tokens=8)]
+    assert sum(usages) == Usage(30, 15, cached_tokens=8)  # sum() starts at 0 -> __radd__
+    assert sum_usage(usages) == Usage(30, 15, cached_tokens=8)
+    assert sum_usage([]) == Usage(0)  # empty -> all-zero

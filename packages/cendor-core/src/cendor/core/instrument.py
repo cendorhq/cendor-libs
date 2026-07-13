@@ -141,8 +141,10 @@ def instrument(client: T) -> T:
 
     Detection is structural (SDKs are never imported, so they stay optional):
 
-    * **OpenAI** — ``chat.completions.create`` (Chat Completions) **and** ``responses.create`` (the
-      Responses API, primary for new OpenAI apps + the Agents SDK); both are wrapped when present.
+    * **OpenAI** — ``chat.completions.create`` (Chat Completions), ``responses.create`` (the
+      Responses API, primary for new OpenAI apps + the Agents SDK), **and** ``embeddings.create``
+      (embedding calls emit an ``LLMCall`` with ``metadata["embedding"] = True``; covers Azure
+      OpenAI too, which shares the client shape); all are wrapped when present.
     * **Anthropic** — ``messages.create``.
     * **AWS Bedrock** — ``converse``.
     * **Google Gemini** — the legacy ``google-generativeai`` ``GenerativeModel.generate_content``
@@ -205,6 +207,12 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
     responses = getattr(client, "responses", None)  # OpenAI Responses API
     if responses is not None and callable(getattr(responses, "create", None)):
         targets.append((responses, "create", "openai_responses"))
+    # OpenAI-shaped embeddings endpoint (OpenAI + Azure-via-openai). Wrapping it closes the
+    # embeddings capture gap: pre-flight interceptors (budget block/clamp, guard redaction) run,
+    # and the emitted LLMCall carries metadata["embedding"] = True.
+    embeddings = getattr(client, "embeddings", None)
+    if embeddings is not None and callable(getattr(embeddings, "create", None)):
+        targets.append((embeddings, "create", "openai_embeddings"))
     if targets:
         return targets  # an OpenAI-shaped client; don't also match the fallbacks below
     messages = getattr(client, "messages", None)
@@ -230,7 +238,7 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
 
 
 #: Internal provider tags that map to a public ``LLMCall.provider`` name.
-_PUBLIC_PROVIDER = {"openai_responses": "openai"}
+_PUBLIC_PROVIDER = {"openai_responses": "openai", "openai_embeddings": "openai"}
 
 
 def _public_provider(provider: str) -> str:
@@ -307,7 +315,15 @@ def _apply_reroute(call: LLMCall, kwargs: dict, directive: Reroute, provider: st
     if messages is not _MISSING:
         # Rewrite the provider's own messages kwarg and keep the emitted event consistent with what
         # is actually sent. (If a Gemini caller passed contents positionally, set the kwarg form.)
-        kwargs[_MESSAGES_KWARG.get(provider, "messages")] = messages
+        if provider == "openai_embeddings":
+            # The embeddings endpoint takes raw text(s) on `input`, not message dicts — map the
+            # rerouted messages back to the original input shape (str stays str, list stays list)
+            # so e.g. a guard's redact-before-send sends the provider cleaned text.
+            contents = [str(_get(m, "content", "") or "") for m in messages or []]
+            original = kwargs.get("input")
+            kwargs["input"] = contents[0] if isinstance(original, str) and contents else contents
+        else:
+            kwargs[_MESSAGES_KWARG.get(provider, "messages")] = messages
         call.messages = messages
     call.metadata["rerouted"] = True
 
@@ -325,6 +341,8 @@ def _pre(
         ts=datetime.now(UTC),
     )
     call.metadata["request_kwargs"] = kwargs  # so pre-flight interceptors can read e.g. max_tokens
+    if provider == "openai_embeddings":
+        call.metadata["embedding"] = True  # so subscribers can tell embedding calls apart
     return call, time.perf_counter()
 
 
@@ -332,6 +350,19 @@ def _extract_request(
     provider: str, args: tuple, kwargs: dict, model_default: str = ""
 ) -> tuple[str, list[dict]]:
     """Normalize (model, messages) out of a provider's call signature."""
+    if provider == "openai_embeddings":
+        # Embeddings API: embeddings.create(model=…, input=…). `input` is a string or a list of
+        # strings (token arrays pass through as-is inside content). Normalize each text to a
+        # message dict so interceptors (guard redaction, budget projection) see the payload the
+        # same way they see chat messages.
+        inp = kwargs.get("input")
+        if isinstance(inp, str):
+            texts: list = [inp]
+        elif isinstance(inp, list):
+            texts = inp
+        else:
+            texts = []
+        return kwargs.get("model", ""), [{"role": "user", "content": t} for t in texts]
     if provider == "openai_responses":
         # Responses API: responses.create(model=…, input=…). `input` is a string or a message list.
         inp = kwargs.get("input")
@@ -787,11 +818,13 @@ def _extract_usage(response: Any, provider: str) -> Usage | None:
         u = _get(response, "usage")
         if u is None:
             return None
-        if provider in ("openai", "openai_responses", "huggingface"):
+        if provider in ("openai", "openai_responses", "openai_embeddings", "huggingface"):
             # Dual-shape: Chat Completions uses prompt_tokens/completion_tokens (+ details); the
             # Responses API uses input_tokens/output_tokens (+ input/output_tokens_details). Read
             # whichever the response carries so one branch covers both entrypoints. Hugging Face's
             # chat_completion returns the Chat Completions shape (prompt_tokens/completion_tokens).
+            # Embeddings responses carry prompt_tokens/total_tokens only (no completion_tokens ->
+            # output stays 0).
             inp = _get(u, "prompt_tokens")
             if inp is None:
                 inp = _get(u, "input_tokens")

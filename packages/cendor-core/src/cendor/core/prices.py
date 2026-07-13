@@ -31,6 +31,9 @@ _source: str = "bundled"  # "bundled" | "refreshed" — coarse provenance (back-
 _source_name: str = "bundled"  # finer: "bundled" | "litellm" | "openrouter" | "azure" | "custom"
 _source_url: str | None = None
 _table_lock = threading.Lock()  # guards the lazy load + refresh() swap of the module-global table
+#: Programmatic registrations (see :func:`_register`) — re-applied on top of every loaded or
+#: refreshed table, so a ``refresh()`` never drops them.
+_registered: dict[str, dict] = {}
 
 #: Default static snapshot location used by ``refresh()`` when no URL or source is given. Points at
 #: the bundled ``prices.json`` on the repo's main branch; override by passing ``url=`` / ``source=``
@@ -78,8 +81,31 @@ def _ensure_loaded() -> dict:
     if _table is None:
         with _table_lock:  # double-checked: only one thread loads the bundled snapshot
             if _table is None:
-                _table = _loads(_bundled_text())
+                table = _loads(_bundled_text())
+                if _registered:  # re-apply programmatic registrations (see _register)
+                    table.setdefault("models", {}).update(_registered)
+                _table = table
     return _table
+
+
+def _register(model: str, rates: dict) -> None:
+    """Register (or override) one model's rates programmatically — survives ``refresh()``.
+
+    This is the **contractual write hook** the SDK's ``cendor.sdk.register_model_price`` writes
+    through — underscore-named to keep it out of the end-user API (users register prices via that
+    SDK helper; the TS port exposes a public ``prices.register``), but its name, signature, and
+    survive-refresh semantics are stable within 1.x. ``rates`` uses per-**token** values with the
+    snapshot's keys (``input``/``output``/``cached``/``cache_write``); values are coerced to
+    ``Decimal`` via ``str`` so callers can pass ``Decimal``/``str``/``int`` (never rely on float
+    binary noise). The registration is applied to the active table immediately and re-applied
+    after every ``refresh()`` table swap, so a refresh never drops it; it overrides a snapshot
+    entry with the same id. ``_reset()`` (tests) clears registrations.
+    """
+    entry = {k: Decimal(str(v)) for k, v in rates.items()}
+    table = _ensure_loaded()
+    with _table_lock:
+        _registered[str(model)] = entry
+        table.setdefault("models", {})[str(model)] = entry
 
 
 # Wire-level id decorations stripped at LOOKUP time (the table keys stay bare). Alpha-only dotted
@@ -388,6 +414,8 @@ def refresh(
         data = adapter(raw) if adapter is not None else raw
         if isinstance(data, dict) and data.get("models"):
             with _table_lock:  # publish the new table atomically for concurrent estimate() readers
+                if _registered:  # programmatic registrations survive a refresh (see _register)
+                    data.setdefault("models", {}).update(_registered)
                 _table = data
                 _source = "refreshed"
                 _source_name = name
@@ -399,12 +427,13 @@ def refresh(
 
 
 def _reset() -> None:
-    """Test helper: drop the loaded table so the bundled snapshot reloads."""
+    """Test helper: drop the loaded table (and registrations) so the bundled snapshot reloads."""
     global _table, _source, _source_name, _source_url
     _table = None
     _source = "bundled"
     _source_name = "bundled"
     _source_url = None
+    _registered.clear()
 
 
 def __getattr__(name: str) -> object:  # PEP 562 — teach the common wrong guess

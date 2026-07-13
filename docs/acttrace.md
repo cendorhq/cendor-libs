@@ -587,6 +587,44 @@ or a factory `list[Finding] -> Exception`. The raised `PolicyViolation` carries 
 (categories/counts, never raw values). `Policy.default()` never blocks — use `gdpr()` / `pci()` /
 `strict()` (or a custom policy) to make a category `block`.
 
+### The scope form — enforce for a block only
+
+`guard()`'s return is **dual-shape** (since 1.5.0 / 0.6.0): it is the raw interceptor you install
+yourself, *and* it carries its own install/remove lifecycle for scoped enforcement — a context
+manager in Python, a callback form in TypeScript. The interceptor is installed on entry and
+removed on the way out (exception-safe), so enforcement covers exactly the block. This is the
+same object the SDK re-exports as `cendor.sdk.guard` / `@cendor/sdk`'s `guard`.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.acttrace import AuditLog, Policy, guard
+
+log = AuditLog(system="support_bot", risk_tier="high")
+with guard(Policy.gdpr(), audit=log):          # installed on enter, removed on exit
+    client.chat.completions.create(model="gpt-4o", messages=msgs)
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { AuditLog, Policy, guard } from '@cendor/acttrace';
+
+const log = new AuditLog('support_bot', { riskTier: 'high' });
+await guard({ policy: Policy.gdpr(), audit: log }, async () => {
+  // instrumented calls in here are gated; the interceptor is removed after
+});
+```
+
+<!-- /tabs -->
+
+**Per-category resolution is exported too:** `resolve_findings(findings, policy=None)` /
+`resolveFindings(findings, policy?)` partitions scan findings into
+`{"block": […], "redact": […], "flag": […]}` — the exact resolution `guard()` applies (with
+`policy` given, each finding is re-resolved against it). Use it to build your own enforcement
+that honors per-category actions instead of flattening to one.
+
 ```mermaid
 %%{init: {"flowchart": {"htmlLabels": false}} }%%
 graph TD

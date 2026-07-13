@@ -13,12 +13,13 @@ from .instrument import (
     remove_interceptor,
     trace,
 )
-from .types import LLMCall, Money, ToolCall, Usage
+from .types import LLMCall, Money, ToolCall, Usage, sum_usage
 
 __all__ = [
     "LLMCall",
     "ToolCall",
     "Usage",
+    "sum_usage",
     "Money",
     "bus",
     "tokens",

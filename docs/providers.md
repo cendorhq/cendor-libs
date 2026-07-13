@@ -39,9 +39,9 @@ wraps **every** entrypoint it finds, so whichever API your code calls is capture
 > a boto-shaped `converse()`; the `send(ConverseCommand)` client rides the SDK provider). See the
 > [parity matrix](languages.md).
 
-### OpenAI (Chat Completions + Responses API)
-`instrument()` wraps both entrypoints; the Responses API reports usage differently, and it's all
-normalized into the same `Usage`.
+### OpenAI (Chat Completions + Responses API + Embeddings)
+`instrument()` wraps all three entrypoints; the Responses API reports usage differently, and it's
+all normalized into the same `Usage`.
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -52,6 +52,7 @@ from cendor.core import instrument
 client = instrument(OpenAI())                       # env: OPENAI_API_KEY
 client.chat.completions.create(model="gpt-4o", messages=[...])   # Chat Completions
 client.responses.create(model="gpt-4o", input="…")               # Responses API (also captured)
+client.embeddings.create(model="text-embedding-3-small", input="…")  # Embeddings (also captured)
 ```
 
 <!-- tab: TypeScript -->
@@ -62,9 +63,15 @@ import { instrument } from '@cendor/core';
 const client = instrument(new OpenAI());            // env: OPENAI_API_KEY
 await client.chat.completions.create({ model: 'gpt-4o', messages: [/* ... */] });  // Chat Completions
 await client.responses.create({ model: 'gpt-4o', input: '…' });                    // Responses API (also captured)
+await client.embeddings.create({ model: 'text-embedding-3-small', input: '…' });   // Embeddings (also captured)
 ```
 
 <!-- /tabs -->
+
+Embedding calls (since core 1.6.0 / 0.6.0) emit an `LLMCall` with `metadata["embedding"] = True`,
+ride the same pre-flight interceptor pass (budgets can block, guards can redact-before-send), and
+are priced from the snapshot's `text-embedding-*` rows. Azure OpenAI shares the client shape, so
+its embeddings are captured the same way.
 The Responses API (default for new OpenAI apps and the Agents SDK) reports `input_tokens`/
 `output_tokens`, with cached tokens under `input_tokens_details.cached_tokens` and reasoning under
 `output_tokens_details.reasoning_tokens` — all normalized.
