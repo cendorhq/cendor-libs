@@ -63,6 +63,7 @@ Call shapes that are easy to get wrong:
 - TS tokenguard sinks live at the `@cendor/tokenguard/sinks` subpath.
 - Python is a PEP 420 namespace — `from cendor.tokenguard import budget`; no top-level `cendor` module.
 - Provider SDKs are optional (Python extras, TS peer deps) — install only what you call.
+- SDK provider keys: the SDK builds the client, so use the provider's standard env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …) or `Agent(api_key=…)` / a pre-built `client=`. There is no Cendor key config.
 
 Honest limits: deterministic guardrails don't stop novel adversarial attacks; acttrace produces
 *evidence*, not a compliance guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
@@ -99,8 +100,10 @@ Traps: `instrument()` once, not per call. TS `budget` is curried — `budget(cfg
 `block | redact | flag` (no `warn`); PII/secrets are acttrace detectors, not guardrail rules. Session
 store is in the SDK, casing differs (`SQLiteSessionStore` / `SqliteSessionStore`). TS tokenguard
 sinks: `@cendor/tokenguard/sinks`. Python is a PEP 420 namespace (`from cendor.tokenguard import
-budget`). Provider SDKs are optional (extras / peer deps). Deterministic guardrails don't stop novel
-attacks; acttrace is evidence, not a guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
+budget`). Provider SDKs are optional (extras / peer deps). SDK provider keys: the provider's standard
+env var (`OPENAI_API_KEY`) or `Agent(api_key=…)`, never a Cendor key config. Deterministic guardrails
+don't stop novel attacks; acttrace is evidence, not a guarantee. Full reference:
+https://cendor.ai/docs/for-ai-assistants
 ```
 
 ## AGENTS.md
@@ -131,8 +134,10 @@ is `Decimal`/`decimal.js`, never `float`/`number`. `Context.assemble()` is sync 
 (`aassemble()` async), `await` in TS. Guardrail actions `block | redact | flag` (no `warn`);
 PII/secrets are acttrace detectors, not guardrail rules. Session store is in the SDK, casing differs
 (`SQLiteSessionStore` / `SqliteSessionStore`). TS tokenguard sinks: `@cendor/tokenguard/sinks`.
-Python is a PEP 420 namespace. Provider SDKs are optional. Deterministic guardrails don't stop novel
-attacks; acttrace is evidence, not a guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
+Python is a PEP 420 namespace. Provider SDKs are optional. SDK provider keys: the provider's standard
+env var (`OPENAI_API_KEY`) or `Agent(api_key=…)`, never a Cendor key config. Deterministic guardrails
+don't stop novel attacks; acttrace is evidence, not a guarantee. Full reference:
+https://cendor.ai/docs/for-ai-assistants
 ```
 
 ## Claude Code
@@ -162,8 +167,10 @@ is `Decimal`/`decimal.js`, never `float`/`number`. `Context.assemble()` is sync 
 (`aassemble()` async), `await` in TS. Guardrail actions `block | redact | flag` (no `warn`);
 PII/secrets are acttrace detectors, not guardrail rules. Session store is in the SDK, casing differs
 (`SQLiteSessionStore` / `SqliteSessionStore`). TS tokenguard sinks: `@cendor/tokenguard/sinks`.
-Python is a PEP 420 namespace. Provider SDKs are optional. Deterministic guardrails don't stop novel
-attacks; acttrace is evidence, not a guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
+Python is a PEP 420 namespace. Provider SDKs are optional. SDK provider keys: the provider's standard
+env var (`OPENAI_API_KEY`) or `Agent(api_key=…)`, never a Cendor key config. Deterministic guardrails
+don't stop novel attacks; acttrace is evidence, not a guarantee. Full reference:
+https://cendor.ai/docs/for-ai-assistants
 ```
 
 ## Or hand the whole docs to your assistant
