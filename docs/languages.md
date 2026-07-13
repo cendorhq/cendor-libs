@@ -109,6 +109,12 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Structured output | ✅ | ✅ |
 | Streaming | ✅ | ✅ (incremental single-agent + multi-agent) |
 | Governance re-exports | ✅ | ✅ (the real `@cendor/*` objects) |
+| `guard` identity + scope form | ✅ `sdk.guard is acttrace.guard`; `with guard(...):` | ✅ `Object.is`; `guard(opts, fn)` — dual-shape acttrace ≥ 1.5.0 / 0.6.0, SDK ≥ 1.7.0 / 0.10.0 |
+| SDK `rules` = full library catalogue | ✅ all factories + the `pii`/`secrets`/`entropy` bridge | ✅ since 0.10.0 — spotlight, detection-tier adapters, and similarity checks included (`payloadText`/`NORMALIZATIONS` helpers stay library-only) |
+| Embeddings capture + pre-flight governance | ✅ `embed()` rides `instrument()` (core ≥ 1.6.0) | ✅ (core ≥ 0.6.0) — a keyless USD budget blocks an embed before it fires |
+| `EvalCase` cassette `normalizer` passthrough | ✅ | ✅ |
+| `downgrades()` / `clamps()` re-export | ✅ | ✅ |
+| Parity/identity CI (re-export drift fails the build) | ✅ `tests/test_lib_parity.py` | ✅ `test/lib-parity.test.ts` |
 | Live progress / prompt caching / live OTel spans | ✅ | ✅ |
 | MCP client (tools / prompts / resources) | ✅ | ✅ (`@modelcontextprotocol/sdk` optional peer) |
 | Checkpoint / resume | ✅ | ✅ (atomic JSON; single + multi-agent) |

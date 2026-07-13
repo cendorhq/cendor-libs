@@ -43,7 +43,7 @@ cleaned, findings = redact({"note": "ping alice@example.com"}, Policy.default())
 audit = AuditLog(system="triage", policy=Policy.gdpr())    # special-category → block, PII → redact
 ```
 
-- **Enforce + record in one line** — `guard(policy, audit=…)` returns a callable for `core`'s interceptor seam: it *enforces* the policy (block a disallowed call before it runs, or warn) and `acttrace` *records* the decision as a tamper-evident `policy_flag`. Recorder and enforcer stay separate — `core` is what stops the call.
+- **Enforce + record in one line** — `guard(policy, audit=…)` returns a **dual-shape** interceptor (1.5.0): install it on `core`'s seam yourself, or use it as a context manager (`with guard(...):`) that installs/removes itself around the block. It *enforces* the policy (block a disallowed call before it runs, redact-before-send, or flag) and `acttrace` *records* the decision as a tamper-evident `policy_flag`. Recorder and enforcer stay separate — `core` is what stops the call. `resolve_findings()` exports the per-category action resolution for composers.
 
 ```python
 from cendor.core.instrument import add_interceptor
