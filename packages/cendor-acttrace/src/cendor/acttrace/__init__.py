@@ -46,6 +46,7 @@ from .detectors import (
 )
 from .guard import GuardInterceptor, PolicyViolation, guard, resolve_findings
 from .ner import ner_available, ner_redactor
+from .otel import OTelMirror
 from .packs import LOCALE_PACKS, enable_entropy_detector, enable_locale_pack
 from .policy import Finding, Policy, redact, scan
 
@@ -57,6 +58,9 @@ __all__ = [
     "default_redactor",
     "GENESIS",
     "BoundedMemoryWithoutPathWarning",
+    # OpenTelemetry mirror (optional): stream the chain to an APM/SIEM as an operational copy;
+    # the on-disk hash chain stays the sole verifiable evidence. See OTelMirror / AuditLog(mirror=).
+    "OTelMirror",
     # detection & policy (roadmap phase 1)
     "Detector",
     "DETECTORS",
@@ -117,6 +121,7 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
         "context_assembly": ["Art.12 logging", "Art.13 transparency"],
         "human_oversight": ["Art.14 human oversight", "Art.26(5) deployer oversight"],
         "policy_flag": ["Art.10 data governance", "Art.12 record-keeping"],
+        "budget_event": ["Art.12 record-keeping", "Art.72 post-market monitoring"],
     },
     "nist_rmf": {
         "audit_open": ["GOVERN-1.1"],
@@ -128,6 +133,7 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
         "context_assembly": ["MEASURE-2.1"],
         "human_oversight": ["MANAGE-2.1"],
         "policy_flag": ["MANAGE-2.1", "MEASURE-2.1"],
+        "budget_event": ["MANAGE-2.1", "MEASURE-2.1"],
     },
     "iso_42001": {  # ISO/IEC 42001:2023 Annex A controls + management clauses
         "audit_open": ["A.6.2.8 event logs"],
@@ -143,6 +149,7 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
         "context_assembly": ["A.6.2.8 event logs", "A.6.2.6 operation & monitoring"],
         "human_oversight": ["A.9.2 responsible use", "A.9.4 intended use"],
         "policy_flag": ["A.7 data for AI systems", "A.6.2.8 event logs", "A.9.2 responsible use"],
+        "budget_event": ["A.6.2.6 operation & monitoring", "A.6.2.8 event logs"],
     },
     "gdpr": {  # automated decision-making + records of processing (Reg. 2016/679)
         "audit_open": ["Art.30 records of processing", "Art.5(2) accountability"],
@@ -153,6 +160,7 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
         "tool_call": ["Art.30 records of processing"],
         "context_assembly": ["Art.30 records of processing"],
         "human_oversight": ["Art.22(3) right to human intervention"],
+        "budget_event": ["Art.30 records of processing"],
         "policy_flag": [
             "Art.9 special-category data",
             "Art.5(1)(c) data minimisation",
@@ -227,7 +235,8 @@ class AuditEntry:
 
     seq: int
     ts: str
-    # decision | llm_call | tool_call | human_oversight | context_assembly | guardrail_decision | …
+    # decision | llm_call | tool_call | human_oversight | context_assembly | guardrail_decision |
+    # budget_event | policy_flag | …
     type: str
     payload: dict
     prev_hash: str
@@ -368,6 +377,7 @@ class AuditLog:
         flag_on_redact: bool = True,
         policy: Policy | None = None,
         max_entries: int | None = None,
+        mirror: Any = None,
     ) -> None:
         """``policy`` selects the detection posture (see :class:`~cendor.acttrace.Policy`): every
         auto-captured payload is scanned against the full detector registry and, per the policy,
@@ -391,7 +401,17 @@ class AuditLog:
         :attr:`head` + the on-disk log, so ``verify()`` / ``export()`` still cover the *full* chain
         even after eviction. Default ``None`` keeps every entry in memory (unbounded, unchanged).
         Bound long-running logs *together with* ``path=`` — bounding without a file discards the
-        evicted entries entirely (a :class:`BoundedMemoryWithoutPathWarning` is raised)."""
+        evicted entries entirely (a :class:`BoundedMemoryWithoutPathWarning` is raised).
+
+        ``mirror`` attaches an optional :class:`~cendor.core.protocols.Sink` (e.g.
+        :class:`~cendor.acttrace.OTelMirror`) that receives every chained :class:`AuditEntry` *in
+        addition to* the file — an **operational copy** for monitoring/alerting/SIEM. A mirror is
+        best-effort: a failing mirror is swallowed and never breaks the chain, and the on-disk file
+        (not the mirror) remains the sole artifact ``verify()`` checks. If the mirror implements the
+        optional ``flush()``/``close()`` lifecycle, :meth:`detach` calls them. When OpenTelemetry is
+        installed, auto-captured and explicit entries also carry the active span's
+        ``otel_trace_id``/``otel_span_id`` in their payload, so an audit entry can be pivoted to
+        from an APM trace and back (a no-op when OTel is absent or no span is active)."""
         if max_entries is not None and max_entries < 1:
             raise ValueError(f"max_entries must be a positive int or None, got {max_entries!r}")
         self.system = system
@@ -404,6 +424,15 @@ class AuditLog:
         self._policy = policy or Policy.default()
         self._redactor = redactor or _redact  # _redact sentinel => built-in policy-driven path
         self._flag_on_redact = flag_on_redact
+        self._mirror = mirror  # optional Sink: an operational copy (APM/SIEM); never the evidence
+        # Cache the OTel trace module once so per-entry correlation stays cheap and is a no-op when
+        # OpenTelemetry isn't installed (the local-first default).
+        try:
+            from opentelemetry import trace as _otel_trace
+
+            self._otel_trace: Any = _otel_trace
+        except ImportError:
+            self._otel_trace = None
         if max_entries is not None and self.path is None:
             warnings.warn(
                 "AuditLog(max_entries=…) without path=: evicted entries are lost because the file "
@@ -519,7 +548,33 @@ class AuditLog:
 
     # ------------------------------------------------------------------ chain
 
+    def _with_otel_ids(self, payload: dict) -> dict:
+        """Stamp the active OpenTelemetry span's trace/span ids onto a payload for cross-referencing
+        an audit entry with an APM trace. No-op if OTel is absent or no valid span is current — so
+        the default (local-first) chain is byte-identical to before."""
+        if self._otel_trace is None:
+            return payload
+        span = self._otel_trace.get_current_span()
+        ctx = span.get_span_context() if span is not None else None
+        if ctx is None or not getattr(ctx, "is_valid", False):
+            return payload
+        enriched = dict(payload)
+        enriched.setdefault("otel_trace_id", format(ctx.trace_id, "032x"))
+        enriched.setdefault("otel_span_id", format(ctx.span_id, "016x"))
+        return enriched
+
+    def _mirror_write(self, entry: AuditEntry) -> None:
+        """Send a chained entry to the optional mirror. Best-effort: a mirror is an operational
+        copy, so its failure is swallowed and never breaks the chain (the file is truth)."""
+        if self._mirror is None:
+            return
+        try:
+            self._mirror.write(entry)
+        except Exception:  # noqa: BLE001 - a mirror must never break the audit chain
+            pass
+
     def _append(self, etype: str, payload: dict) -> AuditEntry:
+        payload = self._with_otel_ids(payload)  # additive correlation ids (no-op without OTel span)
         with self._lock:  # hash-chain step is a read-modify-write on _head/entries/file — atomic
             seq = self._seq  # monotonic; not len(entries), which caps once the memory ring is full
             self._seq += 1
@@ -554,6 +609,9 @@ class AuditLog:
             self.entries.append(entry)  # deque(maxlen) evicts the oldest in O(1) when full
             self._head = h
             self._write_line(json.dumps(entry.__dict__, ensure_ascii=False) + "\n")
+        # Mirror outside the lock (the file is already durable): an operational copy for APM/SIEM,
+        # emitted in chain order — this entry, then any follow-up policy_flags below mirror it too.
+        self._mirror_write(entry)
         for reason, action, severity, data in auto_flags:
             # append a follow-up policy_flag so the detection is itself in the chain. The flag's own
             # _append carries etype="policy_flag" (not an auto type), so this never recurses.
@@ -630,15 +688,46 @@ class AuditLog:
                     "metadata": _jsonable(getattr(event, "metadata", {}) or {}),
                 },
             )
+        elif (
+            hasattr(event, "action")
+            and hasattr(event, "projected_usd")
+            and hasattr(event, "cap_usd")
+        ):  # cendor-tokenguard BudgetEvent — duck-typed, no import (like contextkit/guardrails)
+            self._append(
+                "budget_event",
+                {
+                    "decision_id": did,
+                    "action": event.action,  # "blocked" | "downgraded" | "clamped"
+                    "reason": getattr(event, "reason", ""),
+                    "model": getattr(event, "model", ""),
+                    "to_model": getattr(event, "to_model", None),
+                    "scope": getattr(event, "scope", None),
+                    "projected_usd": getattr(event, "projected_usd", None),
+                    "cap_usd": getattr(event, "cap_usd", None),
+                    "projected_tokens": getattr(event, "projected_tokens", None),
+                    "cap_tokens": getattr(event, "cap_tokens", None),
+                    "tags": _jsonable(getattr(event, "tags", {}) or {}),
+                },
+            )
 
     def detach(self) -> None:
-        """Stop subscribing to the core event stream and close the log file handle (idempotent)."""
+        """Stop subscribing to the core event stream and close the log file handle (idempotent).
+
+        Also flushes/closes the optional ``mirror`` if it implements those lifecycle methods (e.g. a
+        ``QueueSink``-wrapped mirror), so no mirrored tail is lost at shutdown."""
         bus.unsubscribe(self._on_event)
         with self._lock:
             if self._fh is not None:
                 self._fh.flush()
                 self._fh.close()
                 self._fh = None
+        for name in ("flush", "close"):  # drain then release the mirror's resources, if any
+            fn = getattr(self._mirror, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:  # noqa: BLE001 - shutdown of an operational copy is best-effort
+                    pass
 
     # ------------------------------------------------------------------ explicit events
 

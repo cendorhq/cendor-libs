@@ -2,6 +2,14 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.6.0] — 2026-07-19
+Observability export: stream the audit trail to any OpenTelemetry backend, and correlate entries with your traces. Backward-compatible — the file remains the sole verifiable evidence and the default (no-OTel) chain is byte-identical.
+
+### Added
+- **`AuditLog(mirror=…)` + `OTelMirror`.** Attach an optional mirror (a `core.protocols.Sink`) and every chained entry — decisions, `llm_call`/`tool_call`, `guardrail_decision`, `budget_event`, `policy_flag`, `human_oversight` — is *also* sent to it, an **operational copy** for monitoring/alerting/SIEM. `OTelMirror` emits each as an `audit.<type>` OpenTelemetry span (a no-op without OpenTelemetry). The mirror is best-effort — a failing mirror is swallowed and never breaks the chain; `verify()` still runs only on the hash-chained file, which stays the sole evidence. `detach()` flushes/closes a mirror that implements those lifecycle methods.
+- **`budget_event` entry type.** `tokenguard`'s pre-flight `BudgetEvent` (blocked/downgraded/clamped) is chained by duck typing, with control-mapping annotations across the bundled frameworks.
+- **OpenTelemetry correlation.** When OpenTelemetry is installed and a span is active, auto-captured and explicit entries carry the active span's `otel_trace_id`/`otel_span_id`, so an audit entry can be cross-referenced with an APM trace (a no-op otherwise). See [Observability](https://cendor.ai/docs/observability).
+
 ## [1.5.0] — 2026-07-14
 The dual-shape guard: `guard()`'s return is now scope-capable, so the SDK can re-export the identical object (`cendor.sdk.guard is cendor.acttrace.guard`). Backward-compatible — the raw interceptor form is unchanged.
 

@@ -209,6 +209,51 @@ calls had no price. `report().assert_under(usd=…, **tags)` turns cost into a t
 | `unpriced_calls()` | `unpriced_calls()` | Count of recorded calls with no price (a USD blind spot). |
 | `reset()` | `reset()` | Clear recorded spend + active context and restore defaults (handy between tests). |
 
+### `OTelSink` — spend as OpenTelemetry metrics
+
+`sinks.OTelSink()` emits each spend row as OpenTelemetry **metrics** (a no-op if OpenTelemetry isn't
+installed), so a metrics backend — Azure Monitor, Datadog, Grafana/Prometheus, CloudWatch — tracks
+your model spend without any Cendor-specific exporter. It creates three counters on the meter
+`cendor.tokenguard`:
+
+| Counter | Unit | What it counts |
+|---|---|---|
+| `gen_ai.client.token.usage` | tokens | input + output tokens |
+| `gen_ai.client.cost.usd` | USD | cost (from the offline price table) |
+| `gen_ai.client.reasoning.token.usage` | tokens | reasoning tokens (a subset of output, reported separately) |
+
+Each counter is dimensioned by `model` **and** by the active `track(...)` tags, so you can break
+spend down by attribution in your dashboard — the same slice `report(group_by=[…])` gives you locally.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+# pip install "cendor-core[otel]"; configure your OTel metrics pipeline once (app-owned)
+from cendor.tokenguard import use_sink
+from cendor.tokenguard.sinks import OTelSink
+
+use_sink(OTelSink())                 # spend -> your metrics backend, dimensioned by model + tags
+use_sink(OTelSink(tags=False))       # or: model-only counters (bound metric cardinality)
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { useSink } from '@cendor/tokenguard';
+import { OTelSink } from '@cendor/tokenguard/sinks';
+
+useSink(new OTelSink());             // spend -> your metrics backend, dimensioned by model + tags
+useSink(new OTelSink({ tags: false })); // or: model-only counters (bound metric cardinality)
+```
+
+<!-- /tabs -->
+
+> **Cardinality caution.** Tag *values* become metric attributes. Keep them low-cardinality
+> (`feature`, `tenant`, `env` — not a raw per-user id) or pass `tags=False`, so your backend's
+> time-series count stays bounded. For the full backend-wiring recipes (Azure Monitor, CloudWatch,
+> Datadog, OTLP), see [Observability](observability.md).
+
 ### `QueueSink` — low-latency durable logging
 
 The bus fans out to subscribers **inline**, so a durable sink (SQLite/OTel/file) adds its write

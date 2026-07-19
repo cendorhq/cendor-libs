@@ -2,6 +2,13 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.2.0] — 2026-07-19
+Observability: pre-flight budget actions are now visible to your audit trail and metrics backend. Backward-compatible.
+
+### Added
+- **`BudgetEvent` on the bus.** Each pre-flight budget action — `blocked`, `downgraded`, or `clamped` — is emitted on the `cendor.core` bus. A blocked call never reaches the bus as an `LLMCall` (it's refused before it runs), so this event is the only signal the breaker fired; `acttrace` chains it as a `budget_event`, and an OpenTelemetry mirror can alert on it.
+- **`sinks.OTelSink` attribution dimensions.** The spend counters are now dimensioned by the active `track(...)` tags (feature / user / …) as well as `model`, so a metrics backend can break spend down by attribution. Pass `OTelSink(tags=False)` for model-only counters to bound metric cardinality. See [Observability](https://cendor.ai/docs/observability).
+
 ## [1.1.3] — 2026-07-11
 AI-assistant onboarding: inline Type Teach ships inside the package, plus the bundled integration guide. No runtime behavior change for correct code.
 

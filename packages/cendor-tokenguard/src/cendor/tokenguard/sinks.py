@@ -145,12 +145,21 @@ class QueueSink:
 
 
 class OTelSink:
-    """Emit OpenTelemetry counters per spend row, if OpenTelemetry is installed (else a no-op)."""
+    """Emit OpenTelemetry counters per spend row, if OpenTelemetry is installed (else a no-op).
 
-    def __init__(self) -> None:
+    Each counter is dimensioned by ``model`` **and** by the active ``track(...)`` tags (feature /
+    user_id / …), so a metrics backend can break spend down by attribution — the same slice
+    ``report(group_by=[…])`` gives you locally. Tag *values* become metric attributes, so keep them
+    **low-cardinality** (``feature``, ``env``, ``tenant`` — not a raw per-user id) or your backend's
+    time-series count can explode; pass ``tags=False`` to emit ``model`` only. Metric names port the
+    Python originals byte-for-byte to the TypeScript ``OTelSink``.
+    """
+
+    def __init__(self, *, tags: bool = True) -> None:
         self._tokens: Any = None
         self._cost: Any = None
         self._reasoning: Any = None
+        self._tags = tags
         try:
             from opentelemetry import metrics
         except ImportError:
@@ -163,7 +172,13 @@ class OTelSink:
     def write(self, entry: dict) -> None:
         if self._tokens is None:
             return  # OTel not installed — silently skip
-        attrs = {"model": entry.get("model", "")}
+        attrs: dict[str, Any] = {"model": entry.get("model", "")}
+        if self._tags:
+            # Attribution dimensions: flatten low-cardinality tag values (str/num/bool) so spend is
+            # sliceable by feature/tenant in the backend. Non-primitive values are stringified.
+            for key, value in (entry.get("tags") or {}).items():
+                prim = value if isinstance(value, (bool, int, float, str)) else str(value)
+                attrs[str(key)] = prim
         # reasoning is a subset of output — reported as its own counter, not added into the total.
         self._tokens.add(int(entry["input_tokens"]) + int(entry["output_tokens"]), attrs)
         self._reasoning.add(int(entry.get("reasoning_tokens", 0)), attrs)

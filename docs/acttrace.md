@@ -85,9 +85,10 @@ log.
 ### Auto-population
 Construct an `AuditLog` and it subscribes to `core`'s event bus. From then on every
 instrumented LLM and tool call becomes an audit entry — along with the cost that
-`tokenguard` prices and the context decisions `contextkit` makes on the same stream. You
-add only the explicit, human-facing events (decisions and oversight); the calls log
-themselves.
+`tokenguard` prices, the context decisions `contextkit` makes, the `guardrail_decision`s
+`guardrails` emits, and the pre-flight `budget_event`s (`blocked`/`downgraded`/`clamped`)
+`tokenguard` emits — all on the same stream. You add only the explicit, human-facing events
+(decisions and oversight); the calls log themselves.
 
 ### The hash chain
 Entries are chained: `entry.hash = sha256(prev_hash + canonical(entry))`, starting from a
@@ -275,7 +276,8 @@ current chain head, `log.detach()` stops subscribing.
 
 ```python
 AuditLog(system, risk_tier="limited", path=None, signing_key=None,
-         redact=True, redactor=None, flag_on_redact=True, policy=None, max_entries=None)
+         redact=True, redactor=None, flag_on_redact=True, policy=None, max_entries=None,
+         mirror=None)
 ```
 
 <!-- tab: TypeScript -->
@@ -285,7 +287,7 @@ AuditLog(system, risk_tier="limited", path=None, signing_key=None,
 ```ts
 new AuditLog(system, { riskTier = 'limited', path = null, signingKey = null,
                        redact = true, redactor = null, flagOnRedact = true,
-                       policy = null, maxEntries = null })
+                       policy = null, maxEntries = null, mirror = null })
 ```
 
 <!-- /tabs -->
@@ -301,6 +303,7 @@ new AuditLog(system, { riskTier = 'limited', path = null, signingKey = null,
 | `redactor` | `callable \| None` | `None` | Custom scrubber; bypasses the policy engine. Compose `default_redactor` to extend the built-ins. |
 | `flag_on_redact` | `bool` | `True` | Append a `policy_flag` per resolved action on the built-in path (see [AuditLog & the policy engine](#auditlog--the-policy-engine)). |
 | `max_entries` | `int \| None` | `None` | Cap the **in-memory** entry ring for a long-running log (see [Long-running logs](#long-running-logs-max_entries)). `None` = unbounded (keep every entry in memory). |
+| `mirror` | `Sink \| None` | `None` | Also send every chained entry to an observability backend — an operational copy (see [Mirror to observability](#mirror-to-an-observability-backend)). The file stays the sole `verify()` artifact. |
 
 <a id="long-running-logs-max_entries"></a>
 #### Long-running logs (`max_entries`)
@@ -353,6 +356,45 @@ verify('audit.jsonl', { expectedHead: log.head });   // validates the complete o
 > on-disk chain *is* the tamper-evidence, so an async write that lost the tail on a hard crash would
 > lose audit history. `max_entries` bounds *memory*, not durability; the file write is the integrity
 > guarantee and is intentionally not made async.
+
+<a id="mirror-to-an-observability-backend"></a>
+#### Mirror to an observability backend (`OTelMirror`)
+
+An `AuditLog` writes to a local, tamper-evident **file**. Pass `mirror=` to *also* stream every
+chained entry — decisions, `llm_call`/`tool_call`, `guardrail_decision`, `budget_event`,
+`policy_flag`, `human_oversight` — to an observability backend, so governance events (a guardrail
+blocking an injection, a budget breaker firing, a human approving a refund) are queryable and
+alertable in Azure Monitor / Datadog / CloudWatch, not just a line in a file. `OTelMirror` emits each
+entry as an `audit.<type>` OpenTelemetry span (a no-op if OpenTelemetry isn't installed).
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.acttrace import AuditLog, OTelMirror
+
+# configure your OTel pipeline once (app-owned), then:
+audit = AuditLog(system="support", path="audit.jsonl", mirror=OTelMirror())
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { AuditLog, OTelMirror } from '@cendor/acttrace';
+
+const audit = new AuditLog('support', { path: 'audit.jsonl', mirror: new OTelMirror() });
+```
+
+<!-- /tabs -->
+
+> **The mirror is an operational copy, never the evidence.** `verify()` runs on the hash-chained
+> file, never on the mirror — a mirror can lag, drop, or be reconfigured without weakening the chain,
+> and a failing mirror is swallowed rather than breaking the append path. Any object with a
+> `write(entry)` method works (the `mirror` is a `core.protocols.Sink`); wrap it in a
+> [`QueueSink`](tokenguard.md#queuesink--low-latency-durable-logging) to move its I/O off the append
+> path. When OpenTelemetry is installed and a span is active, entries also carry the active
+> `otel_trace_id`/`otel_span_id` so you can pivot between an APM trace and the audit entry.
+> Full backend-wiring recipes are in [Observability](observability.md).
 
 ### `audit.decision()`
 A context manager that groups a unit of work; auto-captured calls inside it are tagged to
@@ -704,6 +746,8 @@ addInterceptor((call) => {
 every instrumented model and tool call is logged automatically; you add only the explicit
 decisions and oversight. For a managed runtime you don't control, point it at the runtime's
 `gen_ai.*` OpenTelemetry spans via [`core.otel.ingest`](providers.md#managed-runtimes-opentelemetry-ingestion).
+To stream the audit trail *outward* to an APM/SIEM (Azure Monitor, Datadog, CloudWatch), attach a
+[`mirror`](#mirror-to-an-observability-backend) — see [Observability](observability.md).
 
 ## Honest limits
 
@@ -714,3 +758,7 @@ decisions and oversight. For a managed runtime you don't control, point it at th
   crypto dependency.
 - **Redaction is a best-effort safety net,** not a guarantee — keep real secrets out of
   prompts and inputs regardless.
+- **An `OTelMirror` is an operational copy, not the evidence.** It surfaces governance events in your
+  APM/SIEM for monitoring and alerting, but `verify()` only ever checks the hash-chained file. For a
+  compliance record, retain the file (or a signed `export()` pack) — the mirror can lag or drop
+  without weakening the chain. See [Observability](observability.md).

@@ -133,6 +133,34 @@ deterministic `spotlight` mitigation sets `redacted`. A port populates the same 
 A port must emit the same field names/conventions (`snake_case` ↔ `camelCase`) so an audit chain
 written in one language records byte-identical `guardrail_decision` entries as the other.
 
+### `BudgetEvent` (emitted by `cendor-tokenguard`, not `instrument()`)
+
+A fourth bus event, emitted by `tokenguard` on each **pre-flight budget action** — `blocked`,
+`downgraded`, or `clamped`. Like `GuardrailDecision`, it is produced by a sibling library, rides the
+same bus, and `acttrace` chains it as a `budget_event` entry by **duck typing** (`action` +
+`projected_usd` + `cap_usd` present), with no import in either direction. It matters because a
+*blocked* call never reaches the bus as an `LLMCall` (it is refused before it runs), so this event is
+the only signal that the breaker fired — the governance action worth alerting on.
+
+| field | type | default | notes |
+|---|---|---|---|
+| `action` | string | — | `blocked` \| `downgraded` \| `clamped`. |
+| `reason` | string | `""` | short, human-readable (the projection vs cap). |
+| `model` | string | `""` | the model the action applied to. |
+| `to_model` | string \| null | `null` | the cheaper model, for `downgraded`. |
+| `scope` | string \| null | `null` | the budget frame's scope label, when set. |
+| `projected_usd` | decimal-string \| null | `null` | projected spend that triggered the action (Money as a string, never a float). |
+| `cap_usd` | decimal-string \| null | `null` | the active USD cap. |
+| `projected_tokens` | int \| null | `null` | projected total tokens, for token-cap actions. |
+| `cap_tokens` | int \| null | `null` | the active token cap. |
+| `tags` | object | `{}` | the active `track(...)` attribution tags. |
+| `ts` | timestamp | now | when the action fired. |
+
+The `acttrace` `budget_event` payload uses the snake_case key names above (plus `decision_id`), so an
+audit chain records byte-identical `budget_event` entries across languages. A port emits the same
+field names/conventions (`snake_case` ↔ `camelCase`); the class name `BudgetEvent` is identical
+everywhere.
+
 ## Serialization notes for ports
 
 - These are in-memory event shapes; the **wire** formats that must interoperate are defined by the

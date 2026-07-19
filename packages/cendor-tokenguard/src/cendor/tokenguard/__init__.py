@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -39,10 +40,37 @@ __all__ = [
     "dropped",
     "unpriced_calls",
     "Report",
+    "BudgetEvent",
     "BudgetExceeded",
     "UnpricedModelWarning",
     "reset",
 ]
+
+
+@dataclass
+class BudgetEvent:
+    """A pre-flight budget action, emitted on the ``cendor.core`` bus so ``acttrace`` chains it as a
+    ``budget_event`` and an OpenTelemetry mirror can surface it in your APM/SIEM. A blocked call
+    never reaches the bus as an ``LLMCall`` (it's refused pre-flight), so this event is the *only*
+    signal that the breaker fired — which is exactly the governance action you want to alert on.
+
+    ``action`` is ``"blocked"`` | ``"downgraded"`` | ``"clamped"``. Money fields are the ``Decimal``
+    rendered as a string (never a float); token fields are ints. Duck-typed by ``acttrace`` (no
+    import), mirroring how ``guardrails`` emits its ``GuardrailDecision``.
+    """
+
+    action: str
+    reason: str = ""
+    model: str = ""
+    to_model: str | None = None  # the cheaper model, for action="downgraded"
+    scope: str | None = None
+    projected_usd: str | None = None
+    cap_usd: str | None = None
+    projected_tokens: int | None = None
+    cap_tokens: int | None = None
+    tags: dict = field(default_factory=dict)
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))
+
 
 #: Output tokens are unknown pre-flight; reserve this many for the downgrade projection unless
 #: the request carries an explicit ``max_tokens``. docs/tokenguard.md §7.
@@ -243,6 +271,35 @@ def _project_tokens(
     )
 
 
+def _emit_budget_event(
+    action: str,
+    *,
+    call: LLMCall,
+    frame: _Frame,
+    reason: str,
+    projected_usd: Decimal | None = None,
+    projected_tokens: int | None = None,
+    to_model: str | None = None,
+) -> None:
+    """Publish a :class:`BudgetEvent` on the bus for a pre-flight budget action, so ``acttrace``
+    records it and an OTel mirror can alert on it. Best-effort observability — never gates the
+    action itself (the caller still raises/reroutes)."""
+    bus.emit(
+        BudgetEvent(
+            action=action,
+            reason=reason,
+            model=call.model,
+            to_model=to_model,
+            scope=frame.scope,
+            projected_usd=str(projected_usd) if projected_usd is not None else None,
+            cap_usd=str(frame.cap_usd) if frame.cap_usd is not None else None,
+            projected_tokens=projected_tokens,
+            cap_tokens=frame.cap_tokens,
+            tags=dict(_current_tags()),
+        )
+    )
+
+
 def _preflight_interceptor(call: object) -> Any:
     """Pre-flight enforcement, before the call runs: reroute (``downgrade``), clamp (``clamp``), or
     block (``block``).
@@ -268,6 +325,15 @@ def _preflight_interceptor(call: object) -> Any:
                 _downgrades.append(
                     {"from": call.model, "to": cheaper, "tags": dict(_current_tags())}
                 )
+                _emit_budget_event(
+                    "downgraded",
+                    call=call,
+                    frame=frame,
+                    reason=f"projected ${frame.spent_usd + projected} > cap ${frame.cap_usd}; "
+                    f"rerouted {call.model} -> {cheaper}",
+                    projected_usd=frame.spent_usd + projected,
+                    to_model=cheaper,
+                )
                 return Reroute(model=cheaper)
         elif frame.on_exceed == "clamp":
             reroute = _clamp(call, frame)
@@ -276,27 +342,45 @@ def _preflight_interceptor(call: object) -> Any:
         elif frame.on_exceed == "block":
             proj_tokens = _project_tokens(call, frame.output_reserve, frame.reasoning_reserve)
             if frame.cap_tokens is not None and frame.spent_tokens + proj_tokens > frame.cap_tokens:
-                raise BudgetExceeded(
+                reason = (
                     f"pre-flight block: ~{frame.spent_tokens + proj_tokens} tokens would exceed "
                     f"cap {frame.cap_tokens} (model={call.model})"
                 )
+                _emit_budget_event(
+                    "blocked",
+                    call=call,
+                    frame=frame,
+                    reason=reason,
+                    projected_tokens=frame.spent_tokens + proj_tokens,
+                )
+                raise BudgetExceeded(reason)
             if frame.cap_usd is not None:
                 try:
                     projected = _estimate_event(call, frame.output_reserve, frame.reasoning_reserve)
                 except KeyError:
                     if _on_unpriced == "raise":
-                        raise BudgetExceeded(  # strict: reject what we can't price (loud enough)
+                        reason = (  # strict: reject what we can't price (loud enough)
                             f"pre-flight block: model={call.model} has no price, so a USD cap "
                             f"cannot be projected; configure(on_unpriced='raise') rejects unpriced "
                             f"calls (set on_unpriced='warn' to let them through as $0)."
-                        ) from None
+                        )
+                        _emit_budget_event("blocked", call=call, frame=frame, reason=reason)
+                        raise BudgetExceeded(reason) from None
                     _warn_unpriced(call.model, "block")
                     continue
                 if frame.spent_usd + projected > frame.cap_usd:
-                    raise BudgetExceeded(
+                    reason = (
                         f"pre-flight block: projected ${frame.spent_usd + projected} would exceed "
                         f"cap ${frame.cap_usd} (model={call.model})"
                     )
+                    _emit_budget_event(
+                        "blocked",
+                        call=call,
+                        frame=frame,
+                        reason=reason,
+                        projected_usd=frame.spent_usd + projected,
+                    )
+                    raise BudgetExceeded(reason)
     return MISS
 
 
@@ -318,18 +402,29 @@ def _clamp(call: LLMCall, frame: _Frame) -> Reroute | None:
     allowance = frame.cap_tokens - frame.spent_tokens - projected_input
     kwarg = _CLAMP_KWARG.get(call.provider)
     if kwarg is None or allowance <= 0:
-        raise BudgetExceeded(
+        reason = (
             f"pre-flight clamp: cannot fit call within the remaining token budget "
             f"(~{frame.cap_tokens - frame.spent_tokens} left, ~{projected_input} input; "
             f"provider={call.provider!r}, model={call.model}) — use on_exceed='block' to reject, "
             f"or raise the cap"
         )
+        _emit_budget_event(
+            "blocked", call=call, frame=frame, reason=reason, projected_tokens=projected_input
+        )
+        raise BudgetExceeded(reason)
     existing = (call.metadata.get("request_kwargs") or {}).get(kwarg)
     if existing is not None and int(existing) <= allowance:
         return None  # the caller's own cap already fits within the budget — leave it untouched
     target = allowance if existing is None else min(int(existing), allowance)
     _clamps.append(
         {"model": call.model, "kwarg": kwarg, "limit": target, "tags": dict(_current_tags())}
+    )
+    _emit_budget_event(
+        "clamped",
+        call=call,
+        frame=frame,
+        reason=f"injected {kwarg}={target} to bound output within the remaining token budget",
+        projected_tokens=frame.spent_tokens + projected_input + target,
     )
     return Reroute(**{kwarg: target})
 

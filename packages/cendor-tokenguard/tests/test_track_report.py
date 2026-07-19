@@ -116,3 +116,55 @@ def test_otel_sink_is_noop_without_otel():
     sink.write(
         {"tags": {}, "usd": "0.01", "input_tokens": 1, "output_tokens": 1, "model": "gpt-4o"}
     )
+
+
+class _FakeCounter:
+    """Captures (amount, attributes) so the sink's dimensioning is testable without an OTel SDK."""
+
+    def __init__(self, sink_calls):
+        self._calls = sink_calls
+
+    def add(self, amount, attrs):
+        self._calls.append((amount, dict(attrs)))
+
+
+def test_otel_sink_dimensions_include_track_tags():
+    # G9: spend counters must be dimensioned by attribution tags, not model alone.
+    from cendor.tokenguard.sinks import OTelSink
+
+    sink = OTelSink()
+    calls: list = []
+    sink._tokens = sink._reasoning = sink._cost = _FakeCounter(calls)
+    sink.write(
+        {
+            "tags": {"feature": "support", "user_id": "alice"},
+            "usd": "0.01",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "reasoning_tokens": 0,
+            "model": "gpt-4o",
+        }
+    )
+    _amount, attrs = calls[0]
+    assert attrs["model"] == "gpt-4o"
+    assert attrs["feature"] == "support"
+    assert attrs["user_id"] == "alice"
+
+
+def test_otel_sink_tags_false_emits_only_model():
+    from cendor.tokenguard.sinks import OTelSink
+
+    sink = OTelSink(tags=False)
+    calls: list = []
+    sink._tokens = sink._reasoning = sink._cost = _FakeCounter(calls)
+    sink.write(
+        {
+            "tags": {"feature": "support"},
+            "usd": "0.01",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "model": "m",
+        }
+    )
+    _amount, attrs = calls[0]
+    assert attrs == {"model": "m"}  # tags suppressed to keep metric cardinality bounded
