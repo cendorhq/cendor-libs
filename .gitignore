@@ -16,6 +16,11 @@ htmlcov/
 .vscode/
 .DS_Store
 *.log
+
+# Secrets — never commit
+.env
+.env.*
+
 plan/
 artifact/
 
