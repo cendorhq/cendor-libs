@@ -35,13 +35,9 @@ def _embeddings_client(seen_kwargs, prompt_tokens=8):
 
     class Completions:
         def create(self, **kwargs):
-            return SimpleNamespace(
-                usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1)
-            )
+            return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1))
 
-    return SimpleNamespace(
-        chat=SimpleNamespace(completions=Completions()), embeddings=Embeddings()
-    )
+    return SimpleNamespace(chat=SimpleNamespace(completions=Completions()), embeddings=Embeddings())
 
 
 def _async_embeddings_client(prompt_tokens=8):
