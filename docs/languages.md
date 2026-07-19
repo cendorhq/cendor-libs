@@ -72,7 +72,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | Bedrock JS auto-detects a boto-shaped `converse()`; aws-sdk-v3 rides the SDK provider |
 | `instrument()` streaming / interceptors | ✅ | ✅ | |
 | core `otel` spans / `ingest()` | ✅ | ✅ | `span()` + `ingest()`; `@opentelemetry/api` optional peer — span is a no-op without it |
-| **Observability export** ([Observability](observability.md)) | ✅ | ✅ | `OTelSink` (spend metrics, dimensioned by `track` tags), SDK `live_spans`/`span_tree`, and `AuditLog(mirror=OTelMirror())` — governance/audit → any OTel backend; export to Azure Monitor / CloudWatch / Datadog / OTLP with zero Cendor-specific exporter |
+| **Observability export** ([Observability](observability.md)) | ✅ | ✅ | `OTelSink` (spend metrics, dimensioned by `track` tags), SDK `live_spans`/`span_tree` (accept `conversation_id`/`conversationId` → `gen_ai.conversation.id` for multi-turn grouping), and `AuditLog(mirror=OTelMirror())` — governance/audit → any OTel backend; export to Azure Monitor / CloudWatch / Datadog / OTLP with zero Cendor-specific exporter |
 | acttrace `budget_event` chaining + `mirror=` | ✅ | ✅ | `tokenguard` emits `BudgetEvent` (blocked/downgraded/clamped) on the bus; acttrace chains it + optional `OTelMirror` (file stays the sole `verify()` evidence); OTel `otel_trace_id`/`otel_span_id` correlation on entries |
 | LangChain `CendorCallbackHandler` | ✅ | ✅ | `@cendor/core/langchain`; recording-only in both; reads `usage_metadata`, correlates by root-run `traceId` |
 | `trace()` correlation | ✅ contextvars | ✅ AsyncLocalStorage | |
