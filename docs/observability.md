@@ -137,7 +137,8 @@ import { useAzureMonitor } from '@azure/monitor-opentelemetry';
 useAzureMonitor({ azureMonitorExporterOptions: { connectionString: 'InstrumentationKey=…' } });
 
 import { run, liveSpans } from '@cendor/sdk';
-import { useSink, OTelSink } from '@cendor/tokenguard';
+import { useSink } from '@cendor/tokenguard';
+import { OTelSink } from '@cendor/tokenguard/sinks';
 import { AuditLog, OTelMirror } from '@cendor/acttrace';
 
 useSink(new OTelSink());                            // spend -> Azure Monitor customMetrics
@@ -239,6 +240,33 @@ export function register() {
 Grafana (Tempo/Loki/Mimir), New Relic, Honeycomb, Dynatrace, SigNoz, Jaeger, Zipkin — all accept
 OTLP. Set `OTEL_EXPORTER_OTLP_ENDPOINT` (or the vendor's exporter/collector) and attach the same three
 emitters. There is nothing Cendor-specific to configure per vendor.
+
+### Run a local backend (dev)
+
+Don't want to wire a hosted backend just to watch a run while you code? Run one **locally** and point
+your app at `http://localhost:4318`. Your documented default in production stays your own backend —
+such as **Azure Monitor** — but for the dev loop:
+
+- **Cendor Monitor** — the *optional*, self-hosted Cendor container (the counterpart to your own
+  backend such as Azure Monitor). One `docker run` gives you Cendor-branded **Runs**, **Cost**, and
+  **Governance** boards over the same standard OTLP wire — the governance board renders the
+  `audit.<type>` mirror stream inline with the run it governed. It runs on *your* infra; Cendor never
+  operates a telemetry endpoint. The board is an operational copy — the hash-chained audit file stays
+  your only verifiable evidence (`verify()` runs on the file). Strictly optional dev tooling, like
+  `cendor-mcp`.
+
+  ```bash
+  docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:latest
+  # then: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
+  ```
+
+- **Generic all-in-one** — `docker run -p 3000:3000 -p 4318:4318 grafana/otel-lgtm` (Collector +
+  Tempo/Loki/Prometheus + Grafana) or **Arize Phoenix** for an LLM-native trace UI. Same env var; the
+  agent span tree + spend counters appear immediately. (These show traces + cost, not Cendor's
+  governance boards.)
+
+Either way the app side is unchanged — swapping the local container for your production backend is a
+zero-code change.
 
 ## Governance events — the part unique to Cendor
 
