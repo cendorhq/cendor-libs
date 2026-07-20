@@ -16,6 +16,12 @@ once, and attach the emitters you want. Without that, everything below is a sile
 > streams spend as metrics, and `AuditLog(mirror=OTelMirror())` streams the governance/audit trail.
 > The tamper-evident audit **file** stays your system of record; the mirror is an operational copy.
 
+> **Want a local backend to watch all this while you build?** [**Cendor Monitor**](https://cendor.ai/monitor)
+> — an optional, self-hosted container — gives you Cendor-branded **Runs / Cost / Governance** boards
+> over the same standard OTLP wire, in one `docker run`. See [Run a local backend](#run-a-local-backend-dev)
+> below. (Your production default stays your own backend, such as **Azure Monitor** — same wire, zero
+> code change.)
+
 ## Install
 
 <!-- tabs: lang -->
