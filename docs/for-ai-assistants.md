@@ -347,33 +347,38 @@ per-agent cap is `Agent(max_usd=…)`, not a `budget=` field. Full walkthrough:
 
 ### Watch runs locally (Cendor Monitor)
 
-The whole integration is **one standard OTLP env var** — there is no Cendor API, key, or endpoint to
-call, so it is identical in Python and TypeScript. Run the optional self-hosted console, point your
-app's OpenTelemetry at it, and attach the emitters you already use ([Observability](observability.md)).
-Your production default stays your own OTel backend (Azure Monitor / CloudWatch / Datadog / any OTLP);
-this is optional dev tooling. See [Cendor Monitor](monitor.md).
+The connection is **one standard OTLP env var** — there is no Cendor API, key, or endpoint to call.
+Run the optional self-hosted console, point your app's OpenTelemetry at it (`export
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`), and attach the same emitters you use for any
+backend. Your production default stays your own OTel backend (Azure Monitor / CloudWatch / Datadog /
+any OTLP); this is optional dev tooling. See [Cendor Monitor](monitor.md).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
 
-```bash
-# 1. run the console (one image; SQLite by default)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+```python
+# 1) run the console:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+# 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+from cendor.sdk import run
+from cendor.sdk.otel import live_spans
 
-# 2. point your app's OpenTelemetry at it, then open http://localhost:3000
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-# 3. attach the emitters as usual: `with live_spans(): run(agent, …)` (see Observability)
+with live_spans():                 # your runs stream to Cendor Monitor at http://localhost:3000
+    result = run(agent, "…")
 ```
 
 <!-- tab: TypeScript -->
 
-```bash
-# 1. run the console (one image; SQLite by default)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+```ts
+// 1) run the console:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+// 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+import { run, liveSpans } from '@cendor/sdk';
 
-# 2. point your app's OpenTelemetry at it, then open http://localhost:3000
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-# 3. attach the emitters as usual: `liveSpans()` around your run (see Observability)
+const span = liveSpans();          // your runs stream to Cendor Monitor at http://localhost:3000
+try {
+  const result = await run(agent, '…');
+} finally {
+  span.close();
+}
 ```
 
 <!-- /tabs -->

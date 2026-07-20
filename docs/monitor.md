@@ -3,9 +3,9 @@
 Cendor emits **standard OpenTelemetry** — one wire, no Cendor-specific exporter, never a Cendor
 endpoint. Where it goes is your choice: **your own backend** (Azure Monitor, CloudWatch, Datadog,
 Langfuse, any OTLP) for production fleets — or **Cendor Monitor**, a free, open-source, self-hosted
-**journey console**, when you want to *see* your governed agents in one screen: every prompt, token,
-dollar, and the exact step where a budget or guardrail acted. Same wire either way; switch or run both
-without touching code.
+**journey console**, when you want to *see what your agents did and what each run cost* in one screen:
+every prompt, token, dollar, and the exact step where a budget or guardrail acted. Same wire either
+way; switch or run both without touching code.
 
 Two doors, and a window: the libraries and the SDK are how you *build*; Cendor Monitor is how you
 *watch*. It is **optional dev tooling** (like [`cendor-mcp`](https://cendor.ai/docs/assistant-mcp)) —
