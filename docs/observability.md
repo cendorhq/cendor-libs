@@ -287,7 +287,9 @@ emits a `BudgetEvent` on the core bus. A *blocked* call never reaches the bus as
 refused before it runs), so this event is the **only** signal the breaker fired — precisely what you
 want to alert on. `acttrace` chains it as a `budget_event` entry, and an attached `OTelMirror` turns
 it into an `audit.budget_event` span carrying `cendor.audit.action` (`blocked`/…),
-`cendor.audit.model`, and the projected-vs-cap figures.
+`cendor.audit.model`, and the reason (which states the projected-vs-cap figures in text).
+The projected/cap numbers also land as dedicated numeric attributes in
+`acttrace ≥ 1.7` / `@cendor/acttrace ≥ 0.8`.
 
 ### The audit mirror (`OTelMirror`)
 
