@@ -106,6 +106,60 @@ The first four are **outbound** (Cendor → your backend). The last is **inbound
 [Managed runtimes](providers.md#managed-runtimes-opentelemetry-ingestion) for the Foundry/Assistants
 capture path.
 
+## Content capture — opt-in, OFF by default
+
+By default Cendor puts **structure** on the wire — models, tokens, cost, latency, governance
+verdicts — but **not the message content** (prompts, responses, thinking, tool arg/result values).
+That is a deliberate privacy posture, and it matches the OpenTelemetry GenAI semantic convention,
+whose content attributes are opt-in too.
+
+Turn content capture on with one call (or the standard env var). Then prompts/responses/thinking
+ride the semconv's own content span attributes — `gen_ai.input.messages`, `gen_ai.output.messages`,
+`gen_ai.system_instructions` (JSON strings) on `chat` spans, plus `cendor.tool.arguments` /
+`cendor.tool.result` on `execute_tool` spans. Because it's the standard, the same content renders in
+Langfuse or Braintrust too — the "swap to any backend, zero code change" claim gets *stronger*.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+```python
+from cendor.core import otel
+
+# Opt in. A mask scrubs each message list before export (fail-closed if it raises);
+# max_bytes caps each attribute (a truncation marker is appended when hit).
+otel.capture_content(mask=lambda msgs: msgs, max_bytes=8192)
+
+# Or set the standard env var instead of code config:
+#   OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+```
+<!-- tab: TypeScript -->
+```ts
+import { otel } from '@cendor/core';
+
+// Opt in. `mask` scrubs each message list before export (fail-closed if it throws);
+// `maxBytes` caps each attribute (a truncation marker is appended when hit).
+otel.captureContent({ mask: (msgs) => msgs, maxBytes: 8192 });
+
+// Or set the standard env var instead of code:
+//   OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+```
+<!-- /tabs -->
+
+Once it's on, `span_tree` / `live_spans` stamp the content automatically (including provider
+**thinking**/reasoning text, parsed out of the raw response); a libs-only app (no SDK) gets the
+same via the opt-in `otel.use_span_emitter()` bus→span emitter. **Where content lands:** exactly one
+place — your OTLP destination (your own store or backend). Cendor never operates a telemetry
+endpoint. If you run [Cendor Monitor](https://cendor.ai/docs/observability), content lives on your
+volume; its gateway-forward **strips content attributes** unless you explicitly opt in.
+
+**What content never touches:** the acttrace evidence chain and its `OTelMirror`. `audit.*` spans
+stay content-free (rule 6); `verify()` runs on the hash-chained file, never on telemetry. Content is
+an *operational* signal on `chat`/`execute_tool` spans only, and you delete it on your own retention
+schedule.
+
+> **Precedence:** if you use the SDK's `live_spans`/`span_tree`, don't also wire
+> `use_span_emitter()` for the same run — the emitter stands down while a `live_spans` context is
+> active, and is meant for libs-only apps that never build the SDK span tree.
+
 ## Connect a specific backend
 
 Every backend below works because Cendor emits into the **global** OpenTelemetry provider. You do the
