@@ -179,12 +179,12 @@ The first-party way to *see* the wire: [**Cendor Monitor**](monitor.md) is an op
 container that renders the same standard OTLP as an Agents → Sessions → **run-journey** view — the
 whole conversation with tokens, cost, latency, and TTFT per step, and the exact step where a **budget
 block, guardrail verdict, or compression** fired, shown inline. One image (SQLite by default, external
-Postgres when you want it), pure Apache-2.0. It runs on **your** infrastructure; Cendor never operates
-a telemetry endpoint. The console is an **operational copy** — `verify()` still runs on the audit
+Postgres when you want it), Apache-2.0 (code) with OFL-1.1 fonts. It runs on **your** infrastructure;
+Cendor never operates a telemetry endpoint. The console is an **operational copy** — `verify()` still runs on the audit
 **file**, never on what the console shows.
 
 ```bash
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.1
 # then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
 ```
 

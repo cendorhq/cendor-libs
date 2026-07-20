@@ -22,7 +22,7 @@ default), and the console. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the console (one image; SQLite by default — nothing else to install)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.1
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -197,3 +197,6 @@ core's call spans. See each library's page for what it emits — e.g.
 - **Dev-tool scale.** SQLite by default suits a single builder's dev loop; point
   `CENDOR_MONITOR_DB` at your own Postgres for a shared team deploy. No auth by default — set
   `CENDOR_MONITOR_BASIC_AUTH` and don't expose it publicly.
+- **Licensing.** The image is **Apache-2.0 (code) with OFL-1.1 fonts** (Manrope + JetBrains Mono):
+  Cendor's console, ingest service, and configs are Apache-2.0; it bundles the Apache-2.0
+  OpenTelemetry Collector and runs on Node.js (MIT) + nginx (BSD-2-Clause). No AGPL/GPL.
