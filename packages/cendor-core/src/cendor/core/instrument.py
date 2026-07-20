@@ -517,6 +517,8 @@ class _ProxyStream:
         except StopIteration:
             self._finalize()
             raise
+        if not self._chunks and self._replay_chunks is None:  # first live chunk → TTFT (G23)
+            self._call.metadata["ttft_ms"] = (time.perf_counter() - self._start) * 1000.0
         self._chunks.append(chunk)
         return chunk
 
@@ -597,6 +599,8 @@ class _AProxyStream:
         except StopAsyncIteration:
             self._finalize()
             raise
+        if not self._chunks and self._replay_chunks is None:  # first live chunk → TTFT (G23)
+            self._call.metadata["ttft_ms"] = (time.perf_counter() - self._start) * 1000.0
         self._chunks.append(chunk)
         return chunk
 

@@ -207,5 +207,13 @@ class OTelMirror:
                 _set_int(span, "cendor.audit.budget_tokens", payload.get("budget"))
                 _set_int(span, "cendor.audit.used_tokens", payload.get("used"))
                 _block_counts(span, payload.get("decisions"))
+            elif etype == "compression":  # G21: squeeze technique + token savings (metadata only)
+                _set_scalar(span, "cendor.audit.technique", payload.get("technique"))
+                _set_int(span, "cendor.audit.tokens_before", payload.get("tokens_before"))
+                _set_int(span, "cendor.audit.tokens_after", payload.get("tokens_after"))
+                _set_scalar(span, "cendor.audit.ratio", payload.get("ratio"))
+                _set_scalar(span, "cendor.audit.store_kind", payload.get("store_kind"))
+                _set_scalar(span, "cendor.audit.handle_id", payload.get("handle_id"))
+                _set_scalar(span, "cendor.audit.kind", payload.get("kind"))
         finally:
             span.end()  # a point-in-time governance event; duration is not meaningful

@@ -318,3 +318,57 @@ def test_otel_span_id_exposed_as_attribute(tmp_path):  # G12 correlation
     log.detach()
     dec = next(s for s in exporter.get_finished_spans() if s.name == "audit.decision")
     assert len(dec.attributes["cendor.audit.otel_span_id"]) == 16  # the pivot target, now queryable
+
+
+# ------------------------------------------------------ V3: squeeze CompressionEvent chaining (G21)
+
+
+def test_compression_event_is_chained_by_duck_typing(tmp_path):
+    # A squeeze CompressionEvent is chained without acttrace importing squeeze (shape contract:
+    # duck-typed on `technique` + `ratio`). Metadata only — no content.
+    path = tmp_path / "comp.jsonl"
+    log = AuditLog(system="s", path=str(path))
+    ev = SimpleNamespace(
+        technique="minify+dropnulls",
+        tokens_before=1200,
+        tokens_after=300,
+        ratio=0.25,
+        store_kind="MemoryStore",
+        handle_id="abc123",
+        kind="json",
+    )
+    try:
+        bus.emit(ev)
+    finally:
+        log.detach()
+
+    entry = next(e for e in log.entries if e.type == "compression")
+    assert entry.payload["technique"] == "minify+dropnulls"
+    assert entry.payload["tokens_before"] == 1200
+    assert entry.payload["handle_id"] == "abc123"
+    assert verify(str(path))[0] is True  # compression is inside the verified chain
+
+
+def test_compression_mirror_carries_technique_and_savings(tmp_path):  # G21 span attrs
+    tracer, exporter = _memory_tracer()
+    path = tmp_path / "compspan.jsonl"
+    log = AuditLog(system="s", path=str(path), mirror=OTelMirror(tracer=tracer))
+    ev = SimpleNamespace(
+        technique="minify",
+        tokens_before=1000,
+        tokens_after=250,
+        ratio=0.25,
+        store_kind="SQLiteStore",
+        handle_id="h1",
+        kind="json",
+    )
+    try:
+        bus.emit(ev)
+    finally:
+        log.detach()
+    a = next(s for s in exporter.get_finished_spans() if s.name == "audit.compression").attributes
+    assert a["cendor.audit.technique"] == "minify"
+    assert a["cendor.audit.tokens_before"] == 1000
+    assert a["cendor.audit.tokens_after"] == 250
+    assert a["cendor.audit.store_kind"] == "SQLiteStore"
+    assert a["cendor.audit.handle_id"] == "h1"

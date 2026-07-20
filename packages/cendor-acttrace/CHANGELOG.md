@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.8.0] — 2026-07-20
+Compression enters the audit chain (G21) — squeeze's `CompressionEvent` becomes evidence + a span.
+
+### Added
+- **`compression` audit entry type** — a `squeeze` `CompressionEvent` (≥ 1.1 / 0.3) on the bus is duck-typed (keys `technique` + `ratio`) into a `compression` chain entry (metadata only: technique, tokens before/after, ratio, store kind, handle id, kind) and mirrored as an `audit.compression` span (`cendor.audit.technique` / `.tokens_before` / `.tokens_after` / `.ratio` / `.store_kind` / `.handle_id` / `.kind`). Metadata-only, so it is **not** in `_AUTO_REDACT_TYPES` (no content to scrub). Framework control mappings added for all four bundled frameworks. Backward-compatible; the file remains the sole verifiable evidence.
+
 ## [1.7.0] — 2026-07-20
 Mirror completeness: the `OTelMirror` now carries the structured fields an audit-history / monitoring view needs — not just labels, but the numbers. Backward-compatible; the file remains the sole verifiable evidence and the default (no-OTel) chain is byte-identical.
 

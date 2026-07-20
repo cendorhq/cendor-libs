@@ -122,6 +122,7 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
         "human_oversight": ["Art.14 human oversight", "Art.26(5) deployer oversight"],
         "policy_flag": ["Art.10 data governance", "Art.12 record-keeping"],
         "budget_event": ["Art.12 record-keeping", "Art.72 post-market monitoring"],
+        "compression": ["Art.12 record-keeping"],
     },
     "nist_rmf": {
         "audit_open": ["GOVERN-1.1"],
@@ -134,6 +135,7 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
         "human_oversight": ["MANAGE-2.1"],
         "policy_flag": ["MANAGE-2.1", "MEASURE-2.1"],
         "budget_event": ["MANAGE-2.1", "MEASURE-2.1"],
+        "compression": ["MEASURE-2.1"],
     },
     "iso_42001": {  # ISO/IEC 42001:2023 Annex A controls + management clauses
         "audit_open": ["A.6.2.8 event logs"],
@@ -150,6 +152,7 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
         "human_oversight": ["A.9.2 responsible use", "A.9.4 intended use"],
         "policy_flag": ["A.7 data for AI systems", "A.6.2.8 event logs", "A.9.2 responsible use"],
         "budget_event": ["A.6.2.6 operation & monitoring", "A.6.2.8 event logs"],
+        "compression": ["A.6.2.6 operation & monitoring"],
     },
     "gdpr": {  # automated decision-making + records of processing (Reg. 2016/679)
         "audit_open": ["Art.30 records of processing", "Art.5(2) accountability"],
@@ -161,6 +164,7 @@ _CONTROLS: dict[str, dict[str, list[str]]] = {
         "context_assembly": ["Art.30 records of processing"],
         "human_oversight": ["Art.22(3) right to human intervention"],
         "budget_event": ["Art.30 records of processing"],
+        "compression": ["Art.5(1)(c) data minimisation"],
         "policy_flag": [
             "Art.9 special-category data",
             "Art.5(1)(c) data minimisation",
@@ -686,6 +690,22 @@ class AuditLog:
                     # policy_hash / policy_version (proves which policy was active). Duck-typed +
                     # json-normalized; empty by default, so this stays backward-compatible.
                     "metadata": _jsonable(getattr(event, "metadata", {}) or {}),
+                },
+            )
+        elif hasattr(event, "technique") and hasattr(
+            event, "ratio"
+        ):  # squeeze CompressionEvent (G21)
+            self._append(
+                "compression",
+                {
+                    "decision_id": did,
+                    "technique": event.technique,
+                    "tokens_before": getattr(event, "tokens_before", None),
+                    "tokens_after": getattr(event, "tokens_after", None),
+                    "ratio": getattr(event, "ratio", None),
+                    "store_kind": getattr(event, "store_kind", None),
+                    "handle_id": getattr(event, "handle_id", None),
+                    "kind": getattr(event, "kind", None),
                 },
             )
         elif (

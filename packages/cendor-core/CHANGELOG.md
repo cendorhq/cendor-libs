@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.7.0] — 2026-07-20
+Opt-in content capture, a libs-only span emitter, and TTFT — the emission half of the Cendor journey console (Monitor v3).
+
+### Added
+- **Opt-in content capture (OFF by default)** — `otel.capture_content(mode="span", mask=…, max_bytes=…)` and the standard `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` env var turn on export of prompts/responses/thinking/tool values onto the semconv content span attributes (`gen_ai.input.messages` / `gen_ai.output.messages` / `gen_ai.system_instructions`, JSON strings). A `mask` (`messages -> messages`) scrubs before export (fail-closed if it raises); `max_bytes` caps each attribute with a truncation marker. **Content never enters the acttrace evidence chain or its mirror** (rule 6). Helpers `otel.content_attrs(...)` / `otel.tool_content_attrs(...)` build the attribute dicts.
+- **`otel.response_messages(call)`** — best-effort per-provider parse of assistant output into text + **thinking** parts (Anthropic `thinking` blocks, OpenAI Responses reasoning summaries, Gemini `thought` parts, Bedrock `reasoningContent`, Ollama `thinking`, DeepSeek `reasoning_content`) — the content the provider `parse()` drops. Content only, opt-in.
+- **`otel.use_span_emitter()`** — an opt-in bus→span subscriber that emits a `chat`/`execute_tool` semconv span per `LLMCall`/`ToolCall`, so a **libs-only app (no SDK)** lights up a trace-based monitor. Honors content capture; defers to an active SDK `live_spans` context (no double spans) via `otel.enter_live_spans()`/`exit_live_spans()`.
+- **TTFT** — streamed calls now stamp `metadata["ttft_ms"]` (first-chunk latency), surfaced as `cendor.ttft_ms` on emitted chat spans. Replayed streams are excluded.
+
 ## [1.6.0] — 2026-07-14
 Embeddings capture, Usage arithmetic, and a survive-refresh price registry — the core half of the SDK↔lib inheritance fixes.
 

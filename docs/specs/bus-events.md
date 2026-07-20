@@ -169,6 +169,34 @@ unchanged, so an older `acttrace` simply ignores the new fields. `acttrace ≥ 1
 ≥ 0.8` mirror `name` as `cendor.audit.budget` and `description` (truncated) as
 `cendor.audit.description`.
 
+### `CompressionEvent` (emitted by `cendor-squeeze`, not `instrument()`)
+
+A fifth bus event, emitted by `squeeze` after each `compress()` call. Like `BudgetEvent`, it is
+produced by a sibling library, rides the same bus, and `acttrace` chains it as a `compression` entry
+by **duck typing** (`technique` + `ratio` present), no import in either direction. It carries only
+the **shape** of a compression — technique + token savings — and **never any content** (the original
+lives only in squeeze's content-addressed store, referenced by `handle_id`). It makes squeeze
+activity visible to a monitor/audit that would otherwise see nothing (a compression leaves no
+`LLMCall`).
+
+| field | type | default | notes |
+|---|---|---|---|
+| `technique` | string | — | e.g. `minify+dropnulls`, `dedup-lines` — the deterministic compressor applied. |
+| `tokens_before` | int | — | token count of the original (counted with `model`). |
+| `tokens_after` | int | — | token count of the compressed output. |
+| `ratio` | float | — | `tokens_after / tokens_before` — the fraction of tokens remaining (lower is better). |
+| `store_kind` | string | — | class name of the active CCR backend (`MemoryStore` \| `SQLiteStore` \| …). |
+| `handle_id` | string | — | the `Handle.id` — the reference that `expand()` restores from (never the content). |
+| `kind` | string | `""` | the content kind — `json` \| `logs` \| `code` \| `prose`. |
+| `trace_id` | string | `""` | the ambient `trace()` correlation id, when a run is active. |
+| `ts` | timestamp | now | when the compression happened. |
+
+The `acttrace` `compression` payload uses the snake_case key names above (plus `decision_id`). It is
+**not** auto-redacted (metadata only). `acttrace ≥ 1.8` / `@cendor/acttrace ≥ 0.9` mirror it as an
+`audit.compression` span (`cendor.audit.technique` / `.tokens_before` / `.tokens_after` / `.ratio` /
+`.store_kind` / `.handle_id` / `.kind`). Added in `cendor-squeeze 1.1` / `@cendor/squeeze 0.3` —
+additive; older consumers ignore the event (the duck-type test is new, not a change to existing ones).
+
 ## Serialization notes for ports
 
 - These are in-memory event shapes; the **wire** formats that must interoperate are defined by the

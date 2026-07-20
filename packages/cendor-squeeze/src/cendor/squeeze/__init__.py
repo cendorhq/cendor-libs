@@ -18,13 +18,43 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from cendor.core import tokens
+from cendor.core import bus, current_trace_id, tokens
 
 from .store import MemoryStore
 
-__all__ = ["compress", "decompress", "detect", "use_store", "Handle", "SqueezeCompressor"]
+__all__ = [
+    "compress",
+    "decompress",
+    "detect",
+    "use_store",
+    "Handle",
+    "SqueezeCompressor",
+    "CompressionEvent",
+]
+
+
+@dataclass
+class CompressionEvent:
+    """Metadata-only bus event emitted after each :func:`compress` (G21). It carries only the
+    *shape* of a compression — **never the text** — so a monitor/audit can show squeeze activity
+    (technique, token savings) without any content leaving the process. Duck-typed by ``acttrace``
+    (keys ``technique`` + ``ratio``) into a ``compression`` audit entry. (docs/specs/bus-events.md)
+    """
+
+    technique: str
+    tokens_before: int
+    tokens_after: int
+    #: ``tokens_after / tokens_before`` — the fraction of tokens remaining (lower is better).
+    ratio: float
+    store_kind: str
+    handle_id: str
+    kind: str = ""
+    trace_id: str = ""
+    ts: datetime | None = None
+
 
 # Active content-addressed store (CCR): sha256(original) -> original. Deduped; the basis of
 # reversibility. Default in-process; swap via use_store() for a persistent backend.
@@ -336,7 +366,29 @@ def compress(
         original_ref=ref,
         restore_map=restore_map,
     )
+    _emit_compression(original, small, technique, kind, model, handle.id)
     return small, handle
+
+
+def _emit_compression(
+    original: str, small: str, technique: str, kind: str, model: str, handle_id: str
+) -> None:
+    """Emit the metadata-only :class:`CompressionEvent` on the bus (G21). Counts only — no text."""
+    before = tokens.count(original, model)
+    after = tokens.count(small, model)
+    bus.emit(
+        CompressionEvent(
+            technique=technique,
+            tokens_before=before,
+            tokens_after=after,
+            ratio=(after / before) if before else 1.0,
+            store_kind=type(_backend).__name__,
+            handle_id=handle_id,
+            kind=kind,
+            trace_id=current_trace_id(),
+            ts=datetime.now(UTC),
+        )
+    )
 
 
 def decompress(handle: Handle) -> str:

@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.0] — 2026-07-20
+Compression visibility on the bus (G21) — squeeze stops being dark to a monitor/audit.
+
+### Added
+- **`CompressionEvent`** — a metadata-only bus event emitted after each `compress()`: `technique`, `tokens_before`, `tokens_after`, `ratio` (tokens remaining), `store_kind`, `handle_id`, `kind`, `trace_id`, `ts`. It carries **only the shape** of a compression — never the text — so a monitor or the acttrace audit can show squeeze activity and token savings without any content leaving the process. `acttrace` (≥ 1.8) duck-types it into a `compression` audit entry + an `audit.compression` span.
+
 ## [1.0.3] — 2026-07-11
 AI-assistant onboarding: inline Type Teach ships inside the package, plus the bundled integration guide. No runtime behavior change for correct code.
 
