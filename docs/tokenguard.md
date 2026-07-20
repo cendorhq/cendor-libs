@@ -131,7 +131,8 @@ applicable cap wins, and an inner `downgrade`/`clamp` never masks an outer hard 
 
 ```python
 budget(usd=None, tokens=None, on_exceed="raise", scope=None,
-       downgrade=None, output_reserve=256, reasoning_reserve=0)
+       downgrade=None, output_reserve=256, reasoning_reserve=0,
+       name=None, description=None)
 ```
 
 <!-- tab: TypeScript -->
@@ -139,9 +140,9 @@ budget(usd=None, tokens=None, on_exceed="raise", scope=None,
 <!-- ts-check: skip -->
 
 ```ts
-budget({ usd, tokens, onExceed = 'raise', scope,
-         downgrade, outputReserve = 256, reasoningReserve = 0 })(fn)   // decorator form
-await withBudget({ usd: 0.25, onExceed: 'block' }, () => { /* ... */ });  // scoped form
+budget({ usd, tokens, onExceed = 'raise', scope, downgrade,
+         outputReserve = 256, reasoningReserve = 0, name, description })(fn)   // decorator form
+await withBudget({ usd: 0.25, onExceed: 'block', name: 'per-run cap' }, () => { /* ... */ });
 ```
 
 <!-- /tabs -->
@@ -155,6 +156,8 @@ await withBudget({ usd: 0.25, onExceed: 'block' }, () => { /* ... */ });  // sco
 | `downgrade` | `dict \| None` | `None` | `{model: cheaper}` map. **Required** for `on_exceed="downgrade"`. |
 | `output_reserve` | `int` | `256` | Output tokens assumed in a pre-flight projection when the request sets no `max_tokens`. |
 | `reasoning_reserve` | `int` | `0` | Extra headroom for a reasoning model's hidden thinking (only when no explicit output cap). |
+| `name` | `str \| None` | `None` | Human identity carried on every `BudgetEvent` (→ `cendor.audit.budget`), so a monitor shows *which* budget acted. Keep it a **bounded** label — it is also a governance-counter attribute. |
+| `description` | `str \| None` | `None` | Longer human description of what the budget guards (→ `cendor.audit.description`, truncated). |
 
 **`on_exceed` modes**
 
@@ -253,6 +256,17 @@ useSink(new OTelSink({ tags: false })); // or: model-only counters (bound metric
 > (`feature`, `tenant`, `env` — not a raw per-user id) or pass `tags=False`, so your backend's
 > time-series count stays bounded. For the full backend-wiring recipes (Azure Monitor, CloudWatch,
 > Datadog, OTLP), see [Observability](observability.md).
+
+### The budget-events counter
+
+Separately from spend metrics, every pre-flight budget action also increments a governance counter
+`cendor.tokenguard.budget.events` on the meter `cendor.tokenguard` (a no-op when OpenTelemetry isn't
+installed — no setup, no sink to attach). It renders in Prometheus as
+`cendor_tokenguard_budget_events_total`, dimensioned by `action` (`blocked`/`downgraded`/`clamped`),
+`model`, and — when set — `scope` and the budget `name`. Because a *blocked* call never reaches the
+bus as an `LLMCall`, this is the metric that lets you chart budget-block **rates** (not just see the
+one-off `audit.budget_event` span). Keep budget `name`s bounded for the same cardinality reason as
+`track()` tags. (Added in `cendor-tokenguard 1.3` / `@cendor/tokenguard 0.4`.)
 
 ### `QueueSink` — low-latency durable logging
 

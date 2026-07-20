@@ -287,17 +287,27 @@ emits a `BudgetEvent` on the core bus. A *blocked* call never reaches the bus as
 refused before it runs), so this event is the **only** signal the breaker fired — precisely what you
 want to alert on. `acttrace` chains it as a `budget_event` entry, and an attached `OTelMirror` turns
 it into an `audit.budget_event` span carrying `cendor.audit.action` (`blocked`/…),
-`cendor.audit.model`, and the reason (which states the projected-vs-cap figures in text).
-The projected/cap numbers also land as dedicated numeric attributes in
-`acttrace ≥ 1.7` / `@cendor/acttrace ≥ 0.8`.
+`cendor.audit.model`, the budget's name as `cendor.audit.budget` (from `budget(name=…)`), and the
+projected-vs-cap figures as dedicated numeric attributes — `cendor.audit.projected_usd` /
+`cendor.audit.cap_usd` (money as strings, per the `Decimal` rule) and `cendor.audit.projected_tokens`
+/ `cendor.audit.cap_tokens` (ints) — so a monitor shows *which* budget blocked *what*, not just a
+free-text reason. (Requires `acttrace ≥ 1.7` / `@cendor/acttrace ≥ 0.8` and `tokenguard ≥ 1.3` /
+`@cendor/tokenguard ≥ 0.4` for the budget name.)
+
+Every pre-flight budget action also increments the `cendor.tokenguard.budget.events` **counter**
+(`cendor_tokenguard_budget_events_total` in Prometheus), so you can chart block *rates* — see
+[tokenguard](tokenguard.md#the-budget-events-counter).
 
 ### The audit mirror (`OTelMirror`)
 
 `AuditLog(mirror=OTelMirror())` sends **every** chained entry — decisions, `llm_call`/`tool_call`,
-`guardrail_decision`, `budget_event`, `policy_flag`, `human_oversight` — to OpenTelemetry as an
-`audit.<type>` span, in addition to the file. So "the guardrail blocked an injection" or "ops@bank
-approved this refund" becomes queryable and alertable in Azure Monitor / Datadog / CloudWatch, not
-just a line in a local file.
+`guardrail_decision`, `budget_event`, `policy_flag`, `human_oversight`, `context_assembly` — to
+OpenTelemetry as an `audit.<type>` span, in addition to the file. So "the guardrail blocked an
+injection" or "ops@bank approved this refund" becomes queryable and alertable in Azure Monitor /
+Datadog / CloudWatch, not just a line in a local file. Each span carries structured
+`cendor.audit.*` labels — guardrail `severity`/`policy_version`, `llm_call` token usage/latency,
+context-assembly block counts, budget names + caps — never raw content; the full per-type surface is
+in the [acttrace span-attributes table](acttrace.md#mirror-to-an-observability-backend).
 
 ```python
 from cendor.acttrace import AuditLog, OTelMirror

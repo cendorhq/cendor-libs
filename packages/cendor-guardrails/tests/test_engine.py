@@ -48,6 +48,43 @@ def test_evaluate_returns_redacted_payload():
     assert decs[0].action == "redact"
 
 
+def test_g15_counter_is_noop_without_otel():  # G15 — the increment never raises
+    # In the default (no-OTel) env, _decisions_add takes the no-op path. A flagged decision
+    # exercises it and must not raise (best-effort observability, never gates the decision).
+    out = apply([_flag()], "input", msgs("hi"))
+    assert len(out) == 1
+
+
+def test_g15_counter_increments_with_otel(monkeypatch):  # G15 — real wire when OTel is present
+    metrics = pytest.importorskip("opentelemetry.metrics")
+    import cendor.guardrails as guardrails
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    reader = InMemoryMetricReader()
+    metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
+    monkeypatch.setattr(guardrails, "_decisions_counter", None)
+    monkeypatch.setattr(guardrails, "_decisions_counter_checked", False)
+
+    apply([_flag(name="pii")], "input", msgs("hi"))
+
+    data = reader.get_metrics_data()
+    points = [
+        pt
+        for rm in data.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+        if m.name == "cendor.guardrails.decisions"
+        for pt in m.data.data_points
+    ]
+    assert points, "expected a cendor.guardrails.decisions counter data point"
+    assert sum(pt.value for pt in points) >= 1
+    attrs = dict(points[0].attributes)
+    assert attrs.get("guardrail") == "pii"
+    assert attrs.get("stage") == "input"
+    assert attrs.get("action") == "flag"
+
+
 def test_evaluate_runs_guardrails_in_order_and_carries_redaction():
     r1 = rules.regex_rule(r"aaa", action="redact", replacement="X", stage="input")
     r2 = rules.regex_rule(r"bbb", action="flag", stage="input")

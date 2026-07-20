@@ -396,6 +396,24 @@ const audit = new AuditLog('support', { path: 'audit.jsonl', mirror: new OTelMir
 > `otel_trace_id`/`otel_span_id` so you can pivot between an APM trace and the audit entry.
 > Full backend-wiring recipes are in [Observability](observability.md).
 
+**Span attributes** (`cendor.audit.*`) — structured labels only, never raw content (the chain has
+already redacted the payload). Every span carries `type`, `seq`, `hash`, `system`, and — when a span
+is active — `otel_trace_id` / `otel_span_id`. Per entry type (`@cendor/acttrace ≥ 0.8` /
+`cendor-acttrace ≥ 1.7`):
+
+| Entry type | Additional `cendor.audit.*` attributes |
+|---|---|
+| `budget_event` | `action`, `budget` (the budget's name), `description` (truncated), `scope`, `model`, `to_model`, `projected_usd` / `cap_usd` (money as strings), `projected_tokens` / `cap_tokens` (ints), `reason`, and each `track()` tag as `tag.<key>` |
+| `llm_call` | `provider`, `model`, `input_tokens` / `output_tokens` / `reasoning_tokens` (ints), `latency_ms`, `replayed` (bool), `cost` |
+| `guardrail_decision` | `guardrail`, `stage`, `action`, `reason`, `agent`, `tool`, `severity`, `policy_version`, `policy_hash` |
+| `context_assembly` | `model`, `budget_tokens`, `used_tokens`, and non-zero per-action block counts `kept` / `truncated` / `summarized` / `compressed` / `dropped` |
+| `human_oversight` | `reviewer`, `action`, `note` (truncated) |
+| `audit_open` | `risk_tier` |
+
+Money lands as **string** attributes (the `Decimal` house rule — the mirror is operational copy, not
+the evidence); token counts and block counts are ints. `description`/`note` are truncated to 200
+characters on the span (the file keeps the full text).
+
 ### `audit.decision()`
 A context manager that groups a unit of work; auto-captured calls inside it are tagged to
 the decision. Yields a handle `d`.

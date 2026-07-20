@@ -699,6 +699,9 @@ class AuditLog:
                     "decision_id": did,
                     "action": event.action,  # "blocked" | "downgraded" | "clamped"
                     "reason": getattr(event, "reason", ""),
+                    # G10: the budget's human identity (tokenguard >= 1.3), when named.
+                    "name": getattr(event, "name", None),
+                    "description": getattr(event, "description", None),
                     "model": getattr(event, "model", ""),
                     "to_model": getattr(event, "to_model", None),
                     "scope": getattr(event, "scope", None),

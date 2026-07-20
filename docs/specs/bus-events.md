@@ -146,6 +146,8 @@ the only signal that the breaker fired — the governance action worth alerting 
 |---|---|---|---|
 | `action` | string | — | `blocked` \| `downgraded` \| `clamped`. |
 | `reason` | string | `""` | short, human-readable (the projection vs cap). |
+| `name` | string \| null | `null` | the budget's human identity (`budget(name=…)`), for UI/alert grouping. A **bounded** identifier (also a governance-counter label). |
+| `description` | string \| null | `null` | a longer human description of what the budget guards. |
 | `model` | string | `""` | the model the action applied to. |
 | `to_model` | string \| null | `null` | the cheaper model, for `downgraded`. |
 | `scope` | string \| null | `null` | the budget frame's scope label, when set. |
@@ -160,6 +162,12 @@ The `acttrace` `budget_event` payload uses the snake_case key names above (plus 
 audit chain records byte-identical `budget_event` entries across languages. A port emits the same
 field names/conventions (`snake_case` ↔ `camelCase`); the class name `BudgetEvent` is identical
 everywhere.
+
+`name`/`description` (added in `cendor-tokenguard 1.3` / `@cendor/tokenguard 0.4`) are **additive and
+optional** — the duck-type test that chains the event (`action` + `projected_usd` + `cap_usd`) is
+unchanged, so an older `acttrace` simply ignores the new fields. `acttrace ≥ 1.7` / `@cendor/acttrace
+≥ 0.8` mirror `name` as `cendor.audit.budget` and `description` (truncated) as
+`cendor.audit.description`.
 
 ## Serialization notes for ports
 

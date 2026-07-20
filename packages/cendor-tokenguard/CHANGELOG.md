@@ -2,6 +2,13 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.3.0] — 2026-07-20
+Budget identity + a native governance counter, so a monitor can show *which* budget acted and chart block rates. Backward-compatible.
+
+### Added
+- **`budget(name=…, description=…)`.** A budget can now carry a human identity that rides every `BudgetEvent` it fires (and is mirrored by `acttrace ≥ 1.7` as `cendor.audit.budget` / `cendor.audit.description`), so an audit stream / monitor shows *which* budget blocked a call — not just that one did. Both are optional; unnamed budgets stay anonymous. Keep `name` a bounded identifier (it is also a counter label).
+- **`cendor.tokenguard.budget.events` counter.** Every pre-flight budget action also increments a governance counter on meter `cendor.tokenguard` (no-op without OpenTelemetry), dimensioned by `action`/`model`/`scope`/`name`. Renders as `cendor_tokenguard_budget_events_total` in Prometheus — chart budget-block rates, which a blocked call's absence from the spend counters can't show.
+
 ## [1.2.0] — 2026-07-19
 Observability: pre-flight budget actions are now visible to your audit trail and metrics backend. Backward-compatible.
 

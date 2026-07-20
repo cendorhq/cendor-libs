@@ -116,3 +116,75 @@ def test_no_budget_event_when_under_cap():
     with budget(usd=100.0, on_exceed="block"):
         _call(client)
     assert [e for e in events if isinstance(e, BudgetEvent)] == []
+
+
+def test_budget_event_carries_name_and_description():  # G10
+    events = _capture()
+    client = _client()
+    with pytest.raises(BudgetExceeded):
+        with budget(
+            usd=0.01,
+            on_exceed="block",
+            name="per-run cap",
+            description="hard ceiling per support run",
+        ):
+            _call(client)
+            _call(client)
+
+    blocked = [e for e in events if e.action == "blocked"]
+    assert blocked
+    assert blocked[0].name == "per-run cap"
+    assert blocked[0].description == "hard ceiling per support run"
+
+
+def test_budget_event_name_defaults_to_none():  # G10 — unnamed budgets stay anonymous
+    events = _capture()
+    client = _client()
+    with budget(usd=0.001, on_exceed="downgrade", downgrade={"gpt-4o": "gpt-4o-mini"}):
+        _call(client)
+    downgraded = [e for e in events if e.action == "downgraded"]
+    assert downgraded and downgraded[0].name is None and downgraded[0].description is None
+
+
+def test_g15_counter_is_noop_without_otel():  # G15 — the increment never raises
+    # In the default (no-OTel) env, _budget_events_add takes the no-op path. Driving a real
+    # block exercises it and must not raise (best-effort observability, never gates the action).
+    client = _client()
+    with pytest.raises(BudgetExceeded):
+        with budget(usd=0.01, on_exceed="block", name="x"):
+            _call(client)
+            _call(client)
+
+
+def test_g15_counter_increments_with_otel(monkeypatch):  # G15 — real wire when OTel is present
+    metrics = pytest.importorskip("opentelemetry.metrics")
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    reader = InMemoryMetricReader()
+    metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
+    # force the lazily-bound counter to (re)create against the provider we just set
+    monkeypatch.setattr(tokenguard, "_budget_events_counter", None)
+    monkeypatch.setattr(tokenguard, "_budget_events_counter_checked", False)
+
+    client = _client()
+    with pytest.raises(BudgetExceeded):
+        with budget(usd=0.01, on_exceed="block", name="per-run cap", scope="session"):
+            _call(client)
+            _call(client)
+
+    data = reader.get_metrics_data()
+    points = [
+        pt
+        for rm in data.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+        if m.name == "cendor.tokenguard.budget.events"
+        for pt in m.data.data_points
+    ]
+    assert points, "expected a cendor.tokenguard.budget.events counter data point"
+    assert sum(pt.value for pt in points) >= 1
+    attrs = dict(points[0].attributes)
+    assert attrs.get("action") == "blocked"
+    assert attrs.get("name") == "per-run cap"
+    assert attrs.get("scope") == "session"

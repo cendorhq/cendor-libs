@@ -103,6 +103,35 @@ Guardrails = Sequence[Guardrail]
 
 # --------------------------------------------------------------------------- engine
 
+# --- G15: native governance counter (optional, no-op without OpenTelemetry) ---
+#: Lazily-created ``cendor.guardrails.decisions`` counter (meter ``cendor.guardrails``). ``None``
+#: until first use; stays ``None`` if OTel isn't installed. Renders as
+#: ``cendor_guardrails_decisions_total`` in Prometheus.
+_decisions_counter: Any = None
+_decisions_counter_checked = False
+
+
+def _decisions_add(attrs: dict[str, Any]) -> None:
+    """Increment the ``cendor.guardrails.decisions`` counter (no-op without OpenTelemetry).
+
+    A lazily-created counter on a proxy meter binds to whatever ``MeterProvider`` the host app
+    configures (before or after first use). Best-effort observability — it never gates the decision.
+    Labels are the bounded sets ``guardrail`` / ``stage`` / ``action``.
+    """
+    global _decisions_counter, _decisions_counter_checked
+    if not _decisions_counter_checked:
+        _decisions_counter_checked = True
+        try:
+            from opentelemetry import metrics
+        except ImportError:
+            _decisions_counter = None
+        else:
+            _decisions_counter = metrics.get_meter("cendor.guardrails").create_counter(
+                "cendor.guardrails.decisions"
+            )
+    if _decisions_counter is not None:
+        _decisions_counter.add(1, attrs)
+
 
 def _applicable(guardrails: Guardrails, stage: str) -> list[Guardrail]:
     return [g for g in guardrails if stage in g.stages]
@@ -125,6 +154,8 @@ def _emit(g: Guardrail, stage: str, verdict: Verdict, ctx: Context) -> Guardrail
         metadata=metadata,
     )
     bus.emit(decision)  # acttrace (if attached) chains this as a guardrail_decision entry
+    # G15: native governance counter (no-op without OpenTelemetry). Bounded label set.
+    _decisions_add({"guardrail": g.name, "stage": stage, "action": verdict.action})
     return decision
 
 

@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.7.0] — 2026-07-20
+Mirror completeness: the `OTelMirror` now carries the structured fields an audit-history / monitoring view needs — not just labels, but the numbers. Backward-compatible; the file remains the sole verifiable evidence and the default (no-OTel) chain is byte-identical.
+
+### Added
+- **Budget identity + numbers on `audit.budget_event` spans** (G10/G11). The budget's name lands as `cendor.audit.budget` (from `tokenguard`'s new `budget(name=…)`), its description as `cendor.audit.description` (truncated), and the projected-vs-cap figures as dedicated attributes — `cendor.audit.projected_usd` / `cendor.audit.cap_usd` (money as strings, per the `Decimal` rule), `cendor.audit.projected_tokens` / `cendor.audit.cap_tokens` (ints), plus `scope`, `to_model`, and each `track()` tag as `cendor.audit.tag.<key>`. So a monitor shows *which* budget blocked *what*, not just a free-text reason.
+- **`audit.llm_call` spans** now carry `cendor.audit.input_tokens` / `output_tokens` / `reasoning_tokens` (ints), `latency_ms`, and `replayed` (bool).
+- **`audit.guardrail_decision` spans** now carry `cendor.audit.agent`, `cendor.audit.tool`, and the guardrail's nested `severity` / `policy_version` / `policy_hash` (previously the top-level `severity` only matched a `policy_flag`).
+- **`audit.context_assembly` spans** now carry `cendor.audit.budget_tokens` / `used_tokens` (ints) and non-zero per-action block counts (`kept` / `truncated` / `summarized` / `compressed` / `dropped`) — a `compressed` count is squeeze's indirect visibility on the wire (G16).
+- **`audit.human_oversight`** carries the reviewer's `note` (truncated); **`audit.audit_open`** carries `risk_tier`; the correlation `otel_span_id` is now exposed as a queryable span attribute (the pivot target).
+
 ## [1.6.0] — 2026-07-19
 Observability export: stream the audit trail to any OpenTelemetry backend, and correlate entries with your traces. Backward-compatible — the file remains the sole verifiable evidence and the default (no-OTel) chain is byte-identical.
 

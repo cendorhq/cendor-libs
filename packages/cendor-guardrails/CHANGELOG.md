@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.6.0] — 2026-07-20
+A native governance counter, so guardrail-decision rates are chartable without post-processing traces. Backward-compatible — no change to `GuardrailDecision` or the bus shape.
+
+### Added
+- **`cendor.guardrails.decisions` counter.** Every emitted `GuardrailDecision` also increments a counter on meter `cendor.guardrails` (a no-op when OpenTelemetry isn't installed — no setup, no sink to attach), dimensioned by the bounded label sets `guardrail` / `stage` / `action`. Renders as `cendor_guardrails_decisions_total` in Prometheus — chart block/flag rates per guardrail and stage over time.
+
 ## [1.5.1] — 2026-07-11
 AI-assistant onboarding: inline Type Teach ships inside the package, plus the bundled integration guide. No runtime behavior change for correct code.
 

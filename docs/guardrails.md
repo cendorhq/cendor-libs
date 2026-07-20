@@ -175,6 +175,13 @@ change); the engine merges that under the caller's per-call `Context.metadata`, 
 adapters and `openai_moderation` populate `detected`/`filtered`/`redacted` from the vendor result —
 so **every adapter's audit evidence gets richer at once**, and it's local evidence for a cloud check.
 
+**A native decision counter.** Every emitted `GuardrailDecision` also increments a counter
+`cendor.guardrails.decisions` on the meter `cendor.guardrails` (a no-op when OpenTelemetry isn't
+installed — no setup, no sink to attach), dimensioned by the bounded label sets `guardrail`,
+`stage`, and `action`. It renders in Prometheus as `cendor_guardrails_decisions_total`, so you can
+chart block/flag **rates** per guardrail and stage — the aggregate view a raw decision stream can't
+give you. (Added in `cendor-guardrails 1.6` / `@cendor/guardrails 0.7`.)
+
 ### Timeouts & error policy
 A deterministic check can't fail — but a bring-your-own judge or a hosted rail can hang or error, so
 every guardrail carries two knobs (set them on `Guardrail`, the `@guardrail` decorator, or the

@@ -61,6 +61,8 @@ class BudgetEvent:
 
     action: str
     reason: str = ""
+    name: str | None = None  # the budget's human name (budget(name=...)), for UI/alert grouping
+    description: str | None = None  # a longer human description of what the budget guards
     model: str = ""
     to_model: str | None = None  # the cheaper model, for action="downgraded"
     scope: str | None = None
@@ -103,6 +105,8 @@ class _Frame:
     downgrade: dict | None = None  # model -> cheaper model, for on_exceed="downgrade"
     output_reserve: int = _DEFAULT_OUTPUT_RESERVE  # pre-flight output projection (block/downgrade)
     reasoning_reserve: int = 0  # extra output headroom for a reasoning model's hidden thinking
+    name: str | None = None  # budget identity, carried onto BudgetEvent (budget(name=...))
+    description: str | None = None  # longer human description of what this budget guards
     spent_usd: Decimal = Decimal("0")
     spent_tokens: int = 0
     calls: int = 0
@@ -271,6 +275,35 @@ def _project_tokens(
     )
 
 
+# --- G15: native governance counter (optional, no-op without OpenTelemetry) ---
+#: Lazily-created ``cendor.tokenguard.budget.events`` counter (meter ``cendor.tokenguard`` — the
+#: same meter ``OTelSink`` uses). ``None`` until first use; stays ``None`` if OTel isn't installed.
+_budget_events_counter: Any = None
+_budget_events_counter_checked = False
+
+
+def _budget_events_add(attrs: dict[str, Any]) -> None:
+    """Increment the ``cendor.tokenguard.budget.events`` counter (no-op without OpenTelemetry).
+
+    Renders as ``cendor_tokenguard_budget_events_total`` in Prometheus. A lazily-created counter on
+    a proxy meter binds to whatever ``MeterProvider`` the host app configures (before or after first
+    use). Best-effort observability — it never gates the budget action.
+    """
+    global _budget_events_counter, _budget_events_counter_checked
+    if not _budget_events_counter_checked:
+        _budget_events_counter_checked = True
+        try:
+            from opentelemetry import metrics
+        except ImportError:
+            _budget_events_counter = None
+        else:
+            _budget_events_counter = metrics.get_meter("cendor.tokenguard").create_counter(
+                "cendor.tokenguard.budget.events"
+            )
+    if _budget_events_counter is not None:
+        _budget_events_counter.add(1, attrs)
+
+
 def _emit_budget_event(
     action: str,
     *,
@@ -288,6 +321,8 @@ def _emit_budget_event(
         BudgetEvent(
             action=action,
             reason=reason,
+            name=frame.name,
+            description=frame.description,
             model=call.model,
             to_model=to_model,
             scope=frame.scope,
@@ -298,6 +333,14 @@ def _emit_budget_event(
             tags=dict(_current_tags()),
         )
     )
+    # G15: optional native governance counter (no-op without OpenTelemetry). Bounded label set —
+    # `name` must be a fixed identifier (docstring warns) so the time-series count stays bounded.
+    counter_attrs: dict[str, Any] = {"action": action, "model": call.model}
+    if frame.scope:
+        counter_attrs["scope"] = frame.scope
+    if frame.name:
+        counter_attrs["name"] = frame.name
+    _budget_events_add(counter_attrs)
 
 
 def _preflight_interceptor(call: object) -> Any:
@@ -547,6 +590,8 @@ class _Budget:
         downgrade: dict | None = None,
         output_reserve: int = _DEFAULT_OUTPUT_RESERVE,
         reasoning_reserve: int = 0,
+        name: str | None = None,
+        description: str | None = None,
     ) -> None:
         if not callable(on_exceed) and on_exceed not in _ON_EXCEED:
             raise ValueError(
@@ -572,6 +617,8 @@ class _Budget:
         self._downgrade = downgrade
         self._output_reserve = output_reserve
         self._reasoning_reserve = reasoning_reserve
+        self._name = name
+        self._description = description
         self.frame: _Frame | None = None
         self._token: Token | None = None
 
@@ -585,6 +632,8 @@ class _Budget:
             self._downgrade,
             self._output_reserve,
             self._reasoning_reserve,
+            name=self._name,
+            description=self._description,
         )
         self._token = _budgets.set(_budgets.get() + (self.frame,))
 
@@ -619,6 +668,8 @@ class _Budget:
             downgrade=self._downgrade,
             output_reserve=self._output_reserve,
             reasoning_reserve=self._reasoning_reserve,
+            name=self._name,
+            description=self._description,
         )
 
     def __call__(self, func: Callable) -> Callable:
@@ -659,6 +710,8 @@ def budget(
     downgrade: dict | None = None,
     output_reserve: int = _DEFAULT_OUTPUT_RESERVE,
     reasoning_reserve: int = 0,
+    name: str | None = None,
+    description: str | None = None,
 ) -> _Budget:
     """Cap spend on a unit of work, as a decorator or a context manager.
 
@@ -674,6 +727,11 @@ def budget(
     with budget(usd=0.50) as b:                    # or as a context manager
         answer("hi")
         print(b.spent)                             # -> Money spent so far
+
+    # name= gives the budget a human identity that rides every BudgetEvent it fires, so an
+    # audit stream / monitor shows *which* budget blocked a call (not just "a budget did").
+    with budget(usd=5, name="per-run cap", description="hard ceiling per support run"):
+        answer("hi")
     ```
 
     Validates its configuration eagerly: a missing cap, an unknown ``on_exceed``, a ``"downgrade"``
@@ -719,6 +777,13 @@ def budget(
             thinking, added to ``output_reserve`` *only* when the request sets no explicit output
             cap (an explicit cap already includes reasoning on OpenAI/Anthropic). Defaults to 0 —
             raise it to make the projection conservative for uncapped reasoning-model calls.
+        name: Optional human identity for this budget, carried on every :class:`BudgetEvent` it
+            fires (and mirrored to ``cendor.audit.budget`` by ``acttrace``), so a monitor/audit
+            stream shows *which* budget acted. Keep it a **bounded identifier** (a fixed label like
+            ``"per-run cap"``, not a per-request string) — it is also a governance-counter
+            attribute, so an unbounded value explodes a metrics backend's cardinality.
+        description: Optional longer human description of what the budget guards; carried on the
+            :class:`BudgetEvent` and mirrored (truncated) to ``cendor.audit.description``.
     """
     return _Budget(
         usd=usd,
@@ -728,6 +793,8 @@ def budget(
         downgrade=downgrade,
         output_reserve=output_reserve,
         reasoning_reserve=reasoning_reserve,
+        name=name,
+        description=description,
     )
 
 
