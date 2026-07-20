@@ -273,6 +273,9 @@ if (real.length) throw new Error(`meaningful regressions: ${JSON.stringify(real)
 client's calls (and `instrument_tool`-wrapped tools) are recorded once and replayed forever. For
 server-side loops you don't control, `promote()` a recorded OTel/`acttrace` trace into a cassette.
 
+**See it live.** A replayed step carries `cendor.replayed` on the wire, so [Cendor Monitor](monitor.md),
+Cendor's optional self-hosted console, marks which calls ran offline for $0 from the cassette.
+
 ## Honest limits
 
 - **The default `semantic_match` is a lexical heuristic** — recall-oriented, so it accepts

@@ -237,6 +237,10 @@ applies whenever *you* assemble the prompt. Its `report()` decisions ride `core`
 downstream tools see what context was kept without importing `contextkit`. It pulls in `squeeze`
 only through the `Compressor` protocol, never a hard dependency.
 
+**See it live.** Those assembly receipts (kept / truncated / summarized / compressed / dropped block
+counts) render on the contextkit proof page in [Cendor Monitor](monitor.md), Cendor's optional
+self-hosted console — the receipt on your own screen.
+
 ## Honest limits
 
 - **Deterministic and offline** — token counts come from `core.tokens`; budgeting is best-effort

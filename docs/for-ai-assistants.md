@@ -345,6 +345,43 @@ console.log(result.toolSteps.map((s) => s.name));    // ["get_weather"]
 per-agent cap is `Agent(max_usd=…)`, not a `budget=` field. Full walkthrough:
 [SDK Getting Started](https://cendor.ai/docs/sdk/getting-started).
 
+### Watch runs locally (Cendor Monitor)
+
+The whole integration is **one standard OTLP env var** — there is no Cendor API, key, or endpoint to
+call, so it is identical in Python and TypeScript. Run the optional self-hosted console, point your
+app's OpenTelemetry at it, and attach the emitters you already use ([Observability](observability.md)).
+Your production default stays your own OTel backend (Azure Monitor / CloudWatch / Datadog / any OTLP);
+this is optional dev tooling. See [Cendor Monitor](monitor.md).
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```bash
+# 1. run the console (one image; SQLite by default)
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+
+# 2. point your app's OpenTelemetry at it, then open http://localhost:3000
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+# 3. attach the emitters as usual: `with live_spans(): run(agent, …)` (see Observability)
+```
+
+<!-- tab: TypeScript -->
+
+```bash
+# 1. run the console (one image; SQLite by default)
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+
+# 2. point your app's OpenTelemetry at it, then open http://localhost:3000
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+# 3. attach the emitters as usual: `liveSpans()` around your run (see Observability)
+```
+
+<!-- /tabs -->
+
+Prompt/response **content is captured only if you opt in** (`otel.capture_content()` — off by
+default; the console never enables it). The console is an **operational copy** — `verify()` still runs
+on the tamper-evident audit **file**, never on what the console shows.
+
 ## Wire up your assistant — three ways
 
 You don't have to paste this page every time. Pick whichever fits how your assistant reads context —

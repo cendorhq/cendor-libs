@@ -412,6 +412,11 @@ framework's **callback system**, not client wrapping. `cendor.core.langchain.Cen
 to the bus, satisfy a `protocols` type by shape, or register an interceptor — they never import
 one another. That's what keeps `core` the whole stack's small, stable blast radius.
 
+**See it live.** core's `otel` span emitter — and the libs-only `use_span_emitter()` bus→span bridge
+— is exactly the standard wire [Cendor Monitor](monitor.md) reads. Cendor's optional self-hosted
+console renders it directly; the same wire also flows to your own OTel backend (the production
+default).
+
 ## Honest limits
 
 - **Token counts are exact for the OpenAI families `tiktoken` maps** (gpt-4o, gpt-4.1, the

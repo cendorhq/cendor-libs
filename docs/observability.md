@@ -1,4 +1,4 @@
-# Observability — export to Azure Monitor, CloudWatch, Datadog, and any OTel backend
+# Observability — export to any OTel backend (or watch locally with Cendor Monitor)
 
 Cendor speaks **OpenTelemetry**, the standard everyone is converging on — nothing proprietary. Every
 signal it emits uses the OpenTelemetry **GenAI semantic conventions** (`gen_ai.*`), so once you
@@ -16,9 +16,10 @@ once, and attach the emitters you want. Without that, everything below is a sile
 > streams spend as metrics, and `AuditLog(mirror=OTelMirror())` streams the governance/audit trail.
 > The tamper-evident audit **file** stays your system of record; the mirror is an operational copy.
 
-> **Want a local backend to watch all this while you build?** [**Cendor Monitor**](https://cendor.ai/monitor)
-> — an optional, self-hosted container — gives you Cendor-branded **Runs / Cost / Governance** boards
-> over the same standard OTLP wire, in one `docker run`. See [Run a local backend](#run-a-local-backend-dev)
+> **Want to *see* all this in one screen while you build?** [**Cendor Monitor**](monitor.md) — an
+> optional, self-hosted **journey console** — renders the same standard OTLP wire as an Agents →
+> Sessions → run-journey view (every prompt, token, dollar, and the exact step where a budget or
+> guardrail acted, inline), in one `docker run`. See [Cendor Monitor](#cendor-monitor-self-hosted-console)
 > below. (Your production default stays your own backend, such as **Azure Monitor** — same wire, zero
 > code change.)
 
@@ -92,6 +93,12 @@ try {
 
 <!-- /tabs -->
 
+> **Fastest way to see it.** Don't want to wire a hosted backend just to watch a run? One
+> `docker run` gives you [**Cendor Monitor**](monitor.md) — a free, self-hosted journey console — on
+> `http://localhost:3000`; point the same `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://localhost:4318`
+> and your runs appear as you build. Optional dev tooling; your production default stays your own
+> backend. → [**Cendor Monitor**](monitor.md)
+
 ## What Cendor emits (and ingests)
 
 | Direction | API | Signal | What lands in your backend |
@@ -148,7 +155,7 @@ Once it's on, `span_tree` / `live_spans` stamp the content automatically (includ
 **thinking**/reasoning text, parsed out of the raw response); a libs-only app (no SDK) gets the
 same via the opt-in `otel.use_span_emitter()` bus→span emitter. **Where content lands:** exactly one
 place — your OTLP destination (your own store or backend). Cendor never operates a telemetry
-endpoint. If you run [Cendor Monitor](https://cendor.ai/docs/observability), content lives on your
+endpoint. If you run [Cendor Monitor](monitor.md), content lives on your
 volume; its gateway-forward **strips content attributes** unless you explicitly opt in.
 
 **What content never touches:** the acttrace evidence chain and its `OTelMirror`. `audit.*` spans
@@ -165,6 +172,26 @@ schedule.
 Every backend below works because Cendor emits into the **global** OpenTelemetry provider. You do the
 one-time provider setup; the three Cendor attachments (`live_spans`, `OTelSink`, `OTelMirror`) are
 identical across all of them.
+
+### Cendor Monitor (self-hosted console)
+
+The first-party way to *see* the wire: [**Cendor Monitor**](monitor.md) is an optional, self-hosted
+container that renders the same standard OTLP as an Agents → Sessions → **run-journey** view — the
+whole conversation with tokens, cost, latency, and TTFT per step, and the exact step where a **budget
+block, guardrail verdict, or compression** fired, shown inline. One image (SQLite by default, external
+Postgres when you want it), pure Apache-2.0. It runs on **your** infrastructure; Cendor never operates
+a telemetry endpoint. The console is an **operational copy** — `verify()` still runs on the audit
+**file**, never on what the console shows.
+
+```bash
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.0
+# then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
+```
+
+Attach the same `live_spans()` / `OTelSink()` / `OTelMirror()` you use for any backend below.
+Content (prompts/responses) appears **only if you opt in** — off by default, and the console never
+enables it. Full page: [**Cendor Monitor**](monitor.md). Prefer a hosted backend for production? Pick
+one below — same wire, zero code change.
 
 ### Azure Monitor / Application Insights
 
@@ -301,30 +328,16 @@ Grafana (Tempo/Loki/Mimir), New Relic, Honeycomb, Dynatrace, SigNoz, Jaeger, Zip
 OTLP. Set `OTEL_EXPORTER_OTLP_ENDPOINT` (or the vendor's exporter/collector) and attach the same three
 emitters. There is nothing Cendor-specific to configure per vendor.
 
-### Run a local backend (dev)
+### Other local backends (dev)
 
-Don't want to wire a hosted backend just to watch a run while you code? Run one **locally** and point
-your app at `http://localhost:4318`. Your documented default in production stays your own backend —
-such as **Azure Monitor** — but for the dev loop:
-
-- **Cendor Monitor** — the *optional*, self-hosted Cendor container (the counterpart to your own
-  backend such as Azure Monitor). One `docker run` gives you Cendor-branded **Runs**, **Cost**, and
-  **Governance** boards over the same standard OTLP wire, plus a **governance feed** — a filterable
-  table showing *which* budget (by name) blocked *what* (projected-vs-cap), *which* guardrail fired
-  at which stage with severity, actor/reviewer, and a trace-pivot link. It runs on *your* infra;
-  Cendor never operates a telemetry endpoint. The boards and feed are an operational copy — the
-  hash-chained audit file stays your only verifiable evidence (`verify()` runs on the file).
-  Strictly optional dev tooling, like `cendor-mcp`.
-
-  ```bash
-  docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:latest
-  # then: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
-  ```
+Cendor's own local option is [**Cendor Monitor**](#cendor-monitor-self-hosted-console) above — the
+journey console that renders governance inline. If you'd rather run a generic stack locally instead,
+the same standard wire lands there too:
 
 - **Generic all-in-one** — `docker run -p 3000:3000 -p 4318:4318 grafana/otel-lgtm` (Collector +
   Tempo/Loki/Prometheus + Grafana) or **Arize Phoenix** for an LLM-native trace UI. Same env var; the
   agent span tree + spend counters appear immediately. (These show traces + cost, not Cendor's
-  governance boards.)
+  inline-governance journey view.)
 
 Either way the app side is unchanged — swapping the local container for your production backend is a
 zero-code change.

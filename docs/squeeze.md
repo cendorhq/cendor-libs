@@ -208,6 +208,10 @@ protocol by shape, so `contextkit` never imports it. Call it directly to shrink 
 known-huge blob (e.g. a 50k-token tool response) before it enters the window. It operates purely
 on strings/objects — identical across any SDK, never touching the client.
 
+**See it live.** squeeze emits a `CompressionEvent` on the bus (technique, before/after tokens, ratio
+— **metadata only, never text**); it renders on the squeeze proof page in [Cendor Monitor](monitor.md),
+Cendor's optional self-hosted console, so you can see the tokens compression saved.
+
 ## Honest limits
 
 - **Structural compressors are deterministic and need no LLM.** Prose is extractive

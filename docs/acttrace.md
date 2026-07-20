@@ -767,6 +767,10 @@ decisions and oversight. For a managed runtime you don't control, point it at th
 To stream the audit trail *outward* to an APM/SIEM (Azure Monitor, Datadog, CloudWatch), attach a
 [`mirror`](#mirror-to-an-observability-backend) — see [Observability](observability.md).
 
+**See it live.** The same mirrored `audit.*` governance renders in [Cendor Monitor](monitor.md),
+Cendor's optional self-hosted console — inline with the run it governed. Like any mirror, the console
+is an operational copy: `verify()` still runs on the hash-chained **file**, never on what it shows.
+
 ## Honest limits
 
 - **Evidence, not a guarantee.** `acttrace` supports compliance record-keeping; it does not
