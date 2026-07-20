@@ -52,9 +52,10 @@ rows.
 ### Agents → Sessions → Runs
 
 Drill from an agent to its sessions to the runs inside them — the drill-down is built from the auto
-`gen_ai.conversation.id` your SDK stamps from `run(session=…)`.
+`gen_ai.conversation.id` your SDK stamps from `run(session=…)`. The global Runs list and a session's
+runs:
 
-![Cendor Monitor — Agents](/monitor/console-agents-dark.webp)
+![Cendor Monitor — the Runs list](/monitor/console-runs-dark.webp)
 
 ![Cendor Monitor — a session's runs](/monitor/console-session-dark.webp)
 
