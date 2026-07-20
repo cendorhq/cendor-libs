@@ -255,11 +255,12 @@ such as **Azure Monitor** — but for the dev loop:
 
 - **Cendor Monitor** — the *optional*, self-hosted Cendor container (the counterpart to your own
   backend such as Azure Monitor). One `docker run` gives you Cendor-branded **Runs**, **Cost**, and
-  **Governance** boards over the same standard OTLP wire — the governance board renders the
-  `audit.<type>` mirror stream inline with the run it governed. It runs on *your* infra; Cendor never
-  operates a telemetry endpoint. The board is an operational copy — the hash-chained audit file stays
-  your only verifiable evidence (`verify()` runs on the file). Strictly optional dev tooling, like
-  `cendor-mcp`.
+  **Governance** boards over the same standard OTLP wire, plus a **governance feed** — a filterable
+  table showing *which* budget (by name) blocked *what* (projected-vs-cap), *which* guardrail fired
+  at which stage with severity, actor/reviewer, and a trace-pivot link. It runs on *your* infra;
+  Cendor never operates a telemetry endpoint. The boards and feed are an operational copy — the
+  hash-chained audit file stays your only verifiable evidence (`verify()` runs on the file).
+  Strictly optional dev tooling, like `cendor-mcp`.
 
   ```bash
   docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:latest
