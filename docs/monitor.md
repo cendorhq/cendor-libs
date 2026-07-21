@@ -12,9 +12,6 @@ Two doors, and a window: the libraries and the SDK are how you *build*; Cendor M
 no library depends on it, and your own OTel backend stays the documented production default. It runs
 on **your** infrastructure; Cendor never operates a telemetry endpoint.
 
-> Source-available at launch. Until then the image is published to a private registry; the
-> `docker run` line below goes live when the repo flips public.
-
 ## Run it in 60 seconds
 
 One image — the OTel Collector, a small Cendor ingest service, a dual-backend store (SQLite by
@@ -57,9 +54,11 @@ and a **Go live** toggle sit up top; every tile clicks through to its rows.
 ### Agents → Sessions → Runs
 
 Drill from an agent to its sessions to the runs inside them — the drill-down is built from the auto
-`gen_ai.conversation.id` your SDK stamps from `run(session=…)`. The global Runs list, the per-session
-runs, and the proof/governance views are in the full visual tour on
-[cendor.ai/monitor](https://cendor.ai/monitor).
+`gen_ai.conversation.id` your SDK stamps from `run(session=…)`. A session's rollup header + stitched
+conversation thread across its runs:
+
+<img class="theme-dark" src="/monitor/console-session-dark.webp" alt="Cendor Monitor — a session's runs" loading="lazy" />
+<img class="theme-light" src="/monitor/console-session-light.webp" alt="Cendor Monitor — a session's runs (light theme)" loading="lazy" />
 
 ### The run journey — with governance inline
 
@@ -79,8 +78,13 @@ libraries* — each with a trend chart, a value tile, and the raw event table. t
 spend attributed **by feature and by user** plus a blocked-projected-spend tile and the budget-events
 table (which budget blocked what — projected vs cap); squeeze's shows compression events with
 before/after tokens. The Governance page is a typed, filterable stream of every decision, budget
-event, and guardrail action. (See these — the proof pages and the governance stream — in the full
-visual tour on [cendor.ai/monitor](https://cendor.ai/monitor).)
+event, and guardrail action.
+
+<img class="theme-dark" src="/monitor/console-library-tokenguard-dark.webp" alt="Cendor Monitor — tokenguard proof page (spend by feature / user)" loading="lazy" />
+<img class="theme-light" src="/monitor/console-library-tokenguard-light.webp" alt="Cendor Monitor — tokenguard proof page (light theme)" loading="lazy" />
+
+<img class="theme-dark" src="/monitor/console-governance-dark.webp" alt="Cendor Monitor — governance stream" loading="lazy" />
+<img class="theme-light" src="/monitor/console-governance-light.webp" alt="Cendor Monitor — governance stream (light theme)" loading="lazy" />
 
 ### Filter, search, and go live
 
@@ -133,7 +137,11 @@ schedule. See [content capture](observability.md#content-capture--opt-in-off-by-
 
 The container is configured entirely through environment variables — no config files to mount. The
 monitor reads a safe subset at boot (default theme, retention, storage backend *type*, whether forward
-/ auth are on) — **never** the Postgres DSN, the auth password, or the forward URL.
+/ auth are on) — **never** the Postgres DSN, the auth password, or the forward URL. The Settings page
+shows the effective config and builds the exact `docker run` / compose command to change it:
+
+<img class="theme-dark" src="/monitor/console-settings-dark.webp" alt="Cendor Monitor — Settings (config reference + command builder)" loading="lazy" />
+<img class="theme-light" src="/monitor/console-settings-light.webp" alt="Cendor Monitor — Settings (light theme)" loading="lazy" />
 
 | Variable | Default | What it does |
 |---|---|---|
