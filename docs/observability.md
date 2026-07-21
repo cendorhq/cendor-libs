@@ -17,9 +17,9 @@ once, and attach the emitters you want. Without that, everything below is a sile
 > The tamper-evident audit **file** stays your system of record; the mirror is an operational copy.
 
 > **Want to *see* all this in one screen while you build?** [**Cendor Monitor**](monitor.md) — an
-> optional, self-hosted **journey console** — renders the same standard OTLP wire as an Agents →
+> optional, self-hosted **journey view** — renders the same standard OTLP wire as an Agents →
 > Sessions → run-journey view (every prompt, token, dollar, and the exact step where a budget or
-> guardrail acted, inline), in one `docker run`. See [Cendor Monitor](#cendor-monitor-self-hosted-console)
+> guardrail acted, inline), in one `docker run`. See [Cendor Monitor](#cendor-monitor-self-hosted)
 > below. (Your production default stays your own backend, such as **Azure Monitor** — same wire, zero
 > code change.)
 
@@ -94,7 +94,7 @@ try {
 <!-- /tabs -->
 
 > **Fastest way to see it.** Don't want to wire a hosted backend just to watch a run? One
-> `docker run` gives you [**Cendor Monitor**](monitor.md) — a free, self-hosted journey console — on
+> `docker run` gives you [**Cendor Monitor**](monitor.md) — a free, self-hosted journey view — on
 > `http://localhost:3000`; point the same `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://localhost:4318`
 > and your runs appear as you build. Optional dev tooling; your production default stays your own
 > backend. → [**Cendor Monitor**](monitor.md)
@@ -173,15 +173,15 @@ Every backend below works because Cendor emits into the **global** OpenTelemetry
 one-time provider setup; the three Cendor attachments (`live_spans`, `OTelSink`, `OTelMirror`) are
 identical across all of them.
 
-### Cendor Monitor (self-hosted console)
+### Cendor Monitor (self-hosted)
 
 The first-party way to *see* the wire: [**Cendor Monitor**](monitor.md) is an optional, self-hosted
 container that renders the same standard OTLP as an Agents → Sessions → **run-journey** view — the
 whole conversation with tokens, cost, latency, and TTFT per step, and the exact step where a **budget
 block, guardrail verdict, or compression** fired, shown inline. One image (SQLite by default, external
 Postgres when you want it), Apache-2.0 (code) with OFL-1.1 fonts. It runs on **your** infrastructure;
-Cendor never operates a telemetry endpoint. The console is an **operational copy** — `verify()` still runs on the audit
-**file**, never on what the console shows.
+Cendor never operates a telemetry endpoint. The monitor is an **operational copy** — `verify()` still runs on the audit
+**file**, never on what the monitor shows.
 
 ```bash
 docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
@@ -189,7 +189,7 @@ docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-m
 ```
 
 Attach the same `live_spans()` / `OTelSink()` / `OTelMirror()` you use for any backend below.
-Content (prompts/responses) appears **only if you opt in** — off by default, and the console never
+Content (prompts/responses) appears **only if you opt in** — off by default, and the monitor never
 enables it. Full page: [**Cendor Monitor**](monitor.md). Prefer a hosted backend for production? Pick
 one below — same wire, zero code change.
 
@@ -330,8 +330,8 @@ emitters. There is nothing Cendor-specific to configure per vendor.
 
 ### Other local backends (dev)
 
-Cendor's own local option is [**Cendor Monitor**](#cendor-monitor-self-hosted-console) above — the
-journey console that renders governance inline. If you'd rather run a generic stack locally instead,
+Cendor's own local option is [**Cendor Monitor**](#cendor-monitor-self-hosted) above — the
+journey view that renders governance inline. If you'd rather run a generic stack locally instead,
 the same standard wire lands there too:
 
 - **Generic all-in-one** — `docker run -p 3000:3000 -p 4318:4318 grafana/otel-lgtm` (Collector +

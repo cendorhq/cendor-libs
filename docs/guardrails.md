@@ -954,7 +954,7 @@ another framework — in Python and TypeScript alike. Decisions flow to `acttrac
 nothing is imported in either direction.
 
 **See it live.** Each `GuardrailDecision` also renders in [Cendor Monitor](monitor.md), Cendor's
-optional self-hosted console — the verdict shown inline at the exact step it fired in the run
+optional self-hosted monitor — the verdict shown inline at the exact step it fired in the run
 journey. It's an operational copy; the tamper-evident audit file stays the evidence.
 
 ## Threat model

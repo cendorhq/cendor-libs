@@ -210,7 +210,7 @@ on strings/objects — identical across any SDK, never touching the client.
 
 **See it live.** squeeze emits a `CompressionEvent` on the bus (technique, before/after tokens, ratio
 — **metadata only, never text**); it renders on the squeeze proof page in [Cendor Monitor](monitor.md),
-Cendor's optional self-hosted console, so you can see the tokens compression saved.
+Cendor's optional self-hosted monitor, so you can see the tokens compression saved.
 
 ## Honest limits
 

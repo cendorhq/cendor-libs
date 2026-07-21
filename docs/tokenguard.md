@@ -357,7 +357,7 @@ managed-runtime setup, enforce a coarser budget at your entrypoint and ingest ac
 the runtime's `gen_ai.*` spans via [`core.otel.ingest`](providers.md#managed-runtimes-opentelemetry-ingestion).
 
 **See it live.** The same `BudgetEvent` / `OTelSink` data renders on the tokenguard proof page in
-[Cendor Monitor](monitor.md), Cendor's optional self-hosted console — *which* budget acted and the
+[Cendor Monitor](monitor.md), Cendor's optional self-hosted monitor — *which* budget acted and the
 spend it attributed, on your own screen. Your own OTel backend stays the production default.
 
 ## Honest limits

@@ -3,7 +3,7 @@
 Cendor emits **standard OpenTelemetry** — one wire, no Cendor-specific exporter, never a Cendor
 endpoint. Where it goes is your choice: **your own backend** (Azure Monitor, CloudWatch, Datadog,
 Langfuse, any OTLP) for production fleets — or **Cendor Monitor**, a free, open-source, self-hosted
-**journey console**, when you want to *see what your agents did and what each run cost* in one screen:
+**journey view**, when you want to *see what your agents did and what each run cost* in one screen:
 every prompt, token, dollar, and the exact step where a budget or guardrail acted. Same wire either
 way; switch or run both without touching code.
 
@@ -18,16 +18,16 @@ on **your** infrastructure; Cendor never operates a telemetry endpoint.
 ## Run it in 60 seconds
 
 One image — the OTel Collector, a small Cendor ingest service, a dual-backend store (SQLite by
-default), and the console. Run it, point your app's OpenTelemetry at it, and open the console:
+default), and the monitor. Run it, point your app's OpenTelemetry at it, and open the monitor:
 
 ```bash
-# 1. run the console (one image; SQLite by default — nothing else to install)
+# 1. run the monitor (one image; SQLite by default — nothing else to install)
 docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 
-# 3. open the console
+# 3. open the monitor
 #    http://localhost:3000
 ```
 
@@ -36,10 +36,10 @@ the emitters you already use for any backend (`live_spans()` / `OTelSink()` / `O
 [Observability](observability.md)) and your runs appear as you build. Sessions group runs
 automatically when you pass `run(session=…)`, so there is no trace id to paste anywhere.
 
-## The console tour
+## The monitor tour
 
-The console is a self-contained view over the same standard wire — no query language, no dashboard to
-assemble. Screenshots are of the real console rendering a seeded demo (synthetic data, content
+The monitor is a self-contained view over the same standard wire — no query language, no dashboard to
+assemble. Screenshots are of the real monitor rendering a seeded demo (synthetic data, content
 capture opted in for the demo).
 
 ### Overview
@@ -51,17 +51,15 @@ calls ($0)* (a count, not an invented dollar-saving), and *guardrail blocks* —
 top models, top agents, top users by spend, and spend by feature. A time-range row (1h/24h/7d/30d/all)
 and a **Go live** toggle sit up top; every tile clicks through to its rows.
 
-![Cendor Monitor — Overview](/monitor/console-overview-dark.webp)
+<img class="theme-dark" src="/monitor/console-overview-dark.webp" alt="Cendor Monitor — Overview" loading="lazy" />
+<img class="theme-light" src="/monitor/console-overview-light.webp" alt="Cendor Monitor — Overview (light theme)" loading="lazy" />
 
 ### Agents → Sessions → Runs
 
 Drill from an agent to its sessions to the runs inside them — the drill-down is built from the auto
-`gen_ai.conversation.id` your SDK stamps from `run(session=…)`. The global Runs list and a session's
-runs:
-
-![Cendor Monitor — the Runs list](/monitor/console-runs-dark.webp)
-
-![Cendor Monitor — a session's runs](/monitor/console-session-dark.webp)
+`gen_ai.conversation.id` your SDK stamps from `run(session=…)`. The global Runs list, the per-session
+runs, and the proof/governance views are in the full visual tour on
+[cendor.ai/monitor](https://cendor.ai/monitor).
 
 ### The run journey — with governance inline
 
@@ -71,22 +69,18 @@ exact step where a **budget block, guardrail verdict, or compression** fired, sh
 conversation (not in a separate log). Prompt/response content appears only if you opted in (below);
 without it, the journey shows the same structure metadata-only.
 
-![Cendor Monitor — run journey with governance inline](/monitor/console-journey-dark.webp)
+<img class="theme-dark" src="/monitor/console-journey-dark.webp" alt="Cendor Monitor — run journey with governance inline" loading="lazy" />
+<img class="theme-light" src="/monitor/console-journey-light.webp" alt="Cendor Monitor — run journey with governance inline (light theme)" loading="lazy" />
 
 ### Proof pages + the governance stream
 
-A per-library proof page for each of the seven libraries turns the console into *proof of the
+A per-library proof page for each of the seven libraries turns the monitor into *proof of the
 libraries* — each with a trend chart, a value tile, and the raw event table. tokenguard's page shows
 spend attributed **by feature and by user** plus a blocked-projected-spend tile and the budget-events
 table (which budget blocked what — projected vs cap); squeeze's shows compression events with
 before/after tokens. The Governance page is a typed, filterable stream of every decision, budget
-event, and guardrail action.
-
-![Cendor Monitor — tokenguard proof page (spend by feature / user)](/monitor/console-library-tokenguard-dark.webp)
-
-![Cendor Monitor — squeeze proof page](/monitor/console-library-squeeze-dark.webp)
-
-![Cendor Monitor — governance stream](/monitor/console-governance-dark.webp)
+event, and guardrail action. (See these — the proof pages and the governance stream — in the full
+visual tour on [cendor.ai/monitor](https://cendor.ai/monitor).)
 
 ### Filter, search, and go live
 
@@ -96,17 +90,13 @@ the URL. The free-text box has a **scope toggle**: *meta* filters the metadata, 
 indexed full-text search — but only over what you opted to store (nothing when content capture is
 off). A **live** toggle (off by default) polls every few seconds and pauses on a hidden tab.
 
-The console is theme-aware — here are Overview and the run journey in light theme:
-
-![Cendor Monitor — Overview (light)](/monitor/console-overview-light.webp)
-
-![Cendor Monitor — run journey (light)](/monitor/console-journey-light.webp)
+(The screenshots above follow your theme — dark or light. Cendor Monitor ships both.)
 
 ## Turn on content capture (opt-in)
 
-By default the console shows **structure** — models, tokens, cost, latency, governance verdicts — but
+By default the monitor shows **structure** — models, tokens, cost, latency, governance verdicts — but
 **not** message content. Prompts, responses, thinking, and tool values are captured **only if you turn
-them on**, in your app, with one call (or the standard env var). The console never enables it for you.
+them on**, in your app, with one call (or the standard env var). The monitor never enables it for you.
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -142,7 +132,7 @@ schedule. See [content capture](observability.md#content-capture--opt-in-off-by-
 ## Configuration
 
 The container is configured entirely through environment variables — no config files to mount. The
-console reads a safe subset at boot (default theme, retention, storage backend *type*, whether forward
+monitor reads a safe subset at boot (default theme, retention, storage backend *type*, whether forward
 / auth are on) — **never** the Postgres DSN, the auth password, or the forward URL.
 
 | Variable | Default | What it does |
@@ -152,11 +142,11 @@ console reads a safe subset at boot (default theme, retention, storage backend *
 | `CENDOR_MONITOR_RETENTION` | `7d` | Store retention. An ingest-side sweeper deletes runs/steps/governance/metrics older than this (both backends). |
 | `CENDOR_MONITOR_FORWARD_ENDPOINT` | *(unset)* | **Gateway mode.** When set, the collector *additionally* forwards all OTLP onward — the same image doubles as a prod gateway in front of your own backend. |
 | `CENDOR_MONITOR_FORWARD_CONTENT` | `false` | When forwarding, whether to include content attributes. **Default strips them** — content stays in your store only. |
-| `CENDOR_MONITOR_THEME` | `dark` | Default console theme (`dark`\|`light`); a `?theme=` query or the viewer's saved toggle always overrides. |
+| `CENDOR_MONITOR_THEME` | `dark` | Default theme (`dark`\|`light`); a `?theme=` query or the viewer's saved toggle always overrides. |
 | `CENDOR_MONITOR_BASIC_AUTH` | *(unset)* | Optional `user:password` — HTTP basic auth over the whole UI + API. **No auth by default** (localhost dev tool — do not expose publicly). |
 
-**Ports:** `3000` = the console + `/api/cendor/` (same origin via nginx); `4317` = OTLP/gRPC ingest;
-`4318` = OTLP/HTTP ingest. The console always listens on `3000` inside the container — remap the host
+**Ports:** `3000` = the monitor + `/api/cendor/` (same origin via nginx); `4317` = OTLP/gRPC ingest;
+`4318` = OTLP/HTTP ingest. The monitor always listens on `3000` inside the container — remap the host
 port with `-p 8080:3000`. The read API is **GET-only**; delete-by-run/session runs ingest-side (plus
 the retention sweeper).
 
@@ -169,7 +159,7 @@ graph LR
     COL["OTel Collector<br/>:4317 / :4318"]
     ING["Cendor ingest<br/>(Node, Apache-2.0)"]
     STORE["store<br/>SQLite (default) | your Postgres"]
-    CON["Cendor console<br/>:3000 · GET-only /api/cendor/"]
+    CON["Cendor Monitor<br/>:3000 · GET-only /api/cendor/"]
     FWD["gateway forward<br/>(content stripped by default)"]
     BACKEND["your own backend<br/>(optional)"]
     FILE["audit.jsonl<br/>on your app host = evidence"]
@@ -184,7 +174,7 @@ graph LR
 ```
 
 Everything runs where you run the container. The tamper-evident audit **file** is a separate,
-offline-verifiable path — it does not flow through the console (see Honest limits).
+offline-verifiable path — it does not flow through the monitor (see Honest limits).
 
 ## Plugs into the stack
 
@@ -206,15 +196,15 @@ core's call spans. See each library's page for what it emits — e.g.
 - **Never a hosted service.** Cendor never operates a telemetry endpoint. The container runs on your
   infrastructure; data lives on your volume or in your Postgres, and you delete it on your own
   retention schedule.
-- **The console is an operational copy — not the evidence.** `verify()` runs on the hash-chained
-  audit **file** on your app host, never on what the console shows. The console has no "verified ✓"
+- **The monitor is an operational copy — not the evidence.** `verify()` runs on the hash-chained
+  audit **file** on your app host, never on what the monitor shows. The monitor has no "verified ✓"
   claim and makes no compliance guarantee; treat it as monitoring, treat the file (or a signed
   `export()` pack) as the record. See [acttrace Honest limits](acttrace.md#honest-limits).
-- **Content is opt-in and off by default.** The console never enables content capture; without it,
+- **Content is opt-in and off by default.** The monitor never enables content capture; without it,
   runs render metadata-only. When on, content lands only where your OTLP goes.
 - **Dev-tool scale.** SQLite by default suits a single builder's dev loop; point
   `CENDOR_MONITOR_DB` at your own Postgres for a shared team deploy. No auth by default — set
   `CENDOR_MONITOR_BASIC_AUTH` and don't expose it publicly.
 - **Licensing.** The image is **Apache-2.0 (code) with OFL-1.1 fonts** (Manrope + JetBrains Mono):
-  Cendor's console, ingest service, and configs are Apache-2.0; it bundles the Apache-2.0
+  Cendor's monitor, ingest service, and configs are Apache-2.0; it bundles the Apache-2.0
   OpenTelemetry Collector and runs on Node.js (MIT) + nginx (BSD-2-Clause). No AGPL/GPL.

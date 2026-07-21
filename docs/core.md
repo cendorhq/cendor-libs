@@ -414,7 +414,7 @@ one another. That's what keeps `core` the whole stack's small, stable blast radi
 
 **See it live.** core's `otel` span emitter — and the libs-only `use_span_emitter()` bus→span bridge
 — is exactly the standard wire [Cendor Monitor](monitor.md) reads. Cendor's optional self-hosted
-console renders it directly; the same wire also flows to your own OTel backend (the production
+monitor renders it directly; the same wire also flows to your own OTel backend (the production
 default).
 
 ## Honest limits

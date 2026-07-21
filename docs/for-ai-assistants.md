@@ -348,7 +348,7 @@ per-agent cap is `Agent(max_usd=…)`, not a `budget=` field. Full walkthrough:
 ### Watch runs locally (Cendor Monitor)
 
 The connection is **one standard OTLP env var** — there is no Cendor API, key, or endpoint to call.
-Run the optional self-hosted console, point your app's OpenTelemetry at it (`export
+Run the optional self-hosted monitor, point your app's OpenTelemetry at it (`export
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`), and attach the same emitters you use for any
 backend. Your production default stays your own OTel backend (Azure Monitor / CloudWatch / Datadog /
 any OTLP); this is optional dev tooling. See [Cendor Monitor](monitor.md).
@@ -357,7 +357,7 @@ any OTLP); this is optional dev tooling. See [Cendor Monitor](monitor.md).
 <!-- tab: Python -->
 
 ```python
-# 1) run the console:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
+# 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
 # 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 from cendor.sdk import run
 from cendor.sdk.otel import live_spans
@@ -369,7 +369,7 @@ with live_spans():                 # your runs stream to Cendor Monitor at http:
 <!-- tab: TypeScript -->
 
 ```ts
-// 1) run the console:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
+// 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
 // 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 import { run, liveSpans } from '@cendor/sdk';
 
@@ -384,8 +384,8 @@ try {
 <!-- /tabs -->
 
 Prompt/response **content is captured only if you opt in** (`otel.capture_content()` — off by
-default; the console never enables it). The console is an **operational copy** — `verify()` still runs
-on the tamper-evident audit **file**, never on what the console shows.
+default; the monitor never enables it). The monitor is an **operational copy** — `verify()` still runs
+on the tamper-evident audit **file**, never on what the monitor shows.
 
 ## Wire up your assistant — three ways
 

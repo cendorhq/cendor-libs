@@ -274,7 +274,7 @@ client's calls (and `instrument_tool`-wrapped tools) are recorded once and repla
 server-side loops you don't control, `promote()` a recorded OTel/`acttrace` trace into a cassette.
 
 **See it live.** A replayed step carries `cendor.replayed` on the wire, so [Cendor Monitor](monitor.md),
-Cendor's optional self-hosted console, marks which calls ran offline for $0 from the cassette.
+Cendor's optional self-hosted monitor, marks which calls ran offline for $0 from the cassette.
 
 ## Honest limits
 
