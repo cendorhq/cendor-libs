@@ -249,6 +249,24 @@ def test_span_emitter_defers_to_live_spans():
     assert exp.get_finished_spans() == ()  # SDK live_spans owns spans; emitter stood down
 
 
+def test_span_emitter_stamps_usage_estimated_only_when_set():  # G-V4-3
+    exp, tracer = _exporter()
+    dispose = otel.use_span_emitter(tracer)
+    try:
+        est = LLMCall(id="1", provider="openai", model="gpt-4o", messages=[])
+        est.metadata["streamed"] = True
+        est.metadata["usage_estimated"] = True  # stream reported no usage → offline estimate
+        bus.emit(est)
+        real = LLMCall(id="2", provider="openai", model="gpt-4o", messages=[])
+        real.metadata["streamed"] = True  # real usage recovered → no est. flag
+        bus.emit(real)
+    finally:
+        dispose()
+    a, b = exp.get_finished_spans()
+    assert a.attributes["cendor.usage_estimated"] == "true"  # string, only when set
+    assert "cendor.usage_estimated" not in b.attributes
+
+
 def test_ttft_stamped_on_stream():
     chunks = [
         SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="hi"))], usage=None),

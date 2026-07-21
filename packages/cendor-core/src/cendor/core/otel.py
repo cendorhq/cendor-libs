@@ -453,6 +453,10 @@ def _emit_llm_span(tr: Any, call: Any) -> None:
             span.set_attribute("cendor.ttft_ms", ttft)
         if (call.metadata or {}).get("streamed"):
             span.set_attribute("cendor.streamed", True)
+        if (call.metadata or {}).get("usage_estimated"):
+            # Truth = the product: mark streamed token counts recovered by offline estimate (not the
+            # provider's billed figure) so a monitor can render them as "est." rather than exact.
+            span.set_attribute("cendor.usage_estimated", "true")
         if (call.metadata or {}).get("replayed"):
             span.set_attribute("cendor.replayed", True)
         if call.trace_id:

@@ -103,7 +103,7 @@ try {
 
 | Direction | API | Signal | What lands in your backend |
 |---|---|---|---|
-| Agent trajectory | `cendor.sdk.otel.span_tree(result)` / `live_spans()` (TS `spanTree`/`liveSpans`) | Traces | A root `agent.run` span → per-agent → per model call (`chat {model}`) / tool (`execute_tool {name}`), with `gen_ai.usage.*`/`gen_ai.usage.cost` |
+| Agent trajectory | `cendor.sdk.otel.span_tree(result)` / `live_spans()` (TS `spanTree`/`liveSpans`) | Traces | A root `agent.run` span (with `cendor.run.agents` + usage/cost rollups) → per-agent → per model call (`chat {model}`, carrying `gen_ai.usage.*`/`gen_ai.usage.cost`, `cendor.ttft_ms` on streamed calls, and `cendor.usage_estimated="true"` when the streamed count was estimated offline) / tool (`execute_tool {name}`) |
 | Per-call span | `core.otel.span(model, provider=…)` | Traces | A single `chat {model}` span you wrap a call in |
 | Spend | `tokenguard.use_sink(sinks.OTelSink())` | Metrics | Counters `gen_ai.client.token.usage` / `.cost.usd` / `.reasoning.token.usage`, dimensioned by `model` + your `track(...)` tags |
 | **Governance & audit** | `AuditLog(mirror=OTelMirror())` | Traces | An `audit.<type>` span per chained entry — decisions, guardrail actions, **budget breaches**, policy flags, human oversight |

@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.8.0] — 2026-07-21
+Estimated-usage provenance on emitted spans — the emission-truth half of Monitor v5 (G-V4-3). Additive; nothing changes unless a streamed call's token count was recovered by offline estimate.
+
+### Added
+- **`cendor.usage_estimated="true"`** on an emitted `chat` span (the libs-only `otel.use_span_emitter()`) when the streamed call reported no usage and the count was recovered by `_estimate_stream_usage` (`metadata["usage_estimated"]`). Truth = the product: a monitor can now render those tokens as *est.* rather than the provider's billed figure. Stamped only when set (a real, provider-reported count leaves the span unflagged).
+
 ## [1.7.0] — 2026-07-20
 Opt-in content capture, a libs-only span emitter, and TTFT — the emission half of the Cendor journey console (Monitor v3).
 
