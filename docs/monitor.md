@@ -22,7 +22,7 @@ default), and the console. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the console (one image; SQLite by default — nothing else to install)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.1
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -44,8 +44,12 @@ capture opted in for the demo).
 
 ### Overview
 
-Land on the Overview: activity, cost, and governance at a glance, each tile clicking through to its
-rows.
+Land on the Overview: the **Cendor value strip** — *blocked projected spend* (the projection a budget
+refused pre-flight — never spent), *tokens saved by compression* (Σ before − after, +%), *replayed
+calls ($0)* (a count, not an invented dollar-saving), and *guardrail blocks* — above the fleet tiles
+(runs, spend, blocks, errors, p50/p95, TTFT), **dependency-free trend charts**, and cost attribution:
+top models, top agents, top users by spend, and spend by feature. A time-range row (1h/24h/7d/30d/all)
+and a **Go live** toggle sit up top; every tile clicks through to its rows.
 
 ![Cendor Monitor — Overview](/monitor/console-overview-dark.webp)
 
@@ -72,12 +76,25 @@ without it, the journey shows the same structure metadata-only.
 ### Proof pages + the governance stream
 
 A per-library proof page for each of the seven libraries turns the console into *proof of the
-libraries* — e.g. squeeze's compression events with the before/after tokens. The Governance page is a
-typed, filterable stream of every decision, budget event, and guardrail action.
+libraries* — each with a trend chart, a value tile, and the raw event table. tokenguard's page shows
+spend attributed **by feature and by user** plus a blocked-projected-spend tile and the budget-events
+table (which budget blocked what — projected vs cap); squeeze's shows compression events with
+before/after tokens. The Governance page is a typed, filterable stream of every decision, budget
+event, and guardrail action.
+
+![Cendor Monitor — tokenguard proof page (spend by feature / user)](/monitor/console-library-tokenguard-dark.webp)
 
 ![Cendor Monitor — squeeze proof page](/monitor/console-library-squeeze-dark.webp)
 
 ![Cendor Monitor — governance stream](/monitor/console-governance-dark.webp)
+
+### Filter, search, and go live
+
+The Runs, Sessions, and Governance lists share a **filter bar** — facet dropdowns (agent / model /
+service / label or type), a free-text box, a time-range preset, sort, and paging, all deep-linked in
+the URL. The free-text box has a **scope toggle**: *meta* filters the metadata, *content* runs a real
+indexed full-text search — but only over what you opted to store (nothing when content capture is
+off). A **live** toggle (off by default) polls every few seconds and pauses on a hidden tab.
 
 The console is theme-aware — here are Overview and the run journey in light theme:
 

@@ -357,7 +357,7 @@ any OTLP); this is optional dev tooling. See [Cendor Monitor](monitor.md).
 <!-- tab: Python -->
 
 ```python
-# 1) run the console:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.1
+# 1) run the console:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
 # 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 from cendor.sdk import run
 from cendor.sdk.otel import live_spans
@@ -369,7 +369,7 @@ with live_spans():                 # your runs stream to Cendor Monitor at http:
 <!-- tab: TypeScript -->
 
 ```ts
-// 1) run the console:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.3.1
+// 1) run the console:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
 // 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 import { run, liveSpans } from '@cendor/sdk';
 
