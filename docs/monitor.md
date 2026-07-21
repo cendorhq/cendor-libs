@@ -148,6 +148,7 @@ shows the effective config and builds the exact `docker run` / compose command t
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | *Set in your **app**, not the container* — `http://localhost:4318`. The whole integration. |
 | `CENDOR_MONITOR_DB` | *(unset → embedded SQLite)* | External **Postgres** DSN (`postgres://…`, ≥ 14) for team/private-network deploys. Unset ⇒ embedded SQLite (WAL) on `/data`. One image; Postgres is never bundled. Read from env only, never logged. |
 | `CENDOR_MONITOR_RETENTION` | `7d` | Store retention. An ingest-side sweeper deletes runs/steps/governance/metrics older than this (both backends). |
+| `CENDOR_MONITOR_RETENTION_CONTENT` | *(unset)* | Optional **shorter** window for the opt-in content columns only (v0.5) — drops prompts/responses sooner than metadata, which lives its full term. |
 | `CENDOR_MONITOR_FORWARD_ENDPOINT` | *(unset)* | **Gateway mode.** When set, the collector *additionally* forwards all OTLP onward — the same image doubles as a prod gateway in front of your own backend. |
 | `CENDOR_MONITOR_FORWARD_CONTENT` | `false` | When forwarding, whether to include content attributes. **Default strips them** — content stays in your store only. |
 | `CENDOR_MONITOR_THEME` | `dark` | Default theme (`dark`\|`light`); a `?theme=` query or the viewer's saved toggle always overrides. |
@@ -195,6 +196,30 @@ governance, squeeze's compression events, cassette's replayed steps, contextkit'
 core's call spans. See each library's page for what it emits — e.g.
 [tokenguard](tokenguard.md#the-budget-events-counter) and
 [acttrace](acttrace.md#mirror-to-an-observability-backend).
+
+## Operate it
+
+Cendor Monitor is production-quality engineering in one self-hosted container — but it is dev/team
+tooling on **your** infrastructure, not a hosted service. The essentials (full runbook:
+[`docs/operations.md`](https://github.com/cendorhq/cendor-monitor/blob/main/docs/operations.md) in the
+image repo):
+
+- **Backup/restore** — SQLite: stop → `tar` the `/data` volume (WAL is checkpointed on a clean stop);
+  Postgres: `pg_dump` / `pg_restore` on the database you own.
+- **Upgrade** — `docker pull` the new tag and re-run **reusing the same volume**; the schema upgrades
+  in place (a `schema_version` row; additive migrations; zero data loss, tested on both backends).
+- **Exposing it beyond localhost** — do all three: set `CENDOR_MONITOR_BASIC_AUTH`, front it with TLS
+  (a reverse proxy — Caddy/nginx/Traefik), and add SSO via **forward-auth** (oauth2-proxy / Cloudflare
+  Access / Authelia — no monitor-side code). **The OTLP ports (`4317`/`4318`) have no auth, ever** —
+  keep them on a private network your apps share; never publish them to the internet.
+- **Retention** — `CENDOR_MONITOR_RETENTION` (metadata) + the optional shorter
+  `CENDOR_MONITOR_RETENTION_CONTENT` (content dropped sooner). The Settings page previews the next sweep.
+- **Scale envelope** — designed for dev/team scale and **measured to 100k runs / 500k steps**
+  (~125–162 MiB): the paginated runs list + content search stay interactive (single-digit-to-~20 ms);
+  whole-fleet all-time aggregates land ~0.5–1.5 s (windowed queries are far faster; a live store under
+  retention is much smaller). Full numbers in the repo's `review/perf-v05.md`.
+- **Supply chain** — each tagged build runs a Trivy scan (fails on fixable CRITICAL) and ships an SBOM
+  (syft, SPDX JSON); a weekly rebuild refreshes `:latest` against upstream CVE fixes.
 
 ## Honest limits
 
