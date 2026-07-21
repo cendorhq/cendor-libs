@@ -213,6 +213,27 @@ core's call spans. See each library's page for what it emits — e.g.
 - **Dev-tool scale.** SQLite by default suits a single builder's dev loop; point
   `CENDOR_MONITOR_DB` at your own Postgres for a shared team deploy. No auth by default — set
   `CENDOR_MONITOR_BASIC_AUTH` and don't expose it publicly.
-- **Licensing.** The image is **Apache-2.0 (code) with OFL-1.1 fonts** (Manrope + JetBrains Mono):
-  Cendor's monitor, ingest service, and configs are Apache-2.0; it bundles the Apache-2.0
-  OpenTelemetry Collector and runs on Node.js (MIT) + nginx (BSD-2-Clause). No AGPL/GPL.
+- **Licensing** — a permissive aggregate, **no AGPL/GPL**. See [Licensing](#licensing) below.
+
+## Licensing
+
+The image is a **permissive aggregate: Apache-2.0 (code) with OFL-1.1 fonts.** Every part is under a
+permissive license — **no AGPL/GPL anywhere**, so running the container triggers no copyleft or
+source-disclosure obligation (the kind a legal/security review usually screens for).
+
+| Component | License | Notes |
+|---|---|---|
+| Cendor's monitor UI, ingest service, and collector configs (the parts Cendor wrote) | **Apache-2.0** | Use / modify / redistribute / commercial; keep the `NOTICE`, state changes; includes a patent grant. |
+| OpenTelemetry Collector (bundled binary — the OTLP front door) | **Apache-2.0** | Same permissive terms; keep its notice. |
+| Node.js (runs the ingest service) | **MIT** | Permissive, minimal — keep the copyright line. |
+| nginx (the `:3000` front door) | **BSD-2-Clause** | Permissive, minimal — keep the copyright line. |
+| Manrope + JetBrains Mono (vendored fonts) | **SIL OFL-1.1** | Permissive for bundling. Two caveats: the fonts may **not be sold on their own**, and a **modified** font must be **renamed** (Reserved Font Name). This is why the aggregate isn't "pure Apache-2.0". |
+
+**Obligations are light** — keep the bundled notices, shipped in the image at `/licenses` (with the
+OFL font texts under `/licenses/fonts`). Nothing here forces you to disclose your own source.
+**Trademarks belong to their owners:** bundling OpenTelemetry / Node.js / nginx / JetBrains software
+under their OSS *copyright* licenses grants no *trademark* rights (names, logos), and implies no
+endorsement.
+
+> The **license** of the image (Apache-2.0 + OFL) is independent of where the source is hosted —
+> "Apache-2.0 (code)" describes the code's terms, not its public availability.
