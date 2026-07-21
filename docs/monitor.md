@@ -19,7 +19,7 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.4.0
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.5.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -37,7 +37,10 @@ automatically when you pass `run(session=…)`, so there is no trace id to paste
 
 The monitor is a self-contained view over the same standard wire — no query language, no dashboard to
 assemble. Screenshots are of the real monitor rendering a seeded demo (synthetic data, content
-capture opted in for the demo).
+capture opted in for the demo). _(The shots below are from v0.4.0; the `docker run` above pulls the
+current v0.5.0, whose additive operate-wave — the per-run audit-evidence pointer, tokenguard
+budget-utilization, period-over-period compare, run A/B, and the three-tier Settings — is described in
+the text and lands below these panels.)_
 
 ### Overview
 
