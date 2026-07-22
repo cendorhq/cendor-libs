@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from cendor.core import bus
+from cendor.core import bus, current_trace_id
 from cendor.core.types import LLMCall, ToolCall
 
 from .detectors import (
@@ -567,6 +567,19 @@ class AuditLog:
         enriched.setdefault("otel_span_id", format(ctx.span_id, "016x"))
         return enriched
 
+    def _with_run_id(self, payload: dict) -> dict:
+        """Stamp ``cendor-core``'s ambient run id (``current_trace_id()``, set by the SDK's
+        ``trace(run_id)`` scope — NOT OpenTelemetry) onto a payload, so a monitor can join a
+        governance entry to its run even when no OTel span was active (post-hoc ``span_tree``, or no
+        context manager installed). No-op outside a run scope (``current_trace_id()`` is ``""``), so
+        the default chain is byte-identical to before and matches the TypeScript implementation."""
+        run_id = current_trace_id()
+        if not run_id or "run_id" in payload:
+            return payload
+        enriched = dict(payload)
+        enriched["run_id"] = run_id
+        return enriched
+
     def _mirror_write(self, entry: AuditEntry) -> None:
         """Send a chained entry to the optional mirror. Best-effort: a mirror is an operational
         copy, so its failure is swallowed and never breaks the chain (the file is truth)."""
@@ -578,7 +591,9 @@ class AuditLog:
             pass
 
     def _append(self, etype: str, payload: dict) -> AuditEntry:
-        payload = self._with_otel_ids(payload)  # additive correlation ids (no-op without OTel span)
+        # Additive correlation ids (each a no-op outside its context): OTel active-span ids +
+        # core's ambient run id (the monitor's fallback join key when no OTel span was active).
+        payload = self._with_run_id(self._with_otel_ids(payload))
         with self._lock:  # hash-chain step is a read-modify-write on _head/entries/file — atomic
             seq = self._seq  # monotonic; not len(entries), which caps once the memory ring is full
             self._seq += 1

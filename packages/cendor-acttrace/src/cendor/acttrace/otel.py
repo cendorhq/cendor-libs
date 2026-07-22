@@ -40,6 +40,7 @@ _ATTR_KEYS = (
     "cost",
     "otel_trace_id",
     "otel_span_id",  # G12: the correlation span id (pivot target), was stamped but never exposed
+    "run_id",  # G-LINK-2: core's ambient run id — the monitor's fallback join (no active OTel span)
 )
 
 #: Free-text attributes (``description``/``note``) are truncated to this many characters on the

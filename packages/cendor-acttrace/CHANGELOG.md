@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.9.0] — 2026-07-22
+Governance→run correlation fallback (G-LINK-2). Backward-compatible; the file remains the sole verifiable evidence and the default (no-run-scope) chain is byte-identical.
+
+### Added
+- **`run_id` correlation on audit entries.** When an entry is appended inside a `cendor-core` `trace(run_id)` scope (as the SDK's `run()` establishes), that ambient run id is stamped on the entry payload as `run_id` and mirrored as `cendor.audit.run_id`. This lets an observability tool (e.g. Cendor Monitor) join a governance event to its run even when **no OpenTelemetry span was active** at append time — a post-hoc `span_tree`, or an app with no OTel context manager — complementing the existing `otel_trace_id` active-span correlation. Reads `cendor-core`'s own ambient (not OpenTelemetry). **No-op outside a run scope** (`current_trace_id()` is `""`), so the default local-first chain stays byte-identical and matches the TypeScript `@cendor/acttrace` implementation.
+
 ## [1.8.0] — 2026-07-20
 Compression enters the audit chain (G21) — squeeze's `CompressionEvent` becomes evidence + a span.
 

@@ -153,6 +153,54 @@ def test_correlation_ids_stamped_when_a_span_is_active(tmp_path):
     assert verify(str(path))[0] is True  # correlation ids are inside the hashed, verified payload
 
 
+# ------------------------------------------- G-LINK-2: ambient run-id correlation (no OTel needed)
+# run_id is core's own ambient (`trace(run_id)`), NOT OpenTelemetry — the monitor's fallback join
+# key when no OTel span was active at append time (post-hoc span_tree / no context manager). Stamped
+# on every entry inside a run scope, omitted outside it (so the default chain stays byte-identical).
+
+
+def test_run_id_stamped_inside_trace_scope(tmp_path):
+    from cendor.core import trace
+
+    path = tmp_path / "runid.jsonl"
+    log = AuditLog(system="s", path=str(path))
+    with trace("run-abc123"):
+        with log.decision(input="hi"):
+            pass
+    log.detach()
+
+    entry = next(e for e in log.entries if e.type == "decision")
+    assert entry.payload["run_id"] == "run-abc123"
+    assert verify(str(path))[0] is True  # run_id is inside the hashed, verified payload
+
+
+def test_run_id_omitted_outside_a_run_scope(tmp_path):
+    path = tmp_path / "norunid.jsonl"
+    log = AuditLog(system="s", path=str(path))
+    with log.decision(input="hi"):
+        pass
+    log.detach()
+
+    entry = next(e for e in log.entries if e.type == "decision")
+    assert "run_id" not in entry.payload  # chain byte-identical to before outside a run scope
+    assert verify(str(path))[0] is True
+
+
+def test_run_id_mirrored_as_span_attribute(tmp_path):
+    from cendor.core import trace
+
+    tracer, exporter = _memory_tracer()
+    path = tmp_path / "runidspan.jsonl"
+    log = AuditLog(system="s", path=str(path), mirror=OTelMirror(tracer=tracer))
+    with trace("run-abc123"):
+        with log.decision(input="hi"):
+            pass
+    log.detach()
+
+    dec = next(s for s in exporter.get_finished_spans() if s.name == "audit.decision")
+    assert dec.attributes["cendor.audit.run_id"] == "run-abc123"
+
+
 # ------------------------------------------------ V2 mirror completeness (G11/G12/G16 attributes)
 
 
