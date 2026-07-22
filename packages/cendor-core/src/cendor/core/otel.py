@@ -60,6 +60,8 @@ def ingest(attributes: dict, *, messages: list[dict] | None = None, emit: bool =
     attributes; prices it via ``prices``; emits on the bus unless ``emit=False``. Returns the call.
     """
     from . import bus, prices
+    from .ambient import apply_ambient
+    from .instrument import current_trace_id
     from .types import LLMCall, Usage
 
     model = attributes.get("gen_ai.request.model") or attributes.get("gen_ai.response.model") or ""
@@ -87,9 +89,12 @@ def ingest(attributes: dict, *, messages: list[dict] | None = None, emit: bool =
         model=str(model),
         messages=messages or [],
         usage=usage,
+        # GLR-8: stamp the ambient trace id at construction so an ingested call joins its run.
+        trace_id=current_trace_id(),
         ts=datetime.now(UTC),
     )
     call.metadata["source"] = "otel"
+    apply_ambient(call)
     if usage is not None:
         try:
             call.cost = prices.estimate(
@@ -461,6 +466,13 @@ def _emit_llm_span(tr: Any, call: Any) -> None:
             span.set_attribute("cendor.replayed", True)
         if call.trace_id:
             span.set_attribute("cendor.trace_id", call.trace_id)
+        # GLR-10 (D2=YES): surface an ambient-stamped agent (a libs-only app's own
+        # add_ambient_provider, or the LangChain handler's node/chain name — GLR-11a) on semconv
+        # semconv attribute, so a trace-based monitor shows it. Core invents nothing — only what was
+        # stamped.
+        agent = (call.metadata or {}).get("agent")
+        if isinstance(agent, str) and agent:
+            span.set_attribute("gen_ai.agent.name", agent)
         for k, v in content_attrs(
             input_messages=call.messages, output_messages=response_messages(call)
         ).items():

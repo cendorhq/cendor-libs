@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.4.0] — 2026-07-22
+Streamed spend drained out of scope now accrues, enforces, and attributes (Bug A fix).
+
+### Fixed
+- tokenguard captures the active budget frames (by reference) + attribution tags **at call initiation** via the `cendor-core` ambient seam, instead of re-reading them at bus-delivery time. A streamed call whose stream is drained **after** the `budget()` / `track()` scope exits now still accrues spend, enforces the budget, and attributes by tag — previously that spend was silently lost, which also let a cumulative cap under `on_exceed="block"` be overrun (every call in a loop of streamed calls was judged against `spent=0`).
+
+### Added
+- **`BudgetEvent.trace_id`** — the run/trace id of the call the action guarded, so a monitor can join a budget action back to its run (`acttrace` copies it into the audit entry's `run_id`).
+
+### Changed
+- Requires `cendor-core >= 1.9` (the ambient seam).
+
 ## [1.3.0] — 2026-07-20
 Budget identity + a native governance counter, so a monitor can show *which* budget acted and chart block rates. Backward-compatible.
 

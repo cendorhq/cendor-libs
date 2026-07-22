@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.9.0] — 2026-07-22
+The ambient metadata seam — the one core-owned pre-emit capture point for run context. Additive; nothing changes unless a provider is registered.
+
+### Added
+- **`add_ambient_provider(fn)` / `remove_ambient_provider(fn)`** — register a `(event) -> dict | None` provider that runs at every event's construction (the caller's synchronous frame, before interceptors), merging its metadata onto `event.metadata` with never-raise / never-overwrite / registration-order semantics and a zero-provider single-length-check fast path. This is how a library (or app) attaches agent / conversation id / budget frames / decision id / cassette session at the moment it is unconditionally correct, instead of re-reading contextvars at bus-delivery time (which breaks for streams finalized outside their scope, context-losing layers, subscriber order, concurrent runs, and Python generators that leak run scopes into the consumer).
+- **`otel.ingest()` stamps the ambient `trace_id`** at construction, so an ingested call joins its run.
+- **`otel.use_span_emitter()` maps `metadata["agent"]` → `gen_ai.agent.name`** — a libs-only app self-identifies an agent (via a provider or the LangChain handler) with no SDK.
+- **The LangChain callback handler stamps an agent/chain/LangGraph-node name** into `metadata["agent"]` (explicit `metadata["agent"]` wins).
+
 ## [1.8.0] — 2026-07-21
 Estimated-usage provenance on emitted spans — the emission-truth half of Monitor v5 (G-V4-3). Additive; nothing changes unless a streamed call's token count was recovered by offline estimate.
 

@@ -1,6 +1,6 @@
 [project]
 name = "cendor-cassette"
-version = "1.0.2"
+version = "1.1.0"
 description = "Record real LLM calls once, then replay them in your tests forever — offline, no API key, no cost, and the same result every run."
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -16,7 +16,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 readme = "README.md"
-dependencies = ["cendor-core>=1.0,<2.0"]
+dependencies = ["cendor-core>=1.9,<2.0"]
 
 [project.urls]
 Homepage = "https://github.com/cendorhq/cendor-libs"

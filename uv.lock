@@ -224,11 +224,11 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "cendor-libs", specifier = ">=1.0,<2.0" }]
+requires-dist = [{ name = "cendor-libs", editable = "packages/cendor-libs" }]
 
 [[package]]
 name = "cendor-acttrace"
-version = "1.8.0"
+version = "1.10.0"
 source = { editable = "packages/cendor-acttrace" }
 dependencies = [
     { name = "cendor-core" },
@@ -242,7 +242,7 @@ ner = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cendor-core", specifier = ">=1.1,<2.0" },
+    { name = "cendor-core", editable = "packages/cendor-core" },
     { name = "presidio-analyzer", marker = "extra == 'ner'", specifier = ">=2.2" },
     { name = "presidio-anonymizer", marker = "extra == 'ner'", specifier = ">=2.2" },
 ]
@@ -250,7 +250,7 @@ provides-extras = ["ner"]
 
 [[package]]
 name = "cendor-cassette"
-version = "1.0.2"
+version = "1.1.0"
 source = { editable = "packages/cendor-cassette" }
 dependencies = [
     { name = "cendor-core" },
@@ -263,7 +263,7 @@ embeddings = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cendor-core", specifier = ">=1.0,<2.0" },
+    { name = "cendor-core", editable = "packages/cendor-core" },
     { name = "model2vec", marker = "extra == 'embeddings'", specifier = ">=0.3" },
 ]
 provides-extras = ["embeddings"]
@@ -283,14 +283,14 @@ squeeze = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cendor-core", specifier = ">=1.0,<2.0" },
-    { name = "cendor-squeeze", marker = "extra == 'squeeze'", specifier = ">=1.0,<2.0" },
+    { name = "cendor-core", editable = "packages/cendor-core" },
+    { name = "cendor-squeeze", marker = "extra == 'squeeze'", editable = "packages/cendor-squeeze" },
 ]
 provides-extras = ["squeeze"]
 
 [[package]]
 name = "cendor-core"
-version = "1.8.0"
+version = "1.9.0"
 source = { editable = "packages/cendor-core" }
 dependencies = [
     { name = "tiktoken" },
@@ -357,7 +357,7 @@ yaml = [
 requires-dist = [
     { name = "azure-ai-contentsafety", marker = "extra == 'azure'", specifier = ">=1.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.34" },
-    { name = "cendor-core", specifier = ">=1.1,<2.0" },
+    { name = "cendor-core", editable = "packages/cendor-core" },
     { name = "google-cloud-modelarmor", marker = "extra == 'modelarmor'", specifier = ">=0.2" },
     { name = "model2vec", marker = "extra == 'embeddings'", specifier = ">=0.3" },
     { name = "py3langid", marker = "extra == 'langid'", specifier = ">=0.3" },
@@ -382,13 +382,13 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cendor-acttrace", specifier = ">=1.4.0,<2.0" },
-    { name = "cendor-cassette", specifier = ">=1.0.0,<2.0" },
-    { name = "cendor-contextkit", specifier = ">=1.0.0,<2.0" },
-    { name = "cendor-core", specifier = ">=1.0.0,<2.0" },
-    { name = "cendor-guardrails", specifier = ">=1.2.0,<2.0" },
-    { name = "cendor-squeeze", specifier = ">=1.0.0,<2.0" },
-    { name = "cendor-tokenguard", specifier = ">=1.0.0,<2.0" },
+    { name = "cendor-acttrace", editable = "packages/cendor-acttrace" },
+    { name = "cendor-cassette", editable = "packages/cendor-cassette" },
+    { name = "cendor-contextkit", editable = "packages/cendor-contextkit" },
+    { name = "cendor-core", editable = "packages/cendor-core" },
+    { name = "cendor-guardrails", editable = "packages/cendor-guardrails" },
+    { name = "cendor-squeeze", editable = "packages/cendor-squeeze" },
+    { name = "cendor-tokenguard", editable = "packages/cendor-tokenguard" },
 ]
 
 [[package]]
@@ -400,18 +400,18 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "cendor-core", specifier = ">=1.6,<2.0" }]
+requires-dist = [{ name = "cendor-core", editable = "packages/cendor-core" }]
 
 [[package]]
 name = "cendor-tokenguard"
-version = "1.3.0"
+version = "1.4.0"
 source = { editable = "packages/cendor-tokenguard" }
 dependencies = [
     { name = "cendor-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "cendor-core", specifier = ">=1.0,<2.0" }]
+requires-dist = [{ name = "cendor-core", editable = "packages/cendor-core" }]
 
 [[package]]
 name = "cendor-workspace"
@@ -443,13 +443,13 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "cendor-acttrace" },
-    { name = "cendor-cassette" },
-    { name = "cendor-contextkit" },
-    { name = "cendor-core" },
-    { name = "cendor-guardrails" },
-    { name = "cendor-squeeze" },
-    { name = "cendor-tokenguard" },
+    { name = "cendor-acttrace", editable = "packages/cendor-acttrace" },
+    { name = "cendor-cassette", editable = "packages/cendor-cassette" },
+    { name = "cendor-contextkit", editable = "packages/cendor-contextkit" },
+    { name = "cendor-core", editable = "packages/cendor-core" },
+    { name = "cendor-guardrails", editable = "packages/cendor-guardrails" },
+    { name = "cendor-squeeze", editable = "packages/cendor-squeeze" },
+    { name = "cendor-tokenguard", editable = "packages/cendor-tokenguard" },
     { name = "hypothesis", specifier = ">=6" },
     { name = "langchain-core", specifier = ">=0.3" },
     { name = "langchain-openai", specifier = ">=0.2" },

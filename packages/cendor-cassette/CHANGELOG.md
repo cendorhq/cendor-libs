@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.0] — 2026-07-22
+Record/replay key off a session id stamped at call initiation, so an out-of-scope streamed call is captured correctly.
+
+### Fixed
+- Record / replay now key off a session id stamped **at call initiation** (via the `cendor-core` ambient seam), with the delivery-time contextvar kept only as a split-brain fallback. A streamed call created inside a `using()` block but drained on a detached consumer (or while a different session's scope is active) is now recorded into — and replayed from — the correct cassette, instead of being lost or captured by the wrong session. The session id is a reserved top-level metadata key, excluded from the replay fingerprint, so **every existing recorded cassette replays byte-identically** — nothing to re-record.
+
+### Changed
+- Requires `cendor-core >= 1.9` (the ambient seam).
+
 ## [1.0.2] — 2026-07-11
 AI-assistant onboarding: inline Type Teach ships inside the package, plus the bundled integration guide. No runtime behavior change for correct code.
 

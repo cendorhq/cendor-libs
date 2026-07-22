@@ -39,6 +39,7 @@ import uuid
 from typing import Any
 
 from . import bus, prices
+from .ambient import apply_ambient
 from .types import LLMCall, ToolCall, Usage
 
 try:
@@ -83,6 +84,9 @@ class CendorCallbackHandler(BaseCallbackHandler):
         self._parents: dict[str, str | None] = {}
         # tool run_id -> pending {name, input}, bridged from on_tool_start to on_tool_end.
         self._tool_runs: dict[str, dict[str, Any]] = {}
+        # run_id -> agent/chain/node name (GLR-11a), captured at *_start from explicit metadata
+        # (the app wins), LangGraph's ``langgraph_node``, or the run name. Removed on run end/error.
+        self._agents: dict[str, str] = {}
         self._lock = threading.Lock()  # LangGraph may run nodes on threads; guard the shared dicts
 
     # ------------------------------------------------------------------ run-tree bookkeeping
@@ -98,6 +102,30 @@ class CendorCallbackHandler(BaseCallbackHandler):
             return
         with self._lock:
             self._parents.pop(str(run_id), None)
+            self._agents.pop(str(run_id), None)
+
+    def _record_agent(self, run_id: Any, name: str | None) -> None:
+        """Record a run's agent/chain/node name (GLR-11a) if one could be derived."""
+        if run_id is not None and name:
+            with self._lock:
+                self._agents[str(run_id)] = name
+
+    def _agent_for(self, run_id: Any, parent_run_id: Any) -> str | None:
+        """The agent name for an event: the nearest recorded name walking ``run_id`` up ``parent``
+        chain (a model call's own run rarely names an agent; its parent LangGraph node does)."""
+        rid = str(run_id) if run_id is not None else ""
+        with self._lock:
+            seen: set[str] = set()
+            while rid and rid not in seen:
+                seen.add(rid)
+                name = self._agents.get(rid)
+                if name:
+                    return name
+                parent = self._parents.get(rid)
+                if not parent:
+                    break
+                rid = parent
+            return self._agents.get(str(parent_run_id)) if parent_run_id is not None else None
 
     def _trace_id(self, run_id: Any, parent_run_id: Any) -> str:
         """The root run id for this event: walk ``parent`` links up to the top. Falls back to
@@ -119,9 +147,12 @@ class CendorCallbackHandler(BaseCallbackHandler):
         *,
         run_id: Any = None,
         parent_run_id: Any = None,
+        metadata: Any = None,
+        name: Any = None,
         **_: Any,
     ) -> None:
         self._register(run_id, parent_run_id)
+        self._record_agent(run_id, _agent_name_from(metadata, name or _.get("run_name")))
 
     def on_chain_end(self, outputs: Any, *, run_id: Any = None, **_: Any) -> None:
         self._forget(run_id)
@@ -136,9 +167,12 @@ class CendorCallbackHandler(BaseCallbackHandler):
         *,
         run_id: Any = None,
         parent_run_id: Any = None,
+        metadata: Any = None,
+        name: Any = None,
         **_: Any,
     ) -> None:
         self._register(run_id, parent_run_id)
+        self._record_agent(run_id, _agent_name_from(metadata, name or _.get("run_name")))
 
     def on_llm_start(
         self,
@@ -147,9 +181,12 @@ class CendorCallbackHandler(BaseCallbackHandler):
         *,
         run_id: Any = None,
         parent_run_id: Any = None,
+        metadata: Any = None,
+        name: Any = None,
         **_: Any,
     ) -> None:
         self._register(run_id, parent_run_id)
+        self._record_agent(run_id, _agent_name_from(metadata, name or _.get("run_name")))
 
     # ------------------------------------------------------------------ LLM calls
 
@@ -168,6 +205,10 @@ class CendorCallbackHandler(BaseCallbackHandler):
                 trace_id=self._trace_id(run_id, parent_run_id),
             )
             call.metadata["source"] = "langchain"
+            agent = self._agent_for(run_id, parent_run_id)
+            if agent:
+                call.metadata["agent"] = agent  # GLR-11a
+            apply_ambient(call)
             _set_cost(call, usage)
             bus.emit(call)
         except Exception:  # noqa: BLE001 - recording must never break the app
@@ -189,6 +230,10 @@ class CendorCallbackHandler(BaseCallbackHandler):
             )
             call.metadata["source"] = "langchain"
             call.metadata["error"] = str(error)
+            agent = self._agent_for(run_id, parent_run_id)
+            if agent:
+                call.metadata["agent"] = agent  # GLR-11a
+            apply_ambient(call)
             bus.emit(call)
         except Exception:  # noqa: BLE001
             pass
@@ -232,6 +277,10 @@ class CendorCallbackHandler(BaseCallbackHandler):
                 trace_id=self._trace_id(run_id, parent_run_id),
             )
             tc.metadata["source"] = "langchain"
+            agent = self._agent_for(run_id, parent_run_id)
+            if agent:
+                tc.metadata["agent"] = agent  # GLR-11a
+            apply_ambient(tc)
             bus.emit(tc)
         except Exception:  # noqa: BLE001
             pass
@@ -253,6 +302,10 @@ class CendorCallbackHandler(BaseCallbackHandler):
             )
             tc.metadata["source"] = "langchain"
             tc.metadata["error"] = str(error)
+            agent = self._agent_for(run_id, parent_run_id)
+            if agent:
+                tc.metadata["agent"] = agent  # GLR-11a
+            apply_ambient(tc)
             bus.emit(tc)
         except Exception:  # noqa: BLE001
             pass
@@ -261,6 +314,22 @@ class CendorCallbackHandler(BaseCallbackHandler):
 
 
 # --------------------------------------------------------------------------- extraction helpers
+
+
+def _agent_name_from(metadata: Any, name: Any) -> str | None:
+    """Derive an agent/chain/node name (GLR-11a). Priority: an explicit ``metadata["agent"]`` (the
+    app wins), then LangGraph's ``langgraph_node``, then the run name. ``None`` when nothing
+    meaningful is available (plain chains stay unnamed rather than stamping noise)."""
+    if isinstance(metadata, dict):
+        explicit = metadata.get("agent")
+        if isinstance(explicit, str) and explicit:
+            return explicit
+        node = metadata.get("langgraph_node")
+        if isinstance(node, str) and node:
+            return node
+    if isinstance(name, str) and name:
+        return name
+    return None
 
 
 def _usage_from_result(result: Any) -> Usage | None:

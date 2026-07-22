@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.10.0] — 2026-07-22
+Auto-captured entries read run/decision context from the event, not delivery-time ambient reads.
+
+### Fixed
+- Auto-captured `llm_call` / `tool_call` entries now take their `run_id` from the event's own captured `trace_id` and their `decision_id` from context captured at call initiation (via the `cendor-core` ambient seam), instead of re-reading the ambient run/decision scope at delivery time. A streamed call finalized outside the originating run/decision scope is therefore still joined to the right run and chained under the right decision. In-scope chains are byte-identical.
+- `budget_event` entries copy the `tokenguard` `BudgetEvent.trace_id` into `run_id`, so a monitor's dual-key join links a budget action to its run.
+
+### Changed
+- Requires `cendor-core >= 1.9` (the ambient seam).
+
 ## [1.9.0] — 2026-07-22
 Governance→run correlation fallback (G-LINK-2). Backward-compatible; the file remains the sole verifiable evidence and the default (no-run-scope) chain is byte-identical.
 

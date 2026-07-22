@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from cendor.core import bus, current_trace_id
+from cendor.core import add_ambient_provider, bus, current_trace_id
 from cendor.core.types import LLMCall, ToolCall
 
 from .detectors import (
@@ -100,6 +100,17 @@ class BoundedMemoryWithoutPathWarning(UserWarning):
 
 
 _active_decision: ContextVar[str | None] = ContextVar("cendor_acttrace_decision", default=None)
+
+
+def _acttrace_ambient(event: Any) -> dict | None:
+    """GLR-6 (F5): stamp the active decision id onto an event's metadata at construction — the
+    caller's synchronous frame, where the decision scope is unconditionally correct. ``_on_event``
+    reads it back so an out-of-scope streamed call is still chained under the decision it was made
+    in (the delivery-time ``_active_decision.get()`` is ``None`` for such a call). Merges
+    ``decision_id`` only; metadata never enters the audit chain (rule 6 — allowlists)."""
+    did = _active_decision.get()
+    return {"decision_id": did} if did else None
+
 
 # Starting-template control mappings (NOT legal advice; adjust for your system). docs §5, §7.
 # event type -> framework control IDs. Used by export(framework=...) to annotate the evidence pack.
@@ -484,6 +495,7 @@ class AuditLog:
         else:
             self._append("audit_open", {"system": system, "risk_tier": risk_tier})
         bus.subscribe(self._on_event)
+        add_ambient_provider(_acttrace_ambient)  # GLR-6: capture the decision id pre-emit (F5)
 
     def _read_existing_entries(self) -> list[AuditEntry]:
         """Parse the entries already on disk so a reopened log resumes the chain instead of
@@ -567,17 +579,17 @@ class AuditLog:
         enriched.setdefault("otel_span_id", format(ctx.span_id, "016x"))
         return enriched
 
-    def _with_run_id(self, payload: dict) -> dict:
+    def _with_run_id(self, payload: dict, run_id: str | None = None) -> dict:
         """Stamp ``cendor-core``'s ambient run id (``current_trace_id()``, set by the SDK's
         ``trace(run_id)`` scope — NOT OpenTelemetry) onto a payload, so a monitor can join a
         governance entry to its run even when no OTel span was active (post-hoc ``span_tree``, or no
         context manager installed). No-op outside a run scope (``current_trace_id()`` is ``""``), so
         the default chain is byte-identical to before and matches the TypeScript implementation."""
-        run_id = current_trace_id()
-        if not run_id or "run_id" in payload:
+        rid = run_id if run_id is not None else current_trace_id()
+        if not rid or "run_id" in payload:
             return payload
         enriched = dict(payload)
-        enriched["run_id"] = run_id
+        enriched["run_id"] = rid
         return enriched
 
     def _mirror_write(self, entry: AuditEntry) -> None:
@@ -590,10 +602,14 @@ class AuditLog:
         except Exception:  # noqa: BLE001 - a mirror must never break the audit chain
             pass
 
-    def _append(self, etype: str, payload: dict) -> AuditEntry:
+    def _append(self, etype: str, payload: dict, run_id: str | None = None) -> AuditEntry:
         # Additive correlation ids (each a no-op outside its context): OTel active-span ids +
         # core's ambient run id (the monitor's fallback join key when no OTel span was active).
-        payload = self._with_run_id(self._with_otel_ids(payload))
+        # ``run_id`` overrides the ambient ``current_trace_id()`` — GLR-6 threads the *event's*
+        # captured trace id for auto-captured llm_call/tool_call/budget_event so the join survives
+        # a delivery that fired outside the originating scope; everything else keeps the ambient
+        # default (byte-identical in-scope).
+        payload = self._with_run_id(self._with_otel_ids(payload), run_id)
         with self._lock:  # hash-chain step is a read-modify-write on _head/entries/file — atomic
             seq = self._seq  # monotonic; not len(entries), which caps once the memory ring is full
             self._seq += 1
@@ -660,10 +676,13 @@ class AuditLog:
     def _on_event(self, event: Any) -> None:
         did = _active_decision.get()
         if isinstance(event, LLMCall):
+            # GLR-6: decision_id + run_id from the event's captured context (F5/F6), not the
+            # delivery-time ambient reads — correct even when the stream finalized out of scope.
+            event_did = event.metadata.get("decision_id", did)
             self._append(
                 "llm_call",
                 {
-                    "decision_id": did,
+                    "decision_id": event_did,
                     "provider": event.provider,
                     "model": event.model,
                     "usage": _jsonable(event.usage),
@@ -671,11 +690,18 @@ class AuditLog:
                     "latency_ms": event.latency_ms,
                     "replayed": event.metadata.get("replayed", False),
                 },
+                event.trace_id or None,
             )
         elif isinstance(event, ToolCall):
+            event_did = event.metadata.get("decision_id", did)
             self._append(
                 "tool_call",
-                {"decision_id": did, "name": event.name, "arguments": _jsonable(event.arguments)},
+                {
+                    "decision_id": event_did,
+                    "name": event.name,
+                    "arguments": _jsonable(event.arguments),
+                },
+                event.trace_id or None,
             )
         elif hasattr(event, "decisions") and hasattr(event, "budget"):  # contextkit AssemblyReport
             self._append(
@@ -746,6 +772,9 @@ class AuditLog:
                     "cap_tokens": getattr(event, "cap_tokens", None),
                     "tags": _jsonable(getattr(event, "tags", {}) or {}),
                 },
+                # GLR-6 linkage: copy the BudgetEvent's trace_id into run_id so the monitor's
+                # dual-key join links this budget action back to its run.
+                getattr(event, "trace_id", "") or None,
             )
 
     def detach(self) -> None:

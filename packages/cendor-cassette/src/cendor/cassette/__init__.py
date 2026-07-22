@@ -34,7 +34,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
 
-from cendor.core import bus
+from cendor.core import add_ambient_provider, bus
 from cendor.core.instrument import MISS, add_interceptor, remove_interceptor
 from cendor.core.types import LLMCall, ToolCall
 
@@ -70,6 +70,33 @@ Mode = Literal["auto", "record", "replay", "rerecord"]
 #: process-global bus don't capture each other's events. Set on context entry; asyncio tasks inherit
 #: it, plain threads that start their own context get their own value. docs/cassette.md.
 _active_session: ContextVar[str | None] = ContextVar("cendor_cassette_session", default=None)
+
+#: GLR-7: reserved internal metadata key carrying the record/replay session id, stamped at call
+#: initiation by :func:`_cassette_ambient`. A **top-level** metadata key (not inside
+#: ``request_kwargs``), so it never reaches the provider and is invisible to the replay fingerprint
+#: (``_normalized_request`` hashes only kind/provider/model/messages/stream) — every recorded
+#: cassette replays byte-identically, nothing to re-record.
+_SESSION_KEY = "_cendor_cassette_session"
+
+
+def _cassette_ambient(event: Any) -> dict | None:
+    """The ambient provider (GLR-7): stamp the active session onto an event at construction — the
+    caller's synchronous frame, inside the ``using()`` scope — so the recorder can record and the
+    replayer can match even a streamed call finalized after the scope exits (or drained inside a
+    different session's scope). No-op outside a session."""
+    session = _active_session.get()
+    return {_SESSION_KEY: session} if session else None
+
+
+def _session_of(event: Any) -> str | None:
+    """The session an event belongs to: prefer the pre-flight stamp; fall back to the delivery-time
+    contextvar (split-brain: the event was built by a second cendor-core copy)."""
+    meta = getattr(event, "metadata", None)
+    if isinstance(meta, dict):
+        stamped = meta.get(_SESSION_KEY)
+        if isinstance(stamped, str):
+            return stamped
+    return _active_session.get()
 
 
 class CassetteError(Exception):
@@ -285,7 +312,7 @@ def _recording(
     session = uuid.uuid4().hex
 
     def recorder(event: Any) -> None:
-        if _active_session.get() != session:
+        if _session_of(event) != session:
             return  # a concurrent using() block on the shared bus — not ours
         if isinstance(event, LLMCall):
             raw = event.metadata.get("response")
@@ -303,6 +330,7 @@ def _recording(
             CassetteEntry(len(entries), kind, _hash(request), redactor(request), response, marker)
         )
 
+    add_ambient_provider(_cassette_ambient)  # GLR-7: stamp the session pre-emit (idempotent)
     bus.subscribe(recorder)
     token = _active_session.set(session)
     try:
@@ -325,7 +353,7 @@ def _replaying(path: Path, normalizer: Callable[[Any], dict] | None) -> Iterator
     session = uuid.uuid4().hex
 
     def interceptor(event: Any) -> Any:
-        if _active_session.get() != session:
+        if _session_of(event) != session:
             return MISS  # another replay context's call — decline so its interceptor handles it
         request = norm(event)
         h = _hash(request)
@@ -342,6 +370,7 @@ def _replaying(path: Path, normalizer: Callable[[Any], dict] | None) -> Iterator
             return _reconstruct_response(entry["response"], entry.get("response_type", "object"))
         return entry["response"]
 
+    add_ambient_provider(_cassette_ambient)  # GLR-7: stamp the session pre-emit (idempotent)
     add_interceptor(interceptor)
     token = _active_session.set(session)
     try:
@@ -368,7 +397,7 @@ def _rerecording(
     session = uuid.uuid4().hex
 
     def recorder(event: Any) -> None:
-        if _active_session.get() != session:
+        if _session_of(event) != session:
             return  # a concurrent context's event — not ours
         if isinstance(event, LLMCall):
             live = redactor(_to_jsonable(event.metadata.get("response")))
@@ -386,6 +415,7 @@ def _rerecording(
         if recorded != live:
             _drift.append({"request_hash": h, "kind": kind, "recorded": recorded, "live": live})
 
+    add_ambient_provider(_cassette_ambient)  # GLR-7: stamp the session pre-emit (idempotent)
     bus.subscribe(recorder)
     token = _active_session.set(session)
     try:

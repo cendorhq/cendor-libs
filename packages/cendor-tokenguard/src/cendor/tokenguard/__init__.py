@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from cendor.core import bus, prices, tokens
+from cendor.core import add_ambient_provider, bus, prices, tokens
 from cendor.core.instrument import MISS, Reroute, add_interceptor
 from cendor.core.types import LLMCall, Money
 
@@ -71,6 +71,10 @@ class BudgetEvent:
     projected_tokens: int | None = None
     cap_tokens: int | None = None
     tags: dict = field(default_factory=dict)
+    #: The run/trace id of the call this action guarded (GLR-6; from ``call.trace_id``, in hand at
+    #: emit). ``""`` when the call carried none. The only field linking a ``budget_event`` to its
+    #: run — ``acttrace`` copies it into the audit entry's ``run_id`` for the monitor's join.
+    trace_id: str = ""
     ts: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -140,6 +144,14 @@ class _Record:
 
 _tags: ContextVar[dict | None] = ContextVar("cendor_tokenguard_tags", default=None)
 _budgets: ContextVar[tuple[_Frame, ...]] = ContextVar("cendor_tokenguard_budgets", default=())
+#: GLR-5 (Bug A): reserved internal metadata key holding the frame tuple + tags captured **at call
+#: initiation** (the ``_pre`` frame, via the ambient seam), so ``_on_call`` can enforce/accrue/
+#: attribute even when it fires **outside the originating scope** — the streamed-call case (and, in
+#: Python, a consumer call after a stream generator leaked+restored scopes). Frames ride **by
+#: reference** (the same mutable ``_Frame`` objects the scope's ``Handle``/report reads), so accrual
+#: mutates the shared objects — no forked accounting. A metadata key (not a ``WeakKeyDictionary``:
+#: a non-frozen ``LLMCall`` is unhashable); it never leaves the process (no serializer reads it).
+_TG_ATTACH_KEY = "_cendor_tokenguard_attach"
 _records: list[_Record] = []
 _records_lock = threading.Lock()  # guards _records + _dropped (non-atomic read-modify-write)
 _downgrades: list[dict] = []  # {"from", "to", "tags"} per pre-flight reroute
@@ -233,9 +245,24 @@ def _current_tags() -> dict:
     return _tags.get() or {}
 
 
+def _tokenguard_ambient(event: Any) -> dict | None:
+    """The ambient provider (GLR-5): at every event's construction — the caller's synchronous frame,
+    where the budget/track scopes are unconditionally correct — snapshot the live frame tuple (by
+    reference) and the current tags into a reserved metadata key. ``_on_call`` reads this back at
+    delivery time. Attaches only for ``LLMCall``s and only when a scope is active. Never raises."""
+    if not isinstance(event, LLMCall):
+        return None
+    frames = _budgets.get()
+    tags = _tags.get()
+    if frames or tags is not None:
+        return {_TG_ATTACH_KEY: (frames, dict(tags) if tags else {})}
+    return None
+
+
 def _ensure_subscribed() -> None:
     bus.subscribe(_on_call)  # idempotent on the bus side
     add_interceptor(_preflight_interceptor)  # idempotent; pre-flight downgrade/block routing
+    add_ambient_provider(_tokenguard_ambient)  # idempotent; captures frames/tags pre-emit (GLR-5)
 
 
 def _projected_output(call: LLMCall, reserve: int, reasoning_reserve: int = 0) -> int:
@@ -331,6 +358,7 @@ def _emit_budget_event(
             projected_tokens=projected_tokens,
             cap_tokens=frame.cap_tokens,
             tags=dict(_current_tags()),
+            trace_id=call.trace_id,  # GLR-6 linkage: the emitter has the call's trace id in hand
         )
     )
     # G15: optional native governance counter (no-op without OpenTelemetry). Bounded label set —
@@ -492,7 +520,12 @@ def _on_call(call: object) -> None:
     out = call.usage.output_tokens if call.usage is not None else 0
     rsn = call.usage.reasoning_tokens if call.usage is not None else 0
 
-    frames = _budgets.get()
+    # GLR-5: prefer the frames/tags captured at initiation (correct even for a stream drained out
+    # of scope, or a consumer call after a Python stream generator leaked+restored scopes); fall
+    # back to the delivery-time contextvars only when nothing was attached (split-brain: the event
+    # was built by a second cendor-core copy whose ambient provider we never ran).
+    attached = call.metadata.get(_TG_ATTACH_KEY)
+    frames = attached[0] if attached is not None else _budgets.get()
     if unpriced:
         # A USD-cap budget can't enforce against a $0-recorded call. Warn once per model, naming the
         # innermost USD-cap frame's mode. (block/downgrade already warned pre-flight, so this covers
@@ -502,7 +535,7 @@ def _on_call(call: object) -> None:
             mode = usd_frame.on_exceed
             _warn_unpriced(call.model, mode if isinstance(mode, str) else "callable")
 
-    tags = dict(_current_tags())
+    tags = dict(attached[1]) if attached is not None else dict(_current_tags())
     record = _Record(
         tags=tags,
         usd=usd,

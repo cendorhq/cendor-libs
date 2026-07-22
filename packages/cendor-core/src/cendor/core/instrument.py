@@ -31,6 +31,7 @@ from decimal import Decimal
 from typing import Any, Literal, TypeVar
 
 from . import bus, prices, tokens
+from .ambient import apply_ambient
 from .types import LLMCall, Money, ToolCall, Usage
 
 T = TypeVar("T")
@@ -343,6 +344,9 @@ def _pre(
     call.metadata["request_kwargs"] = kwargs  # so pre-flight interceptors can read e.g. max_tokens
     if provider == "openai_embeddings":
         call.metadata["embedding"] = True  # so subscribers can tell embedding calls apart
+    # Stamp ambient run context (agent, conversation id, budget frames, ...) at the one
+    # guaranteed-correct moment — this synchronous frame — before interceptors run (§ ambient seam).
+    apply_ambient(call)
     return call, time.perf_counter()
 
 
@@ -929,6 +933,7 @@ def _pre_tool(name: str, args: tuple, kwargs: dict) -> tuple[ToolCall, float]:
         trace_id=_trace_id.get(),  # ambient correlation hook (default "" — unchanged)
         ts=datetime.now(UTC),
     )
+    apply_ambient(tc)
     return tc, time.perf_counter()
 
 
