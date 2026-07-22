@@ -19,7 +19,7 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.5.2
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.6.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -38,7 +38,7 @@ automatically when you pass `run(session=…)`, so there is no trace id to paste
 The monitor is a self-contained view over the same standard wire — no query language, no dashboard to
 assemble. Screenshots are of the real monitor rendering a seeded demo (synthetic data, content
 capture opted in for the demo). _(The shots below are from v0.4.0; the `docker run` above pulls the
-current v0.5.0, whose additive operate-wave — the per-run audit-evidence pointer, tokenguard
+current v0.6.0, whose operate-wave (v0.5) — the per-run audit-evidence pointer, tokenguard
 budget-utilization, period-over-period compare, run A/B, and the three-tier Settings — is described in
 the text and lands below these panels.)_
 
@@ -70,6 +70,11 @@ arguments and results — with **tokens, cost, latency, and time-to-first-token 
 exact step where a **budget block, guardrail verdict, or compression** fired, shown **inline** in the
 conversation (not in a separate log). Prompt/response content appears only if you opted in (below);
 without it, the journey shows the same structure metadata-only.
+
+Governance events link back to the run that produced them — a live governed run (inside
+`live_spans()` / `liveSpans`, with `@cendor/sdk` ≥ 1.12 / 0.17) correlates its whole trail to the
+run's trace, and a run built post-hoc from `span_tree` still links by run id. So a run's
+governance count is never a dead end: open the run and every verdict sits on the step it governed.
 
 <img class="theme-dark" src="/monitor/console-journey-dark.webp" alt="Cendor Monitor — run journey with governance inline" loading="lazy" />
 <img class="theme-light" src="/monitor/console-journey-light.webp" alt="Cendor Monitor — run journey with governance inline (light theme)" loading="lazy" />

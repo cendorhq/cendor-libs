@@ -103,6 +103,15 @@ computed — so the chain is over the redacted payload and sensitive values neve
 policy: `secret` and `email` → redact; others → flag.) `llm_call` payloads record provider/model/usage/
 cost/latency only — **never message content**.
 
+**Additive correlation fields (optional, in-context only).** When OpenTelemetry is installed and a
+span is active at append time, entries also carry `otel_trace_id` (32-hex) + `otel_span_id` (16-hex),
+so an entry can be cross-referenced with an APM trace. Since acttrace 1.9 / 0.10, entries appended
+inside a `trace(run_id)` scope (as the SDK's `run()` establishes) additionally carry `run_id`
+(Cendor's ambient run id — a trace-aware tool's fallback join to a run when no OTel span was active).
+All three are stamped into the payload **before** hashing (so they are inside the verified chain) and
+are **omitted when absent** (no active span / outside a run scope) — so the default local-first chain
+is byte-identical across languages. A port must stamp them under the same conditions to interoperate.
+
 ## Reimplementation traps (must match to interoperate)
 
 1. **int vs float — the biggest hazard.** Python serializes `1000` as `1000` and `1000.0` as `1000.0`;

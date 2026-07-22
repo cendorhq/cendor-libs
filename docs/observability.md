@@ -184,7 +184,7 @@ Cendor never operates a telemetry endpoint. The monitor is an **operational copy
 **file**, never on what the monitor shows.
 
 ```bash
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.5.2
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.6.0
 # then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
 ```
 
@@ -392,12 +392,26 @@ audit = AuditLog(system="support", path="audit.jsonl", mirror=OTelMirror())
 
 ## Correlate audit entries with your traces
 
-When OpenTelemetry is installed and a span is active (e.g. inside `live_spans()` or an `otel.span`),
-auto-captured and explicit audit entries carry the active span's `otel_trace_id` / `otel_span_id` in
-their payload. So from an Application Insights / Datadog trace you can jump to the exact tamper-evident
-audit entry that proves what happened — and back. The span attributes carry `cendor.audit.*`; the
-audit payload carries `otel_trace_id`; both sides join on the same trace id. (A no-op when OTel is
-absent or no span is active — the default chain is byte-identical.)
+When OpenTelemetry is installed and a span is active, auto-captured and explicit audit entries carry
+the active span's `otel_trace_id` / `otel_span_id` in their payload. So from an Application Insights /
+Datadog trace you can jump to the exact tamper-evident audit entry that proves what happened — and
+back. The span attributes carry `cendor.audit.*`; the audit payload carries `otel_trace_id`; both
+sides join on the same trace id. (A no-op when OTel is absent or no span is active — the default chain
+is byte-identical.)
+
+A span is active for audit entries emitted **inside `live_spans()`** (Python; TypeScript
+`liveSpans` from `@cendor/sdk` ≥ 0.17 — it makes the run's root span the active context span for the
+run body, matching Python) and **inside `core.otel.span(...)`** (Python; TypeScript `otel.span` from
+`@cendor/core` ≥ 0.9). Each SDK run inside a `live_spans` scope correlates its whole governance
+trail — budget blocks, guardrail decisions, tool calls — to that run's trace.
+
+**Run-id fallback.** Even when no OTel span was active at append time — a post-hoc `span_tree`
+(the trace is built after the run) or an app with no OTel context manager installed — an audit entry
+also carries `run_id` (Cendor's own ambient run id, from the SDK's `run()` scope), surfaced on the
+mirror span as `cendor.audit.run_id`. A trace-aware tool such as Cendor Monitor joins a governance
+event to its run by `otel_trace_id` when present and `run_id` otherwise, so linkage holds either way.
+(Standards-native backends group by the OTel trace; `run_id` is a Cendor attribute for tools that
+understand it.)
 
 ## How it works
 
