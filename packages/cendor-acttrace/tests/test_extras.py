@@ -11,6 +11,8 @@ from cendor.acttrace import (
     enable_locale_pack,
     ner_available,
     ner_redactor,
+    register_detector,
+    reset_detectors,
     scan,
 )
 from cendor.acttrace.detectors import _verhoeff
@@ -23,6 +25,27 @@ def restore_registry():
     original = list(DETECTORS)
     yield
     DETECTORS[:] = original
+
+
+def test_reset_detectors_restores_builtins(restore_registry):
+    """The public inverse of the opt-ins: after enabling the entropy detector + a locale pack,
+    reset_detectors() drops them and restores exactly the built-in registry (no cross-test leak)."""
+    builtins = list(DETECTORS)
+    enable_entropy_detector(min_length=24, min_entropy=3.5)
+    enable_locale_pack("uk")
+    assert any(d.category == "high_entropy_secret" for d in DETECTORS)
+    assert len(DETECTORS) > len(builtins)
+    reset_detectors()
+    assert list(DETECTORS) == builtins
+    assert all(d.category != "high_entropy_secret" for d in DETECTORS)
+
+
+def test_register_detector_is_idempotent(restore_registry):
+    before = len(DETECTORS)
+    d = DETECTORS[0]  # an existing built-in — same identity must not double-add
+    register_detector(d)
+    register_detector(d)
+    assert len(DETECTORS) == before
 
 
 # --------------------------------------------------------------------------- off by default

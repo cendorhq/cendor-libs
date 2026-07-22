@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.10.1] — 2026-07-22
+
+### Added
+- **`reset_detectors()`** — restore the detector registry to the built-in defaults, dropping anything
+  added by `register_detector` / `enable_entropy_detector` / `enable_locale_pack`. The registry is
+  process-global (opt in once at startup); this is the inverse — for turning an opt-in detector back
+  off, dynamic reconfiguration, and test isolation (so one test's `enable_entropy_detector()` can't
+  leak into the next and scrub, e.g., a high-entropy id from a later audit payload). `register_detector`
+  is now idempotent (a detector already present is not added twice).
+
 ## [1.10.0] — 2026-07-22
 Auto-captured entries read run/decision context from the event, not delivery-time ambient reads.
 

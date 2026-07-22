@@ -261,14 +261,34 @@ DETECTORS: list[Detector] = [
 ]
 
 
+#: The built-in detectors, snapshotted at import (before any opt-in `register_detector` /
+#: `enable_entropy_detector` / `enable_locale_pack` can mutate the live registry).
+#: :func:`reset_detectors` restores exactly this set.
+_BUILTIN_DETECTORS: list[Detector] = list(DETECTORS)
+
+
 def register_detector(detector: Detector) -> None:
     """Add a custom :class:`Detector` to the global registry (it runs after the built-ins).
 
     The registry is the single source of truth: a registered detector is picked up by
     :func:`cendor.acttrace.scan`, :func:`cendor.acttrace.redact`, and — via the active policy —
-    ``AuditLog``'s auto-flagging.
+    ``AuditLog``'s auto-flagging. Idempotent: a detector already present (same identity) is not
+    added twice. Undo with :func:`reset_detectors`.
     """
-    DETECTORS.append(detector)
+    if detector not in DETECTORS:
+        DETECTORS.append(detector)
+
+
+def reset_detectors() -> None:
+    """Restore the detector registry to the built-in defaults — dropping anything added by
+    :func:`register_detector`, :func:`enable_entropy_detector`, or :func:`enable_locale_pack`.
+
+    The registry is process-global (deliberately: you opt in once at startup). This is the inverse —
+    useful for turning an opt-in detector back off, for dynamic reconfiguration, and for test
+    isolation (so one test's ``enable_entropy_detector()`` can't leak into the next and, e.g., scrub
+    a high-entropy id from a later audit payload).
+    """
+    DETECTORS[:] = _BUILTIN_DETECTORS
 
 
 def detectors() -> list[Detector]:

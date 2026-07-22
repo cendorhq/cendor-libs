@@ -43,6 +43,7 @@ from .detectors import (
     detectors,
     group_of,
     register_detector,
+    reset_detectors,
 )
 from .guard import GuardInterceptor, PolicyViolation, guard, resolve_findings
 from .ner import ner_available, ner_redactor
@@ -65,6 +66,7 @@ __all__ = [
     "Detector",
     "DETECTORS",
     "register_detector",
+    "reset_detectors",
     "detectors",
     "Policy",
     "Finding",
