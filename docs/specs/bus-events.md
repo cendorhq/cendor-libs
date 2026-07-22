@@ -75,6 +75,25 @@ acttrace specs for exactly what each persists).
 | `ts` | timestamp \| null | `null` | runtime. |
 | `metadata` | object | `{}` | free-form. |
 
+**Reserved `metadata` keys on `LLMCall` / `ToolCall`.** `metadata` is the sanctioned extension
+point — a consumer reads any key like plain metadata, and `instrument()` never requires a key to be
+present. A small set of names is **reserved** so cross-language tools agree on their meaning when a
+library (or the SDK) stamps them at event construction via an
+[ambient provider](../core.md#ambient-metadata-providers) — the moment run context is unconditionally
+correct, before interceptors run:
+
+| key | type | meaning |
+|---|---|---|
+| `agent` | string | the active agent's name (SDK, or a libs-only ambient provider / the LangChain handler). Core's span emitter maps it to `gen_ai.agent.name`. |
+| `conversation_id` | string | the session / conversation id — maps to `gen_ai.conversation.id` on the span. |
+| `decision_id` | string | correlates the call to an `acttrace` audit decision entry. |
+| *(internal)* | — | `cassette` reserves one private session key for record/replay. Treat any unrecognized reserved key as opaque. |
+
+These keys are **additive and optional** (absent unless a provider stamps them) and carry **no shape
+change** — core merges opaque metadata and learns no SDK vocabulary. Providers run in registration
+order and **never overwrite** a key already on the event. A port must treat the same names as
+reserved so a consumer reading either language's events joins on identical metadata.
+
 ### `GuardrailDecision` (emitted by `cendor-guardrails`, not `instrument()`)
 
 A third bus event, emitted by the `guardrails` tool whenever a guardrail trips or flags. Unlike
@@ -156,6 +175,7 @@ the only signal that the breaker fired — the governance action worth alerting 
 | `projected_tokens` | int \| null | `null` | projected total tokens, for token-cap actions. |
 | `cap_tokens` | int \| null | `null` | the active token cap. |
 | `tags` | object | `{}` | the active `track(...)` attribution tags. |
+| `trace_id` | string | `""` | the run/trace id of the guarded call (from `call.trace_id`); `""` when the call carried none. |
 | `ts` | timestamp | now | when the action fired. |
 
 The `acttrace` `budget_event` payload uses the snake_case key names above (plus `decision_id`), so an
@@ -168,6 +188,14 @@ optional** — the duck-type test that chains the event (`action` + `projected_u
 unchanged, so an older `acttrace` simply ignores the new fields. `acttrace ≥ 1.7` / `@cendor/acttrace
 ≥ 0.8` mirror `name` as `cendor.audit.budget` and `description` (truncated) as
 `cendor.audit.description`.
+
+`trace_id` / `traceId` (added in `cendor-tokenguard 1.4` / `@cendor/tokenguard 0.5`) is likewise
+**additive** — the run/trace id of the guarded call (`call.trace_id`, in hand at emit; `""` when the
+call carried none). It is the only field that links a `budget_event` to its run, and it matters most
+for a *blocked* call, which never reaches the bus as an `LLMCall`. `acttrace ≥ 1.10` /
+`@cendor/acttrace ≥ 0.11` copies it into the audit entry's `run_id` — the fallback a trace-aware tool
+joins on when no OTel span was active for the block. The duck-type test (`action` + `projected_usd` +
+`cap_usd`) is unchanged, so an older `acttrace` simply ignores the field.
 
 ### `CompressionEvent` (emitted by `cendor-squeeze`, not `instrument()`)
 

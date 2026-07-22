@@ -114,6 +114,14 @@ the `LLMCall` is emitted only when the chunk iterator is exhausted or closed. So
 close) each stream before starting the next, or gate spend with a pre-flight mode
 (`"block"`/`"downgrade"`/`"clamp"`), which is evaluated before the call runs.
 
+**Drained after the scope exits (fixed in `cendor-tokenguard 1.4` / `@cendor/tokenguard 0.5`).** A
+stream created inside a `budget()` / `track()` scope but drained *after* that scope has exited now
+still accrues, enforces, and attributes correctly. The active budget frame and attribution tags are
+captured when the stream is **created** — core stamps them at event construction via its ambient
+metadata seam — not re-read at drain time. Previously that spend was silently lost: not attributed to
+the tags, and, worse, not counted against a cumulative cap, so an `on_exceed="block"` ceiling could be
+overrun by streams that finished outside their scope.
+
 ### Unpriced models — a USD blind spot
 A call whose model has no price records `$0`, so a **USD** cap can't enforce against it.
 `tokenguard` warns once per model (`UnpricedModelWarning`) and counts these in
@@ -268,6 +276,13 @@ bus as an `LLMCall`, this is the metric that lets you chart budget-block **rates
 one-off `audit.budget_event` span). Keep budget `name`s bounded for the same cardinality reason as
 `track()` tags. (Added in `cendor-tokenguard 1.3` / `@cendor/tokenguard 0.4`.)
 
+Every `BudgetEvent` also carries the **run/trace id** of the guarded call (`trace_id` / `traceId`,
+from the call's `trace_id`) since `cendor-tokenguard 1.4` / `@cendor/tokenguard 0.5`. It is the only
+field linking a block back to its run — again, a *blocked* call never reaches the bus as an `LLMCall`
+— so `acttrace` (≥ 1.10 / 0.11) copies it into the `budget_event` audit entry's `run_id`, the
+fallback a trace-aware monitor joins on when no OTel span was active for the block. Additive: an older
+`acttrace` simply ignores it.
+
 ### `QueueSink` — low-latency durable logging
 
 The bus fans out to subscribers **inline**, so a durable sink (SQLite/OTel/file) adds its write
@@ -364,7 +379,9 @@ spend it attributed, on your own screen. Your own OTel backend stays the product
 
 - **`"raise"` overshoots by one call** — it's post-flight. For a true ceiling, use `"block"`.
 - **Streaming is accounted on drain,** so fanning out many undrained streams can overspend under
-  post-flight modes; use a pre-flight mode or drain each stream in turn.
+  post-flight modes; use a pre-flight mode or drain each stream in turn. (Spend from a stream drained
+  *after* its `budget()`/`track()` scope exits is still accrued, enforced, and attributed — captured
+  at stream creation — since 1.4 / 0.5.)
 - **Unpriced models are a USD blind spot** (they record `$0`) — prefer a `tokens=` cap or add a
   rate. `tokenguard` warns once per model and counts them in `unpriced_calls()`.
 - **State is in-process and module-global** — ideal for a single worker. For multi-process, put

@@ -116,6 +116,31 @@ actually sent, and so a rewrite works across providers:
   provider. Applies uniformly to sync, async, and streaming calls (the rewrite happens before the
   real call runs).
 
+### Ambient metadata providers
+Run context — *which* agent, *which* conversation, *which* audit decision — has to be captured at the
+one moment it is unconditionally correct: when the event is **constructed**, in the caller's own
+synchronous frame, before interceptors run. Reading it later (at bus-delivery time) breaks whenever a
+stream is finalized outside the scope that launched it, a context-losing layer sits in between,
+subscriber order shuffles, or two runs interleave. `trace_id` has always been stamped there;
+`add_ambient_provider(fn)` generalizes that seam to everything else.
+
+A provider is a `(event) -> metadata | None` (TS `(event) => metadata | undefined`) callable, run
+over every freshly built `LLMCall` / `ToolCall`. Its returned keys are merged onto `event.metadata`
+in **registration order**, and it **never overwrites** a key already present. The contract is strict:
+a provider **must never raise** (an exception is swallowed so a broken provider can't break capture),
+and with nothing registered there is a **zero-provider fast path** (a single length check — the
+standalone-libs byte-identity and the benchmark hold). The event is passed read-only, so a provider
+that needs to attach a non-serializable value keys a `WeakKeyDictionary` / `WeakMap` off it instead of
+returning it.
+
+Core stays **generic**: it merges opaque metadata and learns no SDK vocabulary — what `agent` or
+`conversation_id` *means* lives entirely in the library that registers the provider (the SDK, or the
+[LangChain handler](#frameworks-langchain--langgraph)). This is how a libs-only app can surface
+`gen_ai.agent.name` on its spans without the SDK: register a provider that returns `{"agent": …}` and
+core's span emitter maps `metadata["agent"]` → `gen_ai.agent.name`. The reserved keys
+(`agent` / `conversation_id` / `decision_id`, plus one private cassette session key) are pinned in the
+[bus-events spec](https://github.com/cendorhq/cendor-libs/tree/main/docs/specs/bus-events.md).
+
 ### OpenTelemetry (optional)
 `otel.span(...)` emits a GenAI `gen_ai.*` span when OpenTelemetry is installed, else it's a
 no-op. `otel.ingest(attrs)` turns a managed runtime's `gen_ai.*` span attributes into a bus
@@ -219,6 +244,45 @@ bus.emit(event);      // synchronous dispatch to all subscribers
 
 <!-- /tabs -->
 
+### `add_ambient_provider()` / `remove_ambient_provider()`
+
+Register a callable that stamps run-scoped metadata onto every `LLMCall` / `ToolCall` **at event
+construction** (before interceptors, in the caller's synchronous frame) — the seam described in
+[Ambient metadata providers](#ambient-metadata-providers) above.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import add_ambient_provider, remove_ambient_provider
+
+# stamp run context onto every event as it is constructed (never overwrites an existing key):
+provider = add_ambient_provider(lambda event: {"agent": "reviewer", "tenant": "acme"})
+remove_ambient_provider(provider)     # add_ambient_provider returns the fn, so you can unregister it
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { addAmbientProvider, removeAmbientProvider } from '@cendor/core';
+
+// stamp run context onto every event as it is constructed (never overwrites an existing key):
+const provider = addAmbientProvider(() => ({ agent: 'reviewer', tenant: 'acme' }));
+removeAmbientProvider(provider);      // addAmbientProvider returns the fn, so you can unregister it
+```
+
+<!-- /tabs -->
+
+| Call | Returns | What it does |
+|---|---|---|
+| `add_ambient_provider(fn)` | the `fn` | Register a provider `(event) -> dict \| None` run at every event's construction (idempotent). |
+| `remove_ambient_provider(fn)` | — | Unregister a provider (no error if absent). |
+
+The provider **must never raise** (exceptions are swallowed) and merges in **registration order**
+without overwriting existing keys; zero providers is a single-length-check fast path. Core stays
+generic — it merges opaque metadata and defines no key meanings (the reserved names live in the
+[bus-events spec](https://github.com/cendorhq/cendor-libs/tree/main/docs/specs/bus-events.md)).
+
 ### `otel`
 
 <!-- tabs: lang -->
@@ -285,6 +349,7 @@ new Money(0.0135);   // decimal.js-backed; value-equal with Python's Decimal; Mo
 | `prices` | Bundled price snapshot + `estimate()` + optional `refresh()` |
 | `instrument` | Wrap a client/tool once; emit normalized events (+ record/replay hooks) |
 | `bus` | In-process, idempotent pub/sub |
+| `ambient` | `add_ambient_provider()` / `remove_ambient_provider()` — stamp run-scoped metadata at event construction |
 | `otel` | GenAI span emitter + `ingest()` for managed-runtime spans |
 | `protocols` | `Compressor`, `EvictionStrategy`, `Sink`, `Subscriber`, `Handle` (structural) |
 

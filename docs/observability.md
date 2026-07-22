@@ -113,6 +113,13 @@ The first four are **outbound** (Cendor → your backend). The last is **inbound
 [Managed runtimes](providers.md#managed-runtimes-opentelemetry-ingestion) for the Foundry/Assistants
 capture path.
 
+**Agent name on streamed children.** `gen_ai.agent.name` is now reliable on **streamed** live
+children: `live_spans`/`liveSpans` read it from the event's stamped metadata (captured at
+construction) rather than re-reading run scope at delivery time, so it survives a stream finalized
+after its originating scope. A libs-only app (no SDK) surfaces the same attribute by registering an
+[ambient provider](core.md#ambient-metadata-providers) that returns `{"agent": …}` — or via the
+LangChain handler — and core's span emitter maps `metadata["agent"]` → `gen_ai.agent.name`.
+
 ## Content capture — opt-in, OFF by default
 
 By default Cendor puts **structure** on the wire — models, tokens, cost, latency, governance
@@ -453,6 +460,12 @@ audit **file** is a separate, offline-verifiable path — not dependent on any b
 - **Metric cardinality.** `OTelSink` dimensions spend by your `track(...)` tags. Keep tag *values*
   low-cardinality (`feature`, `tenant`, `env` — not a raw per-user id) or pass `OTelSink(tags=False)`
   for model-only counters, so your metrics backend's time-series count doesn't explode.
+- **Streamed usage estimation can't see thinking/reasoning tokens.** When a provider streams no usage
+  and Cendor falls back to a text-based offline estimate (flagged `cendor.usage_estimated="true"` on
+  the span / `usage_estimated` on the event), the estimate counts only the streamed **text** —
+  reasoning/thinking tokens never appear in that text, so a text-estimated streamed count
+  **undercounts** reasoning spend. Providers that report real streamed usage are unaffected; the flag
+  is exactly the signal that tells a backend which figures are estimates.
 - **Semantic-convention drift.** The GenAI semconv is still maturing. Cendor targets it faithfully;
   a few names are Cendor extensions in the `gen_ai.*` namespace (a cost counter, a reasoning-token
   counter — semconv defines no cost metric yet) and the token-usage metric is a Counter where the
