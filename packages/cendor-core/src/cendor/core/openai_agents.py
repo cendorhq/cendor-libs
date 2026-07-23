@@ -18,10 +18,17 @@ already present — so an explicit stamp (an SDK scope, a user ``add_ambient_pro
 is registered the first time you construct :class:`CendorAgentHooks`. If you never attach the hooks,
 core's zero-provider fast path is untouched.
 
-**Honest limit.** The name is scoped per active agent turn (set at agent start / handoff, cleared at
-agent end). Handoffs — the SDK's primary multi-agent model — re-stamp correctly. A deeply nested
-*agent-as-tool* stamps the innermost active agent for its turn; when it ends the stamp clears rather
-than restoring the parent — the common single-agent + handoff flows are exact.
+**Honest limit — process-wide, single-flight.** The SDK runs each model call in an async context
+**isolated** from the ``RunHooks`` (verified: a ``ContextVar`` set in ``on_agent_start`` / even
+``on_llm_start`` never reaches the call), so per-run scoping via contextvars is impossible here.
+Instead the active agent is tracked in a **process-wide holder** the hooks update (set at agent
+start / handoff, cleared at end) and the ambient provider reads live at each call — **correct for
+sequential
+runs and handoffs (the common case), but concurrent ``Runner.run()`` in the same process may
+cross-attribute** agent names during overlap. Run concurrent multi-agent workloads in separate
+processes. (LangChain's handler gets a ``run_id`` on every callback, so it has no such limit.) A
+deeply nested *agent-as-tool* stamps the innermost active agent; when it ends the stamp clears
+rather than restoring the parent.
 
 Requires the optional extra, keeping ``cendor-core`` dependency-light (like ``[langchain]``)::
 
@@ -44,7 +51,6 @@ Usage::
 
 from __future__ import annotations
 
-import contextvars
 from typing import Any
 
 from .ambient import add_ambient_provider
@@ -59,20 +65,17 @@ except ImportError as exc:  # pragma: no cover - exercised only without the extr
 
 __all__ = ["CendorAgentHooks"]
 
-#: The agent currently executing a turn in the active async flow — set by the hooks and read by the
-#: ambient provider at every event's construction site. Empty outside a run. A plain ``.set`` (no
-#: token/reset) is concurrency-safe: ``asyncio.gather`` / task creation copies the context per run,
-#: so concurrent runs sharing one hooks instance never clobber each other; mirrors the shipped SDK
-#: ``_governance._active_agent`` pattern.
-_active_agent: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "cendor_openai_agents_active_agent", default=""
-)
+#: The agent currently executing a turn — a **process-wide holder** (NOT a contextvar). The SDK runs
+#: each model call in an async context isolated from the hooks, so a contextvar set in a hook never
+#: reaches the call; a plain holder read live at construction does. Correct for sequential runs +
+#: handoffs; concurrent same-process ``Runner.run()`` may cross-attribute (one runner per process).
+_active: dict[str, str] = {"agent": ""}
 
 
 def _provider(_event: Any) -> dict[str, Any] | None:
-    """Ambient provider: stamp ``agent`` from the active-turn contextvar. Non-empty only; core's
+    """Ambient provider: stamp ``agent`` from the active-turn holder. Non-empty only; core's
     never-overwrite seam keeps any explicit value."""
-    name = _active_agent.get()
+    name = _active["agent"]
     return {"agent": name} if name else None
 
 
@@ -102,7 +105,7 @@ class CendorAgentHooks(_RunHooks):  # type: ignore[misc]  # _RunHooks is generic
         try:
             name = getattr(agent, "name", None)
             if name:
-                _active_agent.set(str(name))
+                _active["agent"] = str(name)
         except Exception:  # noqa: BLE001 - a recorder must never break the run
             pass
 
@@ -111,13 +114,13 @@ class CendorAgentHooks(_RunHooks):  # type: ignore[misc]  # _RunHooks is generic
         try:
             name = getattr(to_agent, "name", None)
             if name:
-                _active_agent.set(str(name))
+                _active["agent"] = str(name)
         except Exception:  # noqa: BLE001
             pass
 
     async def on_agent_end(self, context: Any, agent: Any, output: Any) -> None:
         """Clear the stamp when the agent turn ends."""
         try:
-            _active_agent.set("")
+            _active["agent"] = ""
         except Exception:  # noqa: BLE001
             pass

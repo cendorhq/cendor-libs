@@ -601,3 +601,11 @@ default).
   never hard dependencies. `tiktoken`, by contrast, **is** a required dependency: exact token
   counts are not optional. (It is fully offline — no network or account — so this keeps the
   local-first guarantee.)
+- **The openai-agents adapter is single-flight per process.** The OpenAI Agents SDK runs each model
+  call in an async context isolated from its lifecycle hooks, so the adapter tracks the active agent
+  in a process-wide holder (not a contextvar/AsyncLocalStorage — those can't reach the call). This is
+  exact for sequential runs and handoffs (the common case), but **concurrent `Runner.run()` in the
+  same process can cross-attribute** agent names during overlap — run concurrent multi-agent workloads
+  in separate processes. The LangChain handler (`run_id` on every callback) and the Foundry adapter
+  (a synchronous scope wrap) have no such limit. The Foundry adapter is also **attribution-only** — the
+  Foundry model runs server-side, so it records agent + conversation id but no per-step token/cost.

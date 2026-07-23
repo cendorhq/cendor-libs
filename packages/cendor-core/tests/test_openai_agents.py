@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("agents", reason="openai-agents (the RunHooks base) not installed")
 
 from cendor.core.ambient import _providers, _reset_ambient, apply_ambient  # noqa: E402
-from cendor.core.openai_agents import CendorAgentHooks, _active_agent  # noqa: E402
+from cendor.core.openai_agents import CendorAgentHooks, _active  # noqa: E402
 from cendor.core.types import LLMCall  # noqa: E402
 
 
@@ -35,10 +35,10 @@ def _model_call() -> LLMCall:
 @pytest.fixture(autouse=True)
 def _clean_ambient():
     _reset_ambient()
-    _active_agent.set("")
+    _active["agent"] = ""
     yield
     _reset_ambient()
-    _active_agent.set("")
+    _active["agent"] = ""
 
 
 def test_stamps_agent_name_during_a_turn():
@@ -106,21 +106,47 @@ def test_import_registers_nothing_construction_registers_once():
     assert len(_providers) == 1
 
 
-def test_concurrent_runs_do_not_clobber_each_other():
-    # Two runs of one shared hooks instance under asyncio.gather each get their own copied context,
-    # so a plain ContextVar.set stays isolated per run (no cross-run agent bleed).
+def test_sequential_runs_each_stamp_their_own_agent():
+    # The active agent is a process-wide holder (the SDK isolates the model-call context from the
+    # hooks, so a contextvar can't reach the call — verified live). Sequential runs (the common
+    # case) each stamp correctly because on_agent_end clears the holder between them.
     hooks = CendorAgentHooks()
 
     async def one(name: str) -> LLMCall:
         await hooks.on_agent_start(None, _FakeAgent(name))
-        await asyncio.sleep(0)  # yield so the two runs interleave
         call = _model_call()
         await hooks.on_agent_end(None, _FakeAgent(name), "done")
         return call
 
     async def drive() -> list[LLMCall]:
-        return await asyncio.gather(one("Alpha"), one("Beta"))
+        first = await one("Alpha")
+        # holder cleared by Alpha's on_agent_end — a call between runs carries no agent
+        between = _model_call()
+        second = await one("Beta")
+        return [first, between, second]
 
-    calls = asyncio.run(drive())
-    names = sorted(c.metadata.get("agent") for c in calls)
-    assert names == ["Alpha", "Beta"], "each concurrent run stamped its own agent, no bleed"
+    first, between, second = asyncio.run(drive())
+    assert first.metadata.get("agent") == "Alpha"
+    assert "agent" not in between.metadata, "holder cleared between sequential runs"
+    assert second.metadata.get("agent") == "Beta"
+
+
+def test_holder_is_process_wide_documented_limit():
+    # Honest-limit doc test: the holder is process-wide (NOT context-scoped), so a concurrent second
+    # run's on_agent_start is visible to the first run's next call. This is the documented limit —
+    # per-run scoping is impossible because the SDK isolates the model-call context from the hooks.
+    hooks = CendorAgentHooks()
+
+    async def drive() -> str | None:
+        await hooks.on_agent_start(None, _FakeAgent("Alpha"))
+        await hooks.on_agent_start(
+            None, _FakeAgent("Beta")
+        )  # a concurrent run's start, interleaved
+        call = (
+            _model_call()
+        )  # Alpha's call now reads Beta (cross-attribution) — the documented limit
+        return call.metadata.get("agent")
+
+    assert asyncio.run(drive()) == "Beta", (
+        "process-wide holder — concurrent overlap cross-attributes"
+    )

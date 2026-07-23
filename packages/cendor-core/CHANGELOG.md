@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.11.1] — 2026-07-24
+**Fix: the openai-agents adapter now actually stamps the agent name on live calls.** Found by the black-box testsuits live probe: the OpenAI Agents SDK runs each model call in an async context **isolated** from the `RunHooks`, so the `ContextVar` set in `on_agent_start` (or `on_llm_start`) never reached the captured `LLMCall` — the name was silently dropped live (the offline fixture passed because it drove hooks + call in one context). `instrument()` *did* capture the call with real usage, so "the calls ride the standard client" always held; only the name was missing.
+
+### Fixed
+- **`cendor.core.openai_agents`** now tracks the active agent in a **process-wide holder** (updated by the hooks, read live at event construction) instead of a `ContextVar` — so the framework's agent name reaches the model call for real (verified live). **Honest limit:** correct for sequential runs + handoffs (the common case); concurrent `Runner.run()` in the same process may cross-attribute during overlap (per-run scoping is impossible — the SDK isolates the call's context from the hooks). Run concurrent multi-agent workloads in separate processes. `cendor.core.foundry` is unaffected (its `foundry_agent_scope` is a synchronous callback wrap — the scope *is* the call's context).
+
 ## [1.11.0] — 2026-07-23
 **Framework agent-name adapters** — two optional integrations that source a *third-party framework's* agent identity onto the bus, so the monitor's Agents page fills for framework-driven stacks. Additive; nothing changes unless you attach one (importing an adapter registers no ambient provider — core's zero-provider fast path is untouched). Core carries no identity of its own (Raghav's locked principle) — the framework owns the name; these adapters carry it.
 
