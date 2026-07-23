@@ -112,9 +112,10 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Providers | ✅ ten paths | ✅ ten paths (OpenAI, Anthropic, HuggingFace, Azure chat + responses, Foundry Local, Ollama, Gemini, Bedrock) — HF/Ollama/Gemini/Bedrock usage capture rides `@cendor/core`'s provider detection |
 | Sessions & memory | ✅ (+ SQLite store) | ✅ (better-sqlite3 + memory adapters) |
 | Handoff / supervisor / pipelines | ✅ | ✅ |
-| Structured output | ✅ | ✅ |
-| Streaming | ✅ | ✅ (incremental single-agent + multi-agent) |
-| `ThinkingDelta` stream event (SDK ≥ 1.13 / 0.18) | ✅ | ✅ streamed reasoning, separate from `TextDelta`, for providers that stream it (Ollama `think` + OpenAI-compatible `reasoning_content`); the TS SDK doesn't stream Anthropic, so Anthropic thinking is moot there — the event + seam exist in both languages |
+| Structured output | ✅ | ✅ — **native Anthropic** `output_config.format` json_schema on supported models (SDK ≥ 1.14 / 0.19), older models degrade to the JSON-instruction nudge; Bedrock uses the nudge (forced-`toolChoice` is a documented honest limit) |
+| Streaming | ✅ incremental (OpenAI, Ollama, **Anthropic** SDK ≥ 1.14 / 0.19) | ✅ incremental (OpenAI, Ollama, **Anthropic** SDK ≥ 0.19); single-agent + multi-agent |
+| `ThinkingDelta` stream event (SDK ≥ 1.13 / 0.18) | ✅ | ✅ streamed reasoning, separate from `TextDelta`, for providers that stream it — Ollama `think`, OpenAI-compatible `reasoning_content`, and **Anthropic `thinking_delta`** (both langs, SDK ≥ 1.14 / 0.19) |
+| Multimodal images (Ollama / Bedrock) | ✅ Ollama `images[]` + Bedrock Converse image blocks from data-URLs (SDK ≥ 1.14) | ✅ (SDK ≥ 0.19) — remote http(s) image URLs unsupported (no fetching), documented |
 | Governance re-exports | ✅ | ✅ (the real `@cendor/*` objects) |
 | `guard` identity + scope form | ✅ `sdk.guard is acttrace.guard`; `with guard(...):` | ✅ `Object.is`; `guard(opts, fn)` — dual-shape acttrace ≥ 1.5.0 / 0.6.0, SDK ≥ 1.7.0 / 0.10.0 |
 | SDK `rules` = full library catalogue | ✅ all factories + the `pii`/`secrets`/`entropy` bridge | ✅ since 0.10.0 — spotlight, detection-tier adapters, and similarity checks included (`payloadText`/`NORMALIZATIONS` helpers stay library-only) |
