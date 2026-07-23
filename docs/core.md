@@ -156,6 +156,64 @@ This is the seam `tokenguard`'s mid-stream budget breaker (`budget(on_exceed="br
 learns no budget vocabulary, mirroring the ambient-provider discipline. Registration is idempotent;
 `remove_stream_observer(fn)` unregisters.
 
+### Framework adapters
+When your app runs **under a third-party agent framework**, that framework — not your code — owns the
+agent identity, and it often makes its model calls through a path `instrument()` can't see or names its
+agents dynamically. A small **adapter** bridges the gap: it observes the framework's own lifecycle and
+carries the *framework's* agent name onto cendor's bus via the [ambient seam](#ambient-metadata-providers).
+Core itself never carries an identity — the framework owns the name; the adapter merely relays it,
+never-overwriting an explicit stamp. Each adapter is an optional extra; **importing one registers
+nothing** (core's zero-provider fast path holds until you attach).
+
+- **LangChain / LangGraph** — `cendor.core.langchain.CendorCallbackHandler` (extra `[langchain]`).
+  Records usage + reasoning + tool calls + a run-correlated `trace_id` from the callback tree. See
+  [providers.md → Frameworks](providers.md#frameworks-langchain--langgraph).
+- **OpenAI Agents SDK** — `cendor.core.openai_agents.CendorAgentHooks` / `@cendor/core/openai-agents`'s
+  `observeOpenAIAgents` (extra `[openai-agents]`). The agent's model calls ride the standard OpenAI
+  client, so `instrument()` still captures **tokens, cost, and streaming** — the adapter supplies only
+  the agent name, scoped per turn (set at start / handoff, cleared at end).
+- **Azure AI Foundry Agents** — `cendor.core.foundry` / `@cendor/core/foundry` (extra `[foundry]`).
+  Observes thread-run creation and stamps `agent` + `conversation_id`. **Attribution only** — the model
+  runs server-side, so there is no per-step token/cost here (an honest limit).
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+```python
+# OpenAI Agents SDK — the agent's calls ride the instrumented OpenAI client (tokens/cost/streaming)
+from agents import Agent, Runner
+from cendor.core import instrument
+from cendor.core.openai_agents import CendorAgentHooks
+from openai import AsyncOpenAI
+
+instrument(AsyncOpenAI())
+await Runner.run(Agent(name="Billing"), "refund my order", hooks=CendorAgentHooks())
+
+# Azure AI Foundry — attribution only (model runs server-side)
+from cendor.core.foundry import observe_foundry_agents
+observe_foundry_agents(client)                      # wraps client.runs.{create,create_and_process,stream}
+client.runs.create_and_process(thread.id, agent_id=agent.id)  # events carry agent + conversation_id
+```
+<!-- tab: TypeScript -->
+<!-- ts-check: skip -->
+```ts
+// OpenAI Agents SDK — the agent's calls ride the instrumented OpenAI client (tokens/cost/streaming)
+import { Agent, Runner } from '@openai/agents';
+import { instrument } from '@cendor/core';
+import { observeOpenAIAgents } from '@cendor/core/openai-agents';
+import OpenAI from 'openai';
+
+instrument(new OpenAI());
+const runner = new Runner();
+observeOpenAIAgents(runner);
+await runner.run(new Agent({ name: 'Billing' }), 'refund my order');
+
+// Azure AI Foundry — attribution only (model runs server-side)
+import { observeFoundryAgents } from '@cendor/core/foundry';
+observeFoundryAgents(client);                        // wraps client.runs.{create,createAndPoll,createThreadAndRun}
+await client.runs.createAndPoll(thread.id, agent.id); // events carry agent + conversation_id
+```
+<!-- /tabs -->
+
 ### OpenTelemetry (optional)
 `otel.span(...)` emits a GenAI `gen_ai.*` span when OpenTelemetry is installed, else it's a
 no-op. `otel.ingest(attrs)` turns a managed runtime's `gen_ai.*` span attributes into a bus
@@ -492,10 +550,13 @@ id you set, it never invents a run graph. The LangChain/LangGraph callback path
 ([providers.md](providers.md#frameworks-langchain--langgraph)) derives the same `trace_id`
 automatically from the framework's run tree.
 
-**Frameworks (LangChain / LangGraph).** For frameworks, the SDK-aligned integration point is the
-framework's **callback system**, not client wrapping. `cendor.core.langchain.CendorCallbackHandler`
-(optional extra `cendor-core[langchain]`) records usage + reasoning + tools + run-correlated
-`trace_id` with no client touch — **recording-only**. See
+**Frameworks (LangChain / openai-agents / Foundry).** When your app runs under a framework, the
+SDK-aligned integration point is the framework's own lifecycle — its **callback / hooks system** — not
+client wrapping. A small [framework adapter](#framework-adapters) carries the *framework's* agent name
+(and, for Foundry, the conversation id) onto the bus via the ambient seam. `langchain` is
+recording-only; `openai-agents` still gets tokens/cost/streaming for free (the calls ride the standard
+OpenAI client); `foundry` is attribution-only (the model runs server-side). See
+[Framework adapters](#framework-adapters) and
 [providers.md → Frameworks](providers.md#frameworks-langchain--langgraph).
 
 ## Plugs into the stack

@@ -40,6 +40,10 @@ dev = [
   "langchain-core>=0.3",
   "langchain-openai>=0.2",
   "langgraph>=0.2",
+  # Framework-adapter test deps (GLR-11c / GLR-11b1): the OpenAI Agents SDK + Azure AI Foundry Agents.
+  # The tests importorskip these, so a plain install without them still runs.
+  "openai-agents>=0.1",
+  "azure-ai-agents>=1.0",
   "cendor-core",
   "cendor-tokenguard",
   "cendor-contextkit",

@@ -2,6 +2,13 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.11.0] — 2026-07-23
+**Framework agent-name adapters** — two optional integrations that source a *third-party framework's* agent identity onto the bus, so the monitor's Agents page fills for framework-driven stacks. Additive; nothing changes unless you attach one (importing an adapter registers no ambient provider — core's zero-provider fast path is untouched). Core carries no identity of its own (Raghav's locked principle) — the framework owns the name; these adapters carry it.
+
+### Added
+- **`cendor.core.openai_agents.CendorAgentHooks`** (extra `[openai-agents]`) — a `RunHooks` you pass to the OpenAI Agents SDK's `Runner.run(..., hooks=…)`. On each agent turn it stamps the framework's agent name via a scoped ambient provider (set at agent start / handoff, cleared at end); the agent's model calls ride the standard OpenAI client, so `instrument()` still captures tokens/cost/streaming — this supplies *only* the name (GLR-11c). Mirrors the `cendor.core.langchain` handler; never-overwrite.
+- **`cendor.core.foundry`** (`observe_foundry_agents(client)` + `foundry_agent_scope(agent_id, thread_id)`; extra `[foundry]`) — a correlation adapter for Azure AI Foundry Agents. It wraps `client.runs.{create,create_and_process,stream}` (duck-typed on `.runs`, sync + async) to stamp `agent` + `conversation_id` for the run's duration. **Attribution only** — the model runs server-side, so there is no per-step token/cost capture here (a documented honest limit). Importing this module needs no Azure SDK (it wraps a client you pass in).
+
 ## [1.10.0] — 2026-07-23
 The per-chunk **stream-observer seam** + visible-thinking stream estimation + two Python capture repairs. Additive; nothing changes unless an observer is registered.
 

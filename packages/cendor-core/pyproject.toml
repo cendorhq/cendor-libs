@@ -1,6 +1,6 @@
 [project]
 name = "cendor-core"
-version = "1.10.0"
+version = "1.11.0"
 description = "Wrap your LLM client once and capture exact token counts and cost on every call — the shared foundation the other Cendor tools build on."
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -35,6 +35,13 @@ tiktoken = []                  # back-compat no-op: tiktoken is now a REQUIRED d
 # optional: the CendorCallbackHandler for LangChain/LangGraph (cendor.core.langchain). The handler
 # reads only usage_metadata + run ids — a far more stable surface than client internals.
 langchain = ["langchain-core>=0.3"]
+# optional: CendorAgentHooks for the OpenAI Agents SDK (cendor.core.openai_agents). Sources the
+# framework's agent name onto the bus via the RunHooks lifecycle surface; the agent's model calls ride
+# the standard OpenAI client, so instrument() still captures tokens/cost/streaming (GLR-11c).
+openai-agents = ["openai-agents>=0.1"]
+# optional: Foundry correlation adapter (cendor.core.foundry) — observes Azure AI Foundry Agents
+# thread-run creation and stamps agent id + conversation id. Attribution-only (model runs server-side).
+foundry = ["azure-ai-agents>=1.0"]
 
 [build-system]
 requires = ["hatchling"]

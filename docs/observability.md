@@ -117,8 +117,20 @@ capture path.
 children: `live_spans`/`liveSpans` read it from the event's stamped metadata (captured at
 construction) rather than re-reading run scope at delivery time, so it survives a stream finalized
 after its originating scope. A libs-only app (no SDK) surfaces the same attribute by registering an
-[ambient provider](core.md#ambient-metadata-providers) that returns `{"agent": …}` — or via the
-LangChain handler — and core's span emitter maps `metadata["agent"]` → `gen_ai.agent.name`.
+[ambient provider](core.md#ambient-metadata-providers) that returns `{"agent": …}` — or via a
+[framework adapter](core.md#framework-adapters) — and core's span emitter maps `metadata["agent"]` →
+`gen_ai.agent.name`.
+
+**Agent names from a third-party framework.** When your app runs under LangChain, the OpenAI Agents
+SDK, or Azure AI Foundry Agents, attach the matching [framework adapter](core.md#framework-adapters) —
+it relays the *framework's* agent name (openai-agents / langchain) or agent + conversation id (Foundry)
+onto the same `gen_ai.agent.name` / `gen_ai.conversation.id` attributes, with no extra wiring.
+
+**App-level identity — `OTEL_SERVICE_NAME`.** The app itself is named by the standard OTel resource:
+set `OTEL_SERVICE_NAME=your-app` (and optionally `service.instance.id` via
+`OTEL_RESOURCE_ATTRIBUTES`). It rides `service.name` on every span — Cendor Monitor's **Apps** page
+groups a libs-only app's runs by it (per-process instances counted from `service.instance.id`), and any
+OTLP backend filters on it. Cendor invents no app identity of its own.
 
 ## Content capture — opt-in, OFF by default
 
@@ -191,7 +203,7 @@ Cendor never operates a telemetry endpoint. The monitor is an **operational copy
 **file**, never on what the monitor shows.
 
 ```bash
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.7.0
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.8.0
 # then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
 ```
 

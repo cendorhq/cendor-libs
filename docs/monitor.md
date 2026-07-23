@@ -19,7 +19,7 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.7.0
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.8.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -94,6 +94,23 @@ identity: an `sdk` run is never "more governed" than a `libs` call. Give a libs 
 `core.trace("run-id")` scopes (+ an ambient agent provider), or move to the SDK.
 
 > *(Screenshots of the door badge + filter land in the next monitor showcase touch.)*
+
+### Apps — the libs door's top level (v0.8)
+
+The libs door gets a top-level entity of its own, symmetric with the SDK door's **Agents** page: the
+**Apps** page groups every run by its OTel resource **`service.name`**. Each app card rolls up runs,
+tokens, spend, governance, errors, and a **distinct-instance count** (from `service.instance.id`, the
+standard OTel per-process id) — click through to that app's runs. This answers the "what contains all
+of a libs-only app's runs?" question **in-standard**: an app's identity is its own OTel resource, not
+anything Cendor invents. Set it with one env var and zero code:
+
+```bash
+OTEL_SERVICE_NAME=billing-bot   # (and optionally OTEL_RESOURCE_ATTRIBUTES=service.instance.id=…)
+```
+
+Runs with no `service.name` group under an **unnamed** app card that teaches exactly this fix. Nothing
+new on the wire — `service.name` was already stored on every run row; v0.8 makes it an entity and adds
+the nullable `instance_id` column (an additive, zero-loss schema upgrade).
 
 ### Proof pages + the governance stream
 
