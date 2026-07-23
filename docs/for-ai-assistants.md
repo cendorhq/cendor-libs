@@ -64,7 +64,7 @@ differ or where a plausible guess is wrong.
 | cassette in the SDK | `from cendor import cassette` — **not** `from cendor.sdk` | `import { using } from '@cendor/cassette'` | cassette is **not** re-exported by the SDK; it surfaces only via the eval harness. Import it from the umbrella / `@cendor/cassette`. |
 | spotlight / adapters under the SDK | `rules.spotlight(...)` (on the SDK `rules`) | `rules.spotlight({...})` (on the SDK `rules` since @cendor/sdk 0.10.0) | Both SDKs re-export the **full** library rule catalogue — `spotlight`, the detection-tier adapters, and the similarity checks all ride the SDK `rules` namespace. Only the TS helpers (`payloadText`, `NORMALIZATIONS`) stay library-only. |
 | Red-team a gate | `from cendor.guardrails import load_corpus, run_redteam` | `import { loadCorpus, runRedteam } from '@cendor/guardrails'` | `redteam` / `load_corpus` live in `cendor.guardrails`, deliberately **not** SDK re-exports — cendor vends no attack data. |
-| Python-only SDK output gates | `Agent(reask_on_output_trip=2, stream_check_window=200)` | *Python-first — the TS port lands later* | Bounded re-ask on an output block + streaming output-window checks are Python-first in `cendor-sdk`; see the [parity matrix](languages.md). |
+| SDK output gates: re-ask + stream window | `Agent(reask_on_output_trip=2, stream_check_window=200)` | `new Agent({ reaskOnOutputTrip: 2, streamCheckWindow: 200 })` (SDK ≥ 0.20) | In **both** languages (TS since @cendor/sdk 0.20). Bounded re-ask fires only on a **non-streaming** output block; the stream window re-checks buffered `run.stream` output every N chars. **Streaming re-ask exists in neither language** — a streamed answer's deltas can't be unshown; see the [parity matrix](languages.md). |
 | SDK provider ids | `Agent(model="…", provider="huggingface")` | `new Agent({ model, provider: 'huggingface' })` | HF Hub ids & Azure deployment names aren't prefix-inferable — always pass `provider=`. Provider SDKs are extras (Py) / peers (TS). |
 | Calls `instrument()` does **not** capture | `chat.completions.parse` / `responses.parse`, Anthropic `messages.stream()` helper + `tool_runner`, Batch APIs | same entrypoints — the helpers bypass the wrapped `create` seam | These emit **no bus event** (silent — budgets/audit never see them). For governed calls use `chat.completions.create`, `responses.create`, or `messages.create` (`stream=True` / `stream: true`). Openai-shaped `embeddings.create` **is** captured since core 1.6.0 / 0.6.0 (`metadata["embedding"] = True`; pre-flight budgets/guards apply); embeddings on other client shapes remain uncaptured. |
 | Tool / output schema version (SDK) | schema derives from type hints — no zod | `tool(fn, { parameters: z.object({...}) })` / `outputType` — a **zod 4** schema | `@cendor/sdk` ≥ 0.11 requires **zod 4**; a zod 3 schema is rejected with a clear error. On zod 3.25+ use `import { z } from 'zod/v4'`, or upgrade zod to `^4`, or pass a raw `jsonSchema:`. (zod ships with the SDK — you don't match its version.) SDK ≤ 0.10 used zod 3 and **silently emitted an empty parameter schema** for a zod-4 schema — upgrade. |
@@ -358,7 +358,7 @@ any OTLP); this is optional dev tooling. See [Cendor Monitor](monitor.md).
 <!-- tab: Python -->
 
 ```python
-# 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.6.0
+# 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.7.0
 # 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 from cendor.sdk import run
 from cendor.sdk.otel import live_spans
@@ -370,7 +370,7 @@ with live_spans():                 # your runs stream to Cendor Monitor at http:
 <!-- tab: TypeScript -->
 
 ```ts
-// 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.6.0
+// 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.7.0
 // 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 import { run, liveSpans } from '@cendor/sdk';
 
