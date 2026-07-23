@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.5.0] — 2026-07-23
+Mid-stream budget breaker (`on_exceed="break"`) + nested-provider `clamp`. Backward-compatible.
+
+### Added
+- **`on_exceed="break"`** — a mid-stream budget breaker. It rides `cendor-core`'s new per-chunk stream-observer seam to cut a streamed call the instant its running output estimate (visible text + visible thinking) crosses the remaining `tokens=`/`usd=` budget: you keep the partial output already yielded, the provider bills to the cut (~one chunk + one RTT past — it stops the meter, it does not un-bill the provider), and the settled usage is an estimate flagged `usage_estimated`. USD headroom is converted to an integer token allowance once per stream (Decimal off the hot path); `reasoning_reserve` cuts early on hidden-thinking models. It also acts as a post-flight cumulative gate (like `"raise"`) for non-streamed calls, and emits a `BudgetEvent(action="broken")`.
+
+### Changed
+- **`on_exceed="clamp"` now injects the ceiling for more providers** — nested Bedrock `inferenceConfig.maxTokens` and Ollama `options.num_predict` (copy-on-write merged), plus a plain-**dict** Gemini `config.max_output_tokens`. A typed Gemini `GenerateContentConfig` can't be safely merged and still falls back to a hard block, as before (its `max_output_tokens` also does not bound hidden thinking — see docs).
+- Requires `cendor-core >= 1.10` (the stream-observer seam).
+
 ## [1.4.0] — 2026-07-22
 Streamed spend drained out of scope now accrues, enforces, and attributes (Bug A fix).
 

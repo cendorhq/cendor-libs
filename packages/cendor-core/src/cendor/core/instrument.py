@@ -134,6 +134,70 @@ def _intercept(event: Any) -> Any:
     return MISS
 
 
+# --------------------------------------------------------------------------- stream observers
+
+#: Per-chunk stream observers (used by ``tokenguard``'s mid-stream budget breaker; harmless
+#: otherwise). Each runs on every streamed chunk with the live ``LLMCall`` and core-extracted text
+#: deltas. This is an *interceptor-discipline* seam: **raising aborts the stream** — the proxy
+#: closes the underlying provider stream, finalizes the ``LLMCall`` once (partial usage, flagged
+#: estimated), and re-raises. Core holds all provider parsing; an observer only ever sees text.
+_stream_observers: list[Callable[[LLMCall, str, str], None]] = []
+_stream_observers_lock = threading.Lock()
+
+
+def add_stream_observer(
+    fn: Callable[[LLMCall, str, str], None],
+) -> Callable[[LLMCall, str, str], None]:
+    """Register a per-chunk stream observer, called ``fn(call, delta_text, delta_thinking)`` for
+    every chunk of every instrumented stream. **Raising aborts the stream** (interceptor
+    discipline): the underlying provider stream is closed, the ``LLMCall`` is finalized once with a
+    partial (estimated) usage, and the exception propagates to the consumer's iteration. Idempotent.
+
+    This is the generic core seam ``tokenguard``'s mid-stream budget breaker
+    (``budget(on_exceed="break")``) registers on; core itself learns no budget vocabulary (mirrors
+    the ambient-provider discipline). ``delta_text`` is the visible text of this chunk;
+    ``delta_thinking`` is any *visible* reasoning/thinking text (Anthropic ``thinking_delta``,
+    Ollama ``message.thinking``, OpenAI-compat ``reasoning_content``, Bedrock ``reasoningContent``);
+    both are extracted by core, so an observer never parses a provider shape. With zero observers
+    registered it is one truthiness check per chunk — the streaming hot path is untouched.
+
+    ```python
+    from cendor.core import add_stream_observer
+    add_stream_observer(lambda call, text, thinking: None)  # inert; raising would cut the stream
+    ```
+    """
+    with _stream_observers_lock:
+        if fn not in _stream_observers:
+            _stream_observers.append(fn)
+    return fn
+
+
+def remove_stream_observer(fn: Callable[[LLMCall, str, str], None]) -> None:
+    """Unregister a previously added stream observer (no error if absent)."""
+    with _stream_observers_lock:
+        if fn in _stream_observers:
+            _stream_observers.remove(fn)
+
+
+def _observe_chunk(call: LLMCall, chunk: Any, provider: str) -> None:
+    """Run every stream observer for one chunk. Core extracts the visible text + thinking deltas
+    (keeping provider parsing private) and passes them through. A raising observer propagates — the
+    proxy's ``__next__``/``__anext__`` catches it to abort + finalize once. Called only when at
+    least one observer is registered (the caller's truthiness check is the zero-observer fast path).
+
+    Iterates the observer list **directly** (no per-chunk lock/copy) — this is the streaming hot
+    path and registration is rare; the lock guards only mutation (``add``/``remove``), and CPython
+    list iteration tolerates a concurrent append. The extractions run once per chunk, not per fn.
+    """
+    observers = _stream_observers
+    if not observers:
+        return
+    delta_text = _stream_text(chunk, provider)
+    delta_thinking = _stream_thinking_text(chunk, provider)
+    for fn in observers:
+        fn(call, delta_text, delta_thinking)
+
+
 # --------------------------------------------------------------------------- model clients
 
 
@@ -220,7 +284,12 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
     if messages is not None and callable(getattr(messages, "create", None)):
         return [(messages, "create", "anthropic")]
     if callable(getattr(client, "converse", None)):  # AWS Bedrock Converse API
-        return [(client, "converse", "bedrock")]
+        bedrock: list[tuple[Any, str, str]] = [(client, "converse", "bedrock")]
+        # A Bedrock client also exposes converse_stream (L3): no stream= kwarg, and the iterable
+        # arrives as the "stream" member of a dict response — an always-stream target, new shape.
+        if callable(getattr(client, "converse_stream", None)):
+            bedrock.append((client, "converse_stream", "bedrock_stream"))
+        return bedrock
     if callable(getattr(client, "generate_content", None)):  # legacy google-generativeai
         return [(client, "generate_content", "google")]
     # google-genai SDK: sync client.models + async client.aio.models generate_content
@@ -239,7 +308,11 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
 
 
 #: Internal provider tags that map to a public ``LLMCall.provider`` name.
-_PUBLIC_PROVIDER = {"openai_responses": "openai", "openai_embeddings": "openai"}
+_PUBLIC_PROVIDER = {
+    "openai_responses": "openai",
+    "openai_embeddings": "openai",
+    "bedrock_stream": "bedrock",
+}
 
 
 def _public_provider(provider: str) -> str:
@@ -247,26 +320,63 @@ def _public_provider(provider: str) -> str:
     return _PUBLIC_PROVIDER.get(provider, provider)
 
 
+#: Detection tags whose target is *always* streaming (no ``stream=True`` kwarg to key off) — the
+#: iterable arrives via a fixed response shape. Bedrock's ``converse_stream`` is the only one today.
+_ALWAYS_STREAM = frozenset({"bedrock_stream"})
+
+#: Internal tag → the provider the streaming extractors (:func:`_stream_text`/:func:`_stream_usage`)
+#: should use for a wrapped stream. ``bedrock_stream`` reuses the plain ``bedrock`` branches;
+#: ``openai_responses`` keeps its own (distinct stream event shape), so it is deliberately absent.
+_STREAM_PROVIDER = {"bedrock_stream": "bedrock"}
+
+
+def _stream_provider(provider: str) -> str:
+    return _STREAM_PROVIDER.get(provider, provider)
+
+
+def _accepts_stream_options(fn: Any) -> bool:
+    """Whether ``fn`` declares ``stream_options`` as an explicit named parameter.
+
+    Used to gate the HF ``include_usage`` injection: only inject when the installed
+    ``huggingface_hub`` version's ``chat_completion`` *explicitly* accepts ``stream_options`` —
+    never rely on a ``**kwargs`` catch-all (HF router backends vary and may 4xx on an unknown
+    field), and an older hub with no such param raises ``TypeError`` if we pass it. No false hits.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "stream_options" in params
+
+
 def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
+    always_stream = provider in _ALWAYS_STREAM
+    # L1: inject stream_options={"include_usage": True} for OpenAI always; for HF only when the
+    # installed hub's chat_completion explicitly accepts it (signature-gated — never blind).
+    inject_usage = provider == "openai" or (
+        provider == "huggingface" and _accepts_stream_options(fn)
+    )
+
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def awrapper(*args: Any, **kwargs: Any) -> Any:
             call, start = _pre(provider, args, kwargs, model_default)
-            _ensure_stream_usage_options(provider, kwargs)
+            _ensure_stream_usage_options(inject_usage, kwargs)
+            streaming = bool(kwargs.get("stream")) or always_stream
             directive = _intercept(call)
             if isinstance(directive, Reroute):
                 _apply_reroute(call, kwargs, directive, provider)
                 response = await fn(*args, **kwargs)
             elif directive is not MISS:
                 call.metadata["replayed"] = True
-                if kwargs.get("stream"):
+                if streaming:
                     return _areplay_stream(call, directive, provider, start)
                 _post(call, directive, provider, start)
                 return directive
             else:
                 response = await fn(*args, **kwargs)
-            if kwargs.get("stream"):
+            if streaming:
                 return _aproxy_stream(call, response, provider, start)
             _post(call, response, provider, start)
             return response
@@ -277,26 +387,44 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         call, start = _pre(provider, args, kwargs, model_default)
-        _ensure_stream_usage_options(provider, kwargs)
+        _ensure_stream_usage_options(inject_usage, kwargs)
+        streaming = bool(kwargs.get("stream")) or always_stream
         directive = _intercept(call)
         if isinstance(directive, Reroute):
             _apply_reroute(call, kwargs, directive, provider)
             response = fn(*args, **kwargs)
         elif directive is not MISS:
             call.metadata["replayed"] = True
-            if kwargs.get("stream"):
+            if streaming:
                 return _replay_stream(call, directive, provider, start)
             _post(call, directive, provider, start)
             return directive
         else:
             response = fn(*args, **kwargs)
-        if kwargs.get("stream"):
+        # L5: a sync-looking method that actually returns an awaitable is a misdetected async client
+        # (``iscoroutinefunction()`` was False — decorated/partial/duck-typed method). A truly sync
+        # client never returns an awaitable, so continuing on the awaited value is a zero-false-
+        # positive repair: usage is captured instead of silently lost on the un-awaited coroutine.
+        if inspect.isawaitable(response):
+            return _async_continuation(call, response, provider, start, streaming)
+        if streaming:
             return _proxy_stream(call, response, provider, start)
         _post(call, response, provider, start)
         return response
 
     setattr(wrapper, _WRAPPED, True)
     return wrapper
+
+
+async def _async_continuation(
+    call: LLMCall, awaitable: Any, provider: str, start: float, streaming: bool
+) -> Any:
+    """L5: await a misdetected async client's response and finish the normal post/stream path."""
+    response = await awaitable
+    if streaming:
+        return _aproxy_stream(call, response, provider, start)
+    _post(call, response, provider, start)
+    return response
 
 
 #: Per-provider kwarg carrying the request messages, so ``Reroute(messages=…)`` rewrites the right
@@ -379,7 +507,7 @@ def _extract_request(
         else:
             messages = []
         return kwargs.get("model", ""), messages
-    if provider == "bedrock":
+    if provider in ("bedrock", "bedrock_stream"):
         return kwargs.get("modelId", ""), list(kwargs.get("messages") or [])
     if provider == "google":
         contents = kwargs.get("contents")
@@ -457,15 +585,16 @@ def _extract_reported_cost(response: Any) -> Money | None:
     return None
 
 
-def _ensure_stream_usage_options(provider: str, kwargs: dict) -> None:
-    """For an OpenAI stream, ask the provider to emit a final usage chunk so streamed usage is the
-    real billed count, not an offline estimate.
+def _ensure_stream_usage_options(inject: bool, kwargs: dict) -> None:
+    """Ask the provider to emit a final usage chunk so streamed usage is the real billed count, not
+    an offline estimate.
 
-    Injects ``stream_options={"include_usage": True}`` only when ``stream=True`` and the caller
-    hasn't set ``stream_options`` themselves (their value is always left intact). No-op for other
-    providers. docs/core.md §6.
+    Injects ``stream_options={"include_usage": True}`` only when ``inject`` (OpenAI always; HF only
+    when its ``chat_completion`` signature explicitly accepts ``stream_options`` — see
+    :func:`_accepts_stream_options`), the call is a stream, and the caller hasn't set
+    ``stream_options`` themselves (their value is always left intact). docs/core.md §6.
     """
-    if provider == "openai" and kwargs.get("stream") and "stream_options" not in kwargs:
+    if inject and kwargs.get("stream") and "stream_options" not in kwargs:
         kwargs["stream_options"] = {"include_usage": True}
 
 
@@ -524,6 +653,22 @@ class _ProxyStream:
         if not self._chunks and self._replay_chunks is None:  # first live chunk → TTFT (G23)
             self._call.metadata["ttft_ms"] = (time.perf_counter() - self._start) * 1000.0
         self._chunks.append(chunk)
+        if (
+            _stream_observers
+        ):  # mid-stream observers (tokenguard breaker); zero ⇒ one truthiness check
+            try:
+                _observe_chunk(self._call, chunk, self._provider)
+            except BaseException:
+                # Interceptor discipline: an observer raised (e.g. the budget breaker crossed a
+                # cap).
+                # Close the underlying provider stream + finalize once (partial usage, flagged
+                # estimated), then propagate — the consumer's loop sees the observer's exception.
+                # The crossing chunk is withheld from the consumer but kept for the settle (the
+                # provider generated + bills it). A cut settles on the partial even for a replay.
+                self._close_underlying()
+                self._replay_chunks = None
+                self._finalize()
+                raise
         return chunk
 
     def __enter__(self) -> _ProxyStream:
@@ -606,6 +751,20 @@ class _AProxyStream:
         if not self._chunks and self._replay_chunks is None:  # first live chunk → TTFT (G23)
             self._call.metadata["ttft_ms"] = (time.perf_counter() - self._start) * 1000.0
         self._chunks.append(chunk)
+        if (
+            _stream_observers
+        ):  # mid-stream observers (tokenguard breaker); zero ⇒ one truthiness check
+            try:
+                _observe_chunk(self._call, chunk, self._provider)
+            except BaseException:
+                # Interceptor discipline: an observer raised (e.g. the budget breaker crossed a
+                # cap).
+                # Close the underlying stream + finalize once (partial usage, flagged estimated),
+                # then propagate. The crossing chunk is withheld from the consumer, kept for settle.
+                await self._aclose_underlying()
+                self._replay_chunks = None
+                self._finalize()
+                raise
         return chunk
 
     async def __aenter__(self) -> _AProxyStream:
@@ -661,27 +820,45 @@ async def _aiter_list(items: list) -> Any:
 def _proxy_stream(call: LLMCall, stream: Any, provider: str, start: float) -> Any:
     """Wrap a sync streaming response: chunks pass through unchanged and usage is accumulated, so
     the ``LLMCall`` is emitted once with usage/cost/latency on completion (or early close). The
-    result is both an iterator and a context manager — see :class:`_ProxyStream`."""
-    return _ProxyStream(call, stream, provider, start)
+    result is both an iterator and a context manager — see :class:`_ProxyStream`.
+
+    Bedrock ``converse_stream`` (``bedrock_stream``) returns the iterable as the ``"stream"`` member
+    of a dict response — wrap that member and hand the dict back unchanged, so ``for e in
+    response["stream"]`` still works. Every other provider returns the iterable directly."""
+    sp = _stream_provider(provider)
+    if provider == "bedrock_stream":
+        proxy = _ProxyStream(call, _get(stream, "stream"), sp, start)
+        return {**stream, "stream": proxy} if isinstance(stream, dict) else proxy
+    return _ProxyStream(call, stream, sp, start)
 
 
 def _aproxy_stream(call: LLMCall, stream: Any, provider: str, start: float) -> Any:
     """Async counterpart of :func:`_proxy_stream` for ``async for`` / ``async with`` responses."""
-    return _AProxyStream(call, stream, provider, start)
+    sp = _stream_provider(provider)
+    if provider == "bedrock_stream":
+        proxy = _AProxyStream(call, _get(stream, "stream"), sp, start)
+        return {**stream, "stream": proxy} if isinstance(stream, dict) else proxy
+    return _AProxyStream(call, stream, sp, start)
 
 
 def _replay_stream(call: LLMCall, recorded: Any, provider: str, start: float) -> Any:
     """Re-yield a recorded stream (a chunk sequence) so a replayed streamed call still iterates —
     and, like a live stream, supports ``with``. Finalize accounts for the full recording."""
     chunks = list(recorded) if recorded is not None else []
-    return _ProxyStream(call, iter(chunks), provider, start, replay_chunks=chunks)
+    proxy = _ProxyStream(
+        call, iter(chunks), _stream_provider(provider), start, replay_chunks=chunks
+    )
+    return {"stream": proxy} if provider == "bedrock_stream" else proxy
 
 
 def _areplay_stream(call: LLMCall, recorded: Any, provider: str, start: float) -> Any:
     """Async counterpart of :func:`_replay_stream` (``async for`` / ``async with`` over recorded
     chunks)."""
     chunks = list(recorded) if recorded is not None else []
-    return _AProxyStream(call, _aiter_list(chunks), provider, start, replay_chunks=chunks)
+    proxy = _AProxyStream(
+        call, _aiter_list(chunks), _stream_provider(provider), start, replay_chunks=chunks
+    )
+    return {"stream": proxy} if provider == "bedrock_stream" else proxy
 
 
 def _finalize_stream(call: LLMCall, chunks: list, provider: str, start: float) -> None:
@@ -767,16 +944,23 @@ def _estimate_stream_usage(call: LLMCall, chunks: list, provider: str) -> Usage 
     extra for OpenAI; a heuristic otherwise (see :mod:`cendor.core.tokens`).
     """
     text = "".join(_stream_text(ch, provider) for ch in chunks)
-    if not text and not call.messages:
+    thinking = "".join(_stream_thinking_text(ch, provider) for ch in chunks)
+    if not text and not thinking and not call.messages:
         return None
     inp = tokens.count(call.messages, call.model) if call.messages else 0
-    out = tokens.count(text, call.model) if text else 0
+    out_visible = tokens.count(text, call.model) if text else 0
+    # Visible thinking (Anthropic thinking_delta, Ollama message.thinking, reasoning_content,
+    # Bedrock reasoningContent) is billed as output — fold into output and surface it as reasoning,
+    # narrowing the documented limit from "can't see thinking" to "can't see *hidden* thinking"
+    # (OpenAI-native/Gemini reasoning never reaches the wire, so it stays invisible here).
+    out_thinking = tokens.count(thinking, call.model) if thinking else 0
     call.metadata["usage_estimated"] = True
-    return Usage(int(inp), int(out))
+    return Usage(int(inp), int(out_visible + out_thinking), reasoning_tokens=int(out_thinking))
 
 
 def _stream_text(chunk: Any, provider: str) -> str:
-    """Best-effort text of one streamed chunk, per provider (only for the offline estimate)."""
+    """Best-effort *visible* text of one streamed chunk, per provider (offline estimate + content
+    capture). Deliberately excludes reasoning/thinking text — see :func:`_stream_thinking_text`."""
     try:
         if provider == "openai_responses":
             # Responses streaming: text arrives on response.output_text.delta events (.delta = str).
@@ -796,6 +980,40 @@ def _stream_text(chunk: Any, provider: str) -> str:
             return str(_get(chunk, "text", "") or "")
         if provider == "bedrock":
             return str(_get(_get(_get(chunk, "contentBlockDelta"), "delta"), "text", "") or "")
+    except Exception:  # noqa: BLE001 - estimation must never break the passthrough
+        return ""
+    return ""
+
+
+def _stream_thinking_text(chunk: Any, provider: str) -> str:
+    """Best-effort *visible* reasoning/thinking text of one chunk, per provider.
+
+    Kept separate from :func:`_stream_text` (which content capture reuses — folding thinking into it
+    would mislabel captured content): this feeds the offline estimate (output + reasoning) and the
+    stream observers, so a mid-stream budget breaker counts visible thinking too. Hidden reasoning
+    (OpenAI-native, Gemini) never reaches the wire, so it stays ``""`` here — the documented limit.
+    """
+    try:
+        if provider == "anthropic":
+            # Extended thinking streams as content_block_delta events with a thinking_delta.
+            if _get(chunk, "type") == "content_block_delta":
+                delta = _get(chunk, "delta")
+                if _get(delta, "type") == "thinking_delta":
+                    return str(_get(delta, "thinking", "") or "")
+            return ""
+        if provider in (
+            "openai",
+            "huggingface",
+        ):  # OpenAI-compatible reasoning_content (e.g. DeepSeek)
+            choices = _get(chunk, "choices") or []
+            return "".join(
+                str(_get(_get(c, "delta"), "reasoning_content", "") or "") for c in choices
+            )
+        if provider == "ollama":
+            return str(_get(_get(chunk, "message"), "thinking", "") or "")
+        if provider == "bedrock":
+            rc = _get(_get(_get(chunk, "contentBlockDelta"), "delta"), "reasoningContent")
+            return str(_get(rc, "text", "") or "")
     except Exception:  # noqa: BLE001 - estimation must never break the passthrough
         return ""
     return ""

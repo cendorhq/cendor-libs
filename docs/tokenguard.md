@@ -122,6 +122,33 @@ metadata seam — not re-read at drain time. Previously that spend was silently 
 the tags, and, worse, not counted against a cumulative cap, so an `on_exceed="block"` ceiling could be
 overrun by streams that finished outside their scope.
 
+### Streaming runaways (`on_exceed="break"`)
+`"clamp"` sets **one** server-side ceiling *before* a streamed call; `on_exceed="break"` (needs
+`cendor-core ≥ 1.10` / `@cendor/core ≥ 0.11`, which added the stream-observer seam) watches a stream
+**as it arrives** and cuts it the instant its running output-token estimate crosses the remaining
+`tokens=`/`usd=` budget. It's the belt for a *single* stream that would blow past the cap mid-generation.
+
+```python
+with budget(tokens=2000, on_exceed="break"):
+    for chunk in client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True):
+        render(chunk)   # cut ~when streamed output crosses 2000 tokens; BudgetExceeded raised here
+```
+
+The honest contract (accept it before you use it):
+
+- **You keep the partial output already yielded.** The chunk that crossed the cap is withheld from
+  your loop, then `BudgetExceeded` is raised out of the iteration.
+- **The provider still bills to the cut.** Cutting closes the underlying stream (~one chunk + one RTT
+  past the crossing) — it *stops the meter*, it does **not** un-bill the tokens the provider already
+  generated. The settled `LLMCall.usage` is an estimate flagged `usage_estimated`.
+- **It counts visible thinking.** Anthropic `thinking_delta`, Ollama `message.thinking`, OpenAI-compat
+  `reasoning_content`, and Bedrock `reasoningContent` count toward the running estimate. **Hidden**
+  reasoning (OpenAI-native, Gemini) never reaches the wire, so a heavy-thinking model cuts *late* —
+  raise `reasoning_reserve` to trade that for an *early* cut.
+- **Cumulative too.** Each stream's allowance is computed from the budget's *live* remaining balance,
+  so a loop of streams still stops; and for a **non-streamed** call under `"break"` it degrades to a
+  post-flight `"raise"` (the cumulative gate). For a hard cap that never overspends, use `"block"`.
+
 ### Unpriced models — a USD blind spot
 A call whose model has no price records `$0`, so a **USD** cap can't enforce against it.
 `tokenguard` warns once per model (`UnpricedModelWarning`) and counts these in
@@ -173,7 +200,8 @@ await withBudget({ usd: 0.25, onExceed: 'block', name: 'per-run cap' }, () => { 
 |---|---|---|
 | `"raise"` | post-flight | Raise `BudgetExceeded` once a returning call crosses the cap — stops the *next* call; spend overshoots by one call. |
 | `"block"` | pre-flight | Refuse an over-budget call *before* it runs (a true circuit breaker). |
-| `"clamp"` | pre-flight | Inject the provider's output ceiling (`max_completion_tokens`/`max_tokens`) to cap one call server-side to the remaining `tokens=` budget. Requires `tokens=`; OpenAI/Anthropic, else falls back to `block`. |
+| `"clamp"` | pre-flight | Inject the provider's output ceiling to cap one call server-side to the remaining `tokens=` budget. Requires `tokens=`. Flat kwarg on OpenAI (`max_completion_tokens`) / Anthropic (`max_tokens`); nested on Bedrock (`inferenceConfig.maxTokens`) and Ollama (`options.num_predict`); Gemini merges only a **dict** `config` (`max_output_tokens`) — a typed `GenerateContentConfig` can't be merged and falls back to `block`. |
+| `"break"` | mid-stream | Cut a **streamed** call the instant its running output estimate (visible text + visible thinking) crosses the remaining `tokens=`/`usd=` budget. Also a post-flight cumulative gate (like `"raise"`) for non-streamed calls. Needs core ≥ 1.10 / 0.11 (the stream-observer seam). See [Streaming runaways](#streaming-runaways-on_exceedbreak). |
 | `"downgrade"` | pre-flight | Reroute to the cheaper model from `downgrade=`, before the call runs; never raises. |
 | `"truncate"` | — | Degrade gracefully (the decorated fn returns `None` / the `with` block exits cleanly). |
 | a callable | — | Invoked with a context dict; you decide. |
@@ -267,10 +295,11 @@ useSink(new OTelSink({ tags: false })); // or: model-only counters (bound metric
 
 ### The budget-events counter
 
-Separately from spend metrics, every pre-flight budget action also increments a governance counter
+Separately from spend metrics, every budget action also increments a governance counter
 `cendor.tokenguard.budget.events` on the meter `cendor.tokenguard` (a no-op when OpenTelemetry isn't
 installed — no setup, no sink to attach). It renders in Prometheus as
-`cendor_tokenguard_budget_events_total`, dimensioned by `action` (`blocked`/`downgraded`/`clamped`),
+`cendor_tokenguard_budget_events_total`, dimensioned by `action`
+(`blocked`/`downgraded`/`clamped`/`broken` — the last for a mid-stream `on_exceed="break"` cut),
 `model`, and — when set — `scope` and the budget `name`. Because a *blocked* call never reaches the
 bus as an `LLMCall`, this is the metric that lets you chart budget-block **rates** (not just see the
 one-off `audit.budget_event` span). Keep budget `name`s bounded for the same cardinality reason as
@@ -382,6 +411,19 @@ spend it attributed, on your own screen. Your own OTel backend stays the product
   post-flight modes; use a pre-flight mode or drain each stream in turn. (Spend from a stream drained
   *after* its `budget()`/`track()` scope exits is still accrued, enforced, and attributed — captured
   at stream creation — since 1.4 / 0.5.)
+- **`on_exceed="break"` stops the meter, it does not un-bill the provider.** It cuts a runaway stream
+  ~one chunk + one RTT past the crossing; the provider bills to the cut and the settled usage is an
+  estimate. It can't see hidden reasoning (below), so a heavy-thinking model cuts late unless you set
+  `reasoning_reserve`. For a cap that *never* runs the call at all, use `"block"`.
+- **`"clamp"` bounds output per provider, not equally.** OpenAI `max_completion_tokens` / Anthropic
+  `max_tokens` / Bedrock `inferenceConfig.maxTokens` / Ollama `options.num_predict` are enforced
+  server-side and include reasoning where the provider bills it. **Gemini is weaker:** clamp merges
+  only a **dict** `config` (`max_output_tokens`), which does **not** clearly bound hidden thinking, and
+  a typed `GenerateContentConfig` can't be merged at all and falls back to `block`. Other providers
+  also fall back to `block`.
+- **Mid-stream/pre-flight estimates can't see hidden reasoning.** Visible thinking is counted (both in
+  the streamed estimate and the `"break"` breaker); OpenAI-native and Gemini reasoning never reaches
+  the wire, so those models are estimated on visible text only — `reasoning_reserve` is the only lever.
 - **Unpriced models are a USD blind spot** (they record `$0`) — prefer a `tokens=` cap or add a
   rate. `tokenguard` warns once per model and counts them in `unpriced_calls()`.
 - **State is in-process and module-global** — ideal for a single worker. For multi-process, put

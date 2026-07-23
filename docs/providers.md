@@ -381,10 +381,23 @@ stream completes. How real (vs estimated) the streamed usage is depends on the e
   (`stream_options={"include_usage": True}`, unless you set `stream_options` yourself), so streamed
   usage is the provider's **real billed count**.
 - **OpenAI Responses API** — usage rides the `response.completed` event, so nothing is injected.
+- **Hugging Face** — `instrument()` injects `stream_options={"include_usage": True}` **only when the
+  installed `huggingface_hub`'s `chat_completion` signature explicitly accepts it** (Python; older
+  hubs / TS are left untouched — pass it yourself where the router supports it). Since core 1.10.
+- **Bedrock `converse_stream`** — captured in **Python** since core 1.10 (a Bedrock client exposes both
+  `converse` and `converse_stream`; the latter has no `stream=` kwarg and returns the event iterable as
+  the `"stream"` member of a dict response, which `instrument()` wraps and hands back unchanged). TS
+  aws-sdk-v3 streaming still rides the SDK provider (the `send(ConverseCommand)` shape can't be
+  duck-typed).
 - **Other providers** — usage is read from the provider's own stream reporting where present, else an
-  offline estimate flagged `usage_estimated`.
+  offline estimate flagged `usage_estimated`. The offline estimate now also counts **visible** thinking
+  (Anthropic `thinking_delta`, Ollama `message.thinking`, OpenAI-compat `reasoning_content`, Bedrock
+  `reasoningContent`); **hidden** reasoning (OpenAI-native, Gemini) never reaches the wire and stays
+  invisible.
 
-AWS Bedrock's separate `converse_stream` entrypoint isn't wrapped — use `converse`.
+**Mid-stream budget cut:** `tokenguard`'s `budget(on_exceed="break")` rides core's per-chunk
+stream-observer seam (`add_stream_observer`, core 1.10 / 0.11) to cut a runaway *stream* the instant its
+running estimate crosses the cap — see [tokenguard streaming runaways](tokenguard.md#streaming-runaways-on_exceedbreak).
 
 ## Notes
 

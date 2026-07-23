@@ -191,7 +191,7 @@ Cendor never operates a telemetry endpoint. The monitor is an **operational copy
 **file**, never on what the monitor shows.
 
 ```bash
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.6.0
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.7.0
 # then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
 ```
 
@@ -460,12 +460,15 @@ audit **file** is a separate, offline-verifiable path — not dependent on any b
 - **Metric cardinality.** `OTelSink` dimensions spend by your `track(...)` tags. Keep tag *values*
   low-cardinality (`feature`, `tenant`, `env` — not a raw per-user id) or pass `OTelSink(tags=False)`
   for model-only counters, so your metrics backend's time-series count doesn't explode.
-- **Streamed usage estimation can't see thinking/reasoning tokens.** When a provider streams no usage
-  and Cendor falls back to a text-based offline estimate (flagged `cendor.usage_estimated="true"` on
-  the span / `usage_estimated` on the event), the estimate counts only the streamed **text** —
-  reasoning/thinking tokens never appear in that text, so a text-estimated streamed count
-  **undercounts** reasoning spend. Providers that report real streamed usage are unaffected; the flag
-  is exactly the signal that tells a backend which figures are estimates.
+- **Streamed usage estimation can't see *hidden* thinking.** When a provider streams no usage and
+  Cendor falls back to a text-based offline estimate (flagged `cendor.usage_estimated="true"` on the
+  span / `usage_estimated` on the event), it counts the streamed **visible** text — including any
+  **visible** thinking the wire carries (Anthropic `thinking_delta`, Ollama `message.thinking`,
+  OpenAI-compat `reasoning_content`, Bedrock `reasoningContent`, folded into output + surfaced as
+  reasoning since core 1.10 / 0.11). **Hidden** reasoning (OpenAI-native, Gemini) never appears on the
+  wire, so a text-estimated streamed count still **undercounts** those models' reasoning spend.
+  Providers that report real streamed usage are unaffected; the flag is exactly the signal that tells a
+  backend which figures are estimates.
 - **Semantic-convention drift.** The GenAI semconv is still maturing. Cendor targets it faithfully;
   a few names are Cendor extensions in the `gen_ai.*` namespace (a cost counter, a reasoning-token
   counter — semconv defines no cost metric yet) and the token-usage metric is a Counter where the

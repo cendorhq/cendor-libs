@@ -19,7 +19,7 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.6.0
+docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.7.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -78,6 +78,22 @@ governance count is never a dead end: open the run and every verdict sits on the
 
 <img class="theme-dark" src="/monitor/console-journey-dark.webp" alt="Cendor Monitor — run journey with governance inline" loading="lazy" />
 <img class="theme-light" src="/monitor/console-journey-light.webp" alt="Cendor Monitor — run journey with governance inline (light theme)" loading="lazy" />
+
+### Two doors: SDK runs and libs-only calls
+
+The monitor renders **two doors**, because the two ways to use Cendor put different amounts of
+*identity* on the wire — the truth is identical, the shape isn't. A run under **cendor-sdk**
+(`live_spans()` / `span_tree()`) carries an `agent.run` root, so it gets the full **run ▸ session ▸
+agent** hierarchy and shows an **`sdk`** badge. A **libs-only** app (you called `instrument()` and
+`use_span_emitter()` yourself, scope `cendor.core`) emits flat governed calls with no run root, so it
+shows a **`libs`** badge — tokens, cost, and governance are all there (the run row rolls them up from
+its own steps), but there is no session/agent hierarchy, *by design*. Filter Runs by **door**, and the
+empty Agents/Sessions pages explain the difference rather than looking broken. The split adds **no wire
+attribute** — it reads the OTel instrumentation-scope name already on every span. Same wire, richer
+identity: an `sdk` run is never "more governed" than a `libs` call. Give a libs app run identity with
+`core.trace("run-id")` scopes (+ an ambient agent provider), or move to the SDK.
+
+> *(Screenshots of the door badge + filter land in the next monitor showcase touch.)*
 
 ### Proof pages + the governance stream
 

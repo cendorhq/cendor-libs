@@ -106,6 +106,59 @@ def run() -> list[Result]:
             )
         )
 
+    # 5) streaming per-chunk overhead: the core stream-observer fast path (no observer) vs the armed
+    # tokenguard breaker (on_exceed="break") that never trips. GC-D9 bars: no-observer ≈ noise; armed
+    # ≤ ~1 µs/chunk (hybrid running estimate, exact re-encode amortized over 256-char segments).
+    import cendor.tokenguard as _tg
+    from cendor.core import remove_stream_observer
+
+    _N = 200
+
+    def _make_stream() -> SimpleNamespace:
+        chunks = [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="tok "))], usage=None
+            )
+            for _ in range(_N)
+        ]
+
+        def create(*, model: str, messages: list, **kw: object) -> object:
+            return iter(chunks)
+
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    def _drain() -> None:
+        c = instrument(_make_stream())
+        for _ in c.chat.completions.create(model="gpt-4o", messages=_MSGS, stream=True):
+            pass
+
+    with isolated():
+        reset()
+        remove_stream_observer(_tg._stream_breaker)  # true zero-observer fast path
+        t_base = timed(_drain)
+        with budget(tokens=10**9, on_exceed="break"):  # arm the observer; cap huge -> never trips
+            t_armed = timed(_drain)
+        remove_stream_observer(_tg._stream_breaker)
+        reset()
+    per_base = t_base / _N
+    per_armed = t_armed / _N
+    rows.append(
+        Result(
+            "core",
+            "streaming per-chunk overhead — no observer",
+            dur(per_base),
+            f"zero-observer fast path (one check/chunk), {_N}-chunk stream",
+        )
+    )
+    rows.append(
+        Result(
+            "tokenguard",
+            "streaming per-chunk overhead — armed breaker",
+            dur(max(0.0, per_armed - per_base)),
+            "on_exceed='break' running estimate over the no-observer baseline; hybrid re-encode",
+        )
+    )
+
     return rows
 
 

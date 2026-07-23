@@ -2,6 +2,20 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.10.0] — 2026-07-23
+The per-chunk **stream-observer seam** + visible-thinking stream estimation + two Python capture repairs. Additive; nothing changes unless an observer is registered.
+
+### Added
+- **`add_stream_observer(fn)` / `remove_stream_observer(fn)`** — register a per-chunk observer `fn(call, delta_text, delta_thinking)` on every instrumented stream. **Raising aborts the stream** (interceptor discipline): core closes the underlying provider stream, finalizes the `LLMCall` once with the partial (estimated) usage, and re-raises to the consumer. Zero observers ⇒ one truthiness/length check per chunk (streaming hot path untouched). This is the generic seam `cendor-tokenguard`'s mid-stream budget breaker (`budget(on_exceed="break")`) rides — core learns no budget vocabulary.
+- **Bedrock `converse_stream` capture (Python)** — a Bedrock client's `converse_stream` (no `stream=` kwarg; the event iterable arrives as the `"stream"` member of a dict response) is now wrapped, priced, and recorded like any stream.
+
+### Changed
+- **Streamed usage estimation now counts *visible* thinking** — Anthropic `thinking_delta`, Ollama `message.thinking`, OpenAI-compat `reasoning_content`, and Bedrock `reasoningContent` are folded into output and surfaced as reasoning. Narrows the documented limit from "can't see thinking" to "can't see *hidden* thinking" (OpenAI-native/Gemini reasoning still never reaches the wire).
+- **HF streamed-usage injection is signature-gated** — `stream_options={"include_usage": True}` is injected for Hugging Face only when the installed `huggingface_hub`'s `chat_completion` explicitly accepts it (never blind — avoids a 4xx / `TypeError` on older hubs). OpenAI is unchanged.
+
+### Fixed
+- **Async-detect repair (Python).** A sync-looking client method that actually returns an awaitable (a misdetected async client — `iscoroutinefunction()` was `False`) now has its usage captured via an awaited continuation, instead of silently losing usage on the un-awaited coroutine. A truly sync client never returns an awaitable, so there are zero false positives.
+
 ## [1.9.0] — 2026-07-22
 The ambient metadata seam — the one core-owned pre-emit capture point for run context. Additive; nothing changes unless a provider is registered.
 

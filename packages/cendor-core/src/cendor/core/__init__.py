@@ -8,10 +8,12 @@ from .instrument import (
     MISS,
     Reroute,
     add_interceptor,
+    add_stream_observer,
     current_trace_id,
     instrument,
     instrument_tool,
     remove_interceptor,
+    remove_stream_observer,
     trace,
 )
 from .types import LLMCall, Money, ToolCall, Usage, sum_usage
@@ -39,6 +41,10 @@ __all__ = [
     # every event at construction — the one correct capture moment (mirror of @cendor/core).
     "add_ambient_provider",
     "remove_ambient_provider",
+    # Stream-observer seam: a per-chunk observer on instrumented streams; raising aborts the stream
+    # (tokenguard's mid-stream budget breaker rides this — core learns no budget vocabulary).
+    "add_stream_observer",
+    "remove_stream_observer",
     "trace",
     "current_trace_id",
 ]

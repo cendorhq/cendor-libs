@@ -154,16 +154,17 @@ written in one language records byte-identical `guardrail_decision` entries as t
 
 ### `BudgetEvent` (emitted by `cendor-tokenguard`, not `instrument()`)
 
-A fourth bus event, emitted by `tokenguard` on each **pre-flight budget action** — `blocked`,
-`downgraded`, or `clamped`. Like `GuardrailDecision`, it is produced by a sibling library, rides the
-same bus, and `acttrace` chains it as a `budget_event` entry by **duck typing** (`action` +
-`projected_usd` + `cap_usd` present), with no import in either direction. It matters because a
-*blocked* call never reaches the bus as an `LLMCall` (it is refused before it runs), so this event is
-the only signal that the breaker fired — the governance action worth alerting on.
+A fourth bus event, emitted by `tokenguard` on each **budget action** — `blocked`, `downgraded`, or
+`clamped` (pre-flight), or `broken` (a mid-stream `on_exceed="break"` cut, since tokenguard 1.5 /
+0.6). Like `GuardrailDecision`, it is produced by a sibling library, rides the same bus, and
+`acttrace` chains it as a `budget_event` entry by **duck typing** (`action` + `projected_usd` +
+`cap_usd` present), with no import in either direction. It matters because a *blocked* call never
+reaches the bus as an `LLMCall` (it is refused before it runs), and a *broken* stream's `LLMCall`
+settles with only a partial estimate — so this event is the clearest signal that the breaker fired.
 
 | field | type | default | notes |
 |---|---|---|---|
-| `action` | string | — | `blocked` \| `downgraded` \| `clamped`. |
+| `action` | string | — | `blocked` \| `downgraded` \| `clamped` \| `broken`. |
 | `reason` | string | `""` | short, human-readable (the projection vs cap). |
 | `name` | string \| null | `null` | the budget's human identity (`budget(name=…)`), for UI/alert grouping. A **bounded** identifier (also a governance-counter label). |
 | `description` | string \| null | `null` | a longer human description of what the budget guards. |

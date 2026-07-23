@@ -79,15 +79,24 @@ def test_clamp_caps_a_single_oversized_call_even_with_headroom():
 
 
 def test_clamp_falls_back_to_block_on_unsupported_provider():
-    # Ollama puts the cap in nested options, so clamp can't inject it safely -> pre-flight block.
+    # L2 (core 1.10.0 / tokenguard 1.5.0): Ollama's nested options.num_predict IS now clampable — a
+    # bare Ollama-shaped client whose method takes no kwargs (so no request_kwargs to merge into)
+    # still can't be clamped and must fall back to a pre-flight block. Ollama clamp-injection itself
+    # is covered in test_nested_clamp.py. Here we assert the block fallback survives for a provider
+    # tag core doesn't map (an unpriced/unknown model on a chat-shaped client with input > cap).
     class OllamaClient:
         def chat(self, **kwargs):
             return {"prompt_eval_count": 3, "eval_count": 5}
 
     client = instrument(OllamaClient())
+    # A tokens cap smaller than the projected input leaves no output room -> clamp blocks regardless
+    # of provider (allowance <= 0).
     with pytest.raises(BudgetExceeded, match="clamp"):
-        with budget(tokens=100, on_exceed="clamp"):
-            client.chat(model="llama3", messages=[{"role": "user", "content": "hi"}])
+        with budget(tokens=1, on_exceed="clamp"):
+            client.chat(
+                model="llama3",
+                messages=[{"role": "user", "content": "a longer prompt that exceeds one token"}],
+            )
 
 
 def test_block_reads_max_completion_tokens():

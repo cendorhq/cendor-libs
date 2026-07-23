@@ -141,6 +141,21 @@ core's span emitter maps `metadata["agent"]` → `gen_ai.agent.name`. The reserv
 (`agent` / `conversation_id` / `decision_id`, plus one private cassette session key) are pinned in the
 [bus-events spec](https://github.com/cendorhq/cendor-libs/tree/main/docs/specs/bus-events.md).
 
+### Stream observers (per-chunk seam)
+`add_stream_observer(fn)` (`addStreamObserver` in TS; since core 1.10 / 0.11) registers a per-chunk
+observer called `fn(call, delta_text, delta_thinking)` on **every** instrumented stream, right as each
+chunk passes through. Core does the provider parsing and hands the observer only the extracted visible
+text + visible thinking of that chunk — the observer never touches a provider shape. It's the same
+**interceptor discipline** as the pre-call seam: **raising aborts the stream** — core closes the
+underlying provider stream, finalizes the `LLMCall` **once** (partial usage, flagged
+`usage_estimated`; the crossing chunk is withheld from the consumer but kept for the settle), and
+re-raises to the consumer's iteration. With nothing registered there is a **zero-observer fast path**
+(one truthiness / length check per chunk — the streaming benchmark and byte-identity hold).
+
+This is the seam `tokenguard`'s mid-stream budget breaker (`budget(on_exceed="break")`) rides — core
+learns no budget vocabulary, mirroring the ambient-provider discipline. Registration is idempotent;
+`remove_stream_observer(fn)` unregisters.
+
 ### OpenTelemetry (optional)
 `otel.span(...)` emits a GenAI `gen_ai.*` span when OpenTelemetry is installed, else it's a
 no-op. `otel.ingest(attrs)` turns a managed runtime's `gen_ai.*` span attributes into a bus
@@ -277,6 +292,18 @@ removeAmbientProvider(provider);      // addAmbientProvider returns the fn, so y
 |---|---|---|
 | `add_ambient_provider(fn)` | the `fn` | Register a provider `(event) -> dict \| None` run at every event's construction (idempotent). |
 | `remove_ambient_provider(fn)` | — | Unregister a provider (no error if absent). |
+
+### `add_stream_observer()` / `remove_stream_observer()`
+
+Register a per-chunk observer `fn(call, delta_text, delta_thinking)` on every instrumented stream —
+the seam described in [Stream observers](#stream-observers-per-chunk-seam) above. **Raising aborts the
+stream** (closes the provider stream, finalizes the call once, re-raises); nothing registered ⇒ a
+one-check-per-chunk fast path. Since core 1.10 / 0.11.
+
+| Call | Returns | What it does |
+|---|---|---|
+| `add_stream_observer(fn)` | the `fn` | Register a per-chunk stream observer (idempotent). Raising aborts + finalizes the stream. |
+| `remove_stream_observer(fn)` | — | Unregister a stream observer (no error if absent). |
 
 The provider **must never raise** (exceptions are swallowed) and merges in **registration order**
 without overwriting existing keys; zero providers is a single-length-check fast path. Core stays

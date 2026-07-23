@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from cendor.core import add_ambient_provider, bus, prices, tokens
+from cendor.core import add_ambient_provider, add_stream_observer, bus, prices, tokens
 from cendor.core.instrument import MISS, Reroute, add_interceptor
 from cendor.core.types import LLMCall, Money
 
@@ -54,9 +54,10 @@ class BudgetEvent:
     never reaches the bus as an ``LLMCall`` (it's refused pre-flight), so this event is the *only*
     signal that the breaker fired — which is exactly the governance action you want to alert on.
 
-    ``action`` is ``"blocked"`` | ``"downgraded"`` | ``"clamped"``. Money fields are the ``Decimal``
-    rendered as a string (never a float); token fields are ints. Duck-typed by ``acttrace`` (no
-    import), mirroring how ``guardrails`` emits its ``GuardrailDecision``.
+    ``action`` is ``"blocked"`` | ``"downgraded"`` | ``"clamped"`` | ``"broken"`` (the last for the
+    mid-stream ``on_exceed="break"`` cut). Money fields are the ``Decimal`` rendered as a string
+    (never a float); token fields are ints. Duck-typed by ``acttrace`` (no import), mirroring how
+    ``guardrails`` emits its ``GuardrailDecision``.
     """
 
     action: str
@@ -117,17 +118,27 @@ class _Frame:
 
 
 #: Valid string values for ``budget(on_exceed=...)`` (a callable is also accepted).
-_ON_EXCEED = ("raise", "block", "truncate", "downgrade", "clamp")
+_ON_EXCEED = ("raise", "block", "truncate", "downgrade", "clamp", "break")
 
-#: The five overflow strategies, as a type so an editor autocompletes them and a typo is a type
+#: The six overflow strategies, as a type so an editor autocompletes them and a typo is a type
 #: error (a ``Callable[[dict], Any]`` is also accepted). Keep in sync with :data:`_ON_EXCEED`.
-OnExceedMode = Literal["raise", "block", "truncate", "downgrade", "clamp"]
+OnExceedMode = Literal["raise", "block", "truncate", "downgrade", "clamp", "break"]
 
-#: Per-provider request kwarg that caps generated (reasoning + visible) output tokens, used by
-#: ``on_exceed="clamp"``. On these providers the cap is enforced server-side and *includes*
-#: reasoning tokens, so injecting it bounds a reasoning model's real spend. Providers absent here
-#: put the cap in nested config, so clamp can't inject it safely and falls back to a block.
+#: Per-provider *flat* request kwarg that caps generated (reasoning + visible) output tokens, used
+#: by ``on_exceed="clamp"``. On these providers the cap is enforced server-side and *includes*
+#: reasoning tokens. Bedrock/Ollama/Gemini instead nest the cap (see :func:`_clamp_reroute`).
 _CLAMP_KWARG = {"openai": "max_completion_tokens", "anthropic": "max_tokens"}
+
+#: Metadata key holding the mid-stream breaker's per-frame running state, stored on the streamed
+#: ``LLMCall`` (short-lived — collected with the call, so no module-level leak). See
+#: :func:`_stream_breaker`.
+_TG_BREAK_KEY = "_cendor_tokenguard_break"
+#: Metadata flag set on a call the mid-stream breaker cut, so the post-flight settle
+#: (:func:`_enforce`) does NOT raise a second ``BudgetExceeded`` (GC-D10: exactly one raise).
+_TG_BROKEN_KEY = "_cendor_tokenguard_broken"
+#: Recount granularity for the breaker's hybrid estimate: re-encode the accumulated new text exactly
+#: once it grows past this many chars (near the cap it re-encodes every chunk — see the observer).
+_BREAK_RECOUNT_CHARS = 256
 
 
 @dataclass
@@ -263,6 +274,122 @@ def _ensure_subscribed() -> None:
     bus.subscribe(_on_call)  # idempotent on the bus side
     add_interceptor(_preflight_interceptor)  # idempotent; pre-flight downgrade/block routing
     add_ambient_provider(_tokenguard_ambient)  # idempotent; captures frames/tags pre-emit (GLR-5)
+
+
+def _ensure_breaker_armed() -> None:
+    """Register the mid-stream breaker on core's stream-observer seam. Called only when an
+    ``on_exceed="break"`` budget opens — so a process that never uses ``break`` pays *zero*
+    per-chunk cost (core's zero-observer fast path holds). Idempotent."""
+    add_stream_observer(_stream_breaker)
+
+
+@dataclass
+class _BreakState:
+    """The breaker's per-(stream, frame) running estimate. Lives on the call's metadata, so it is
+    collected with the short-lived streamed ``LLMCall`` — no module-level accumulation."""
+
+    allowance: int | None  # output-token headroom for this stream (None ⇒ not enforceable here)
+    counted: int = 0  # exact tokens of the fully-encoded output segments so far
+    segment: str = ""  # unbilled tail since the last exact re-encode
+    tripped: bool = False
+
+
+def _approx_tokens(text: str) -> int:
+    """A cheap, deliberately *high* token estimate (~3 chars/token) for the unbilled tail — only to
+    decide *when* to re-encode exactly. Over-estimating triggers the exact recount early, so the
+    breaker never cuts late off a rough number; the trip decision always uses the exact count."""
+    return len(text) // 3 + 1
+
+
+def _usd_output_allowance(call: LLMCall, frame: _Frame, input_tokens: int) -> int | None:
+    """Convert a USD budget's remaining headroom to an integer *output-token* allowance, **once per
+    stream** (Decimal math stays off the per-chunk hot path — GC-D2 D4). ``None`` when the model is
+    unpriced (warns once, like the block path) so the breaker doesn't enforce a USD cap it can't
+    project."""
+    try:
+        per_out = prices.estimate(call.model, 0, 1000).amount / Decimal(1000)
+        input_cost = prices.estimate(call.model, input_tokens, 0).amount
+    except KeyError:
+        _warn_unpriced(call.model, "break")
+        return None
+    if per_out <= 0:
+        return None
+    remaining = (frame.cap_usd or Decimal("0")) - frame.spent_usd - input_cost
+    if remaining <= 0:
+        return 0
+    return int(remaining / per_out)
+
+
+def _init_break_state(call: LLMCall, frame: _Frame) -> _BreakState:
+    """Compute this stream's output-token allowance under one ``break`` frame (reads live spend, so
+    the cumulative gate is honored). ``reasoning_reserve`` is subtracted for a reserve-aware *early*
+    cut on hidden-thinking models (the only lever for reasoning that never reaches the wire)."""
+    input_tokens = tokens.count(call.messages, call.model) if call.messages else 0
+    allowance: int | None = None
+    if frame.cap_tokens is not None:
+        allowance = frame.cap_tokens - frame.spent_tokens - input_tokens
+    if frame.cap_usd is not None:
+        usd_allow = _usd_output_allowance(call, frame, input_tokens)
+        if usd_allow is not None:
+            allowance = usd_allow if allowance is None else min(allowance, usd_allow)
+    if allowance is not None:
+        allowance -= (
+            frame.reasoning_reserve
+        )  # reserve-aware early cut for hidden thinking (GC-D2 D3)
+    return _BreakState(allowance=allowance)
+
+
+def _stream_breaker(call: LLMCall, delta_text: str, delta_thinking: str) -> None:
+    """Core stream observer for ``on_exceed="break"``: maintain a running output-token estimate as
+    chunks arrive and **raise** :class:`BudgetExceeded` the moment it crosses an active break
+    frame's remaining budget — core then closes the underlying stream, finalizes the call once
+    (partial
+    usage, flagged estimated). Visible thinking counts too (``delta_thinking``). Check-not-accrue:
+    the frames' ``spent_*`` mutate only at the post-flight settle, so there is exactly one raise."""
+    attached = call.metadata.get(_TG_ATTACH_KEY)
+    frames = attached[0] if attached is not None else _budgets.get()
+    break_frames = [f for f in frames if f.on_exceed == "break"]
+    if not break_frames:
+        return  # armed but no break budget on this stream — the cheap path
+    states = call.metadata.get(_TG_BREAK_KEY)
+    if states is None:
+        states = {}
+        call.metadata[_TG_BREAK_KEY] = states
+    new_text = (delta_text or "") + (delta_thinking or "")  # both bill as output
+    for frame in reversed(break_frames):  # innermost-first: the tightest cap trips first
+        state = states.get(id(frame))
+        if state is None:
+            state = _init_break_state(call, frame)
+            states[id(frame)] = state
+        if state.tripped or state.allowance is None:
+            continue  # already cut, or an unpriced USD-only cap this observer can't enforce
+        state.segment += new_text
+        # Hybrid: skip the exact re-encode while both far from the cap AND the tail is small; near
+        # the cap (approx ≥ allowance) it re-encodes every chunk, so the cut is tight.
+        if _approx_tokens(state.segment) + state.counted < state.allowance and (
+            len(state.segment) < _BREAK_RECOUNT_CHARS
+        ):
+            continue
+        if state.segment:
+            state.counted += tokens.count(state.segment, call.model)
+            state.segment = ""
+        if state.counted > state.allowance:
+            state.tripped = True
+            call.metadata[_TG_BROKEN_KEY] = True  # settle must not raise a second time (one raise)
+            reason = (
+                f"mid-stream break: streamed output ~{state.counted} tokens crossed the remaining "
+                f"budget (~{max(state.allowance, 0)} left) for {call.model}; the stream was cut. "
+                f"You keep the partial output; the provider bills to the cut (~one chunk + one "
+                f"RTT)."
+            )
+            _emit_budget_event(
+                "broken",
+                call=call,
+                frame=frame,
+                reason=reason,
+                projected_tokens=state.counted,
+            )
+            raise BudgetExceeded(reason)
 
 
 def _projected_output(call: LLMCall, reserve: int, reasoning_reserve: int = 0) -> int:
@@ -455,24 +582,71 @@ def _preflight_interceptor(call: object) -> Any:
     return MISS
 
 
+def _clamp_descriptor(
+    call: LLMCall,
+) -> tuple[int | None, Callable[[int], dict] | None, str | None]:
+    """Per-provider clamp injection plan: ``(existing_cap, build_reroute_updates, label)``.
+
+    Returns ``build=None`` when the provider can't take a *safely-injectable* output ceiling — then
+    ``clamp`` falls back to a hard block. OpenAI/Anthropic use a flat kwarg; Bedrock nests it at
+    ``inferenceConfig.maxTokens`` and Ollama at ``options.num_predict`` (both copy-on-write merged);
+    **Gemini merges only a dict ``config`` — a typed ``GenerateContentConfig`` can't be merged, so
+    it blocks** (and Gemini's ``max_output_tokens`` does not bound hidden thinking — see docs).
+    """
+    provider = call.provider
+    kwargs = call.metadata.get("request_kwargs") or {}
+    if provider in _CLAMP_KWARG:
+        kwarg = _CLAMP_KWARG[provider]
+        return kwargs.get(kwarg), (lambda t: {kwarg: t}), kwarg
+    if provider == "bedrock":
+        cfg = kwargs.get("inferenceConfig")
+        base = dict(cfg) if isinstance(cfg, dict) else {}
+        return (
+            base.get("maxTokens"),
+            (lambda t: {"inferenceConfig": {**base, "maxTokens": t}}),
+            "inferenceConfig.maxTokens",
+        )
+    if provider == "ollama":
+        opts = kwargs.get("options")
+        base = dict(opts) if isinstance(opts, dict) else {}
+        return (
+            base.get("num_predict"),
+            (lambda t: {"options": {**base, "num_predict": t}}),
+            "options.num_predict",
+        )
+    if provider == "google":
+        cfg = kwargs.get("config")
+        if isinstance(cfg, dict):
+            base = dict(cfg)
+            return (
+                base.get("max_output_tokens"),
+                (lambda t: {"config": {**base, "max_output_tokens": t}}),
+                "config.max_output_tokens",
+            )
+        return None, None, None  # typed GenerateContentConfig — can't safely merge → block
+    return None, None, None
+
+
 def _clamp(call: LLMCall, frame: _Frame) -> Reroute | None:
     """Inject a provider output ceiling so a single call can't exceed the remaining token budget.
 
     You can't *predict* a reasoning model's hidden thinking pre-flight, so the only way to bound it
-    is to hand the provider its own cap (``max_completion_tokens`` / ``max_tokens``, which include
-    reasoning) and let it stop generation server-side. Requires a ``tokens=`` cap. It **always**
-    injects the ceiling — set to the tokens left in the budget after the projected input — so even a
-    call that *looks* small pre-flight can't overshoot on a surprise-long completion (the reserve
-    heuristic only guards ``block``/``downgrade``, never ``clamp``). A caller's own tighter cap is
-    respected; the only fall-back to a hard block is when the input alone already exceeds the budget
-    (no output room) or the provider can't take an injected ceiling.
+    is to hand the provider its own cap (OpenAI ``max_completion_tokens`` / Anthropic ``max_tokens``
+    / Bedrock ``inferenceConfig.maxTokens`` / Ollama ``options.num_predict`` / Gemini dict
+    ``config.max_output_tokens``) and let it stop server-side. Requires a ``tokens=`` cap. It
+    **always** injects the ceiling — set to the tokens left after the projected input — so even a
+    call that
+    *looks* small pre-flight can't overshoot on a surprise-long completion (the reserve heuristic
+    guards only ``block``/``downgrade``, never ``clamp``). A caller's own tighter cap is respected;
+    the only fall-back to a hard block is when the input alone already exceeds the budget (no output
+    room) or the provider can't take an injected ceiling (a typed Gemini config / unknown provider).
     """
     if frame.cap_tokens is None:
         return None
     projected_input = tokens.count(call.messages, call.model)
     allowance = frame.cap_tokens - frame.spent_tokens - projected_input
-    kwarg = _CLAMP_KWARG.get(call.provider)
-    if kwarg is None or allowance <= 0:
+    existing, build, label = _clamp_descriptor(call)
+    if build is None or allowance <= 0:
         reason = (
             f"pre-flight clamp: cannot fit call within the remaining token budget "
             f"(~{frame.cap_tokens - frame.spent_tokens} left, ~{projected_input} input; "
@@ -483,21 +657,21 @@ def _clamp(call: LLMCall, frame: _Frame) -> Reroute | None:
             "blocked", call=call, frame=frame, reason=reason, projected_tokens=projected_input
         )
         raise BudgetExceeded(reason)
-    existing = (call.metadata.get("request_kwargs") or {}).get(kwarg)
-    if existing is not None and int(existing) <= allowance:
+    existing_int = None if existing is None else int(existing)
+    if existing_int is not None and existing_int <= allowance:
         return None  # the caller's own cap already fits within the budget — leave it untouched
-    target = allowance if existing is None else min(int(existing), allowance)
+    target = allowance if existing_int is None else min(existing_int, allowance)
     _clamps.append(
-        {"model": call.model, "kwarg": kwarg, "limit": target, "tags": dict(_current_tags())}
+        {"model": call.model, "kwarg": label, "limit": target, "tags": dict(_current_tags())}
     )
     _emit_budget_event(
         "clamped",
         call=call,
         frame=frame,
-        reason=f"injected {kwarg}={target} to bound output within the remaining token budget",
+        reason=f"injected {label}={target} to bound output within the remaining token budget",
         projected_tokens=frame.spent_tokens + projected_input + target,
     )
-    return Reroute(**{kwarg: target})
+    return Reroute(**build(target))
 
 
 def downgrades() -> list[dict]:
@@ -603,12 +777,26 @@ def _enforce(frame: _Frame, call: LLMCall) -> None:
         raise _Truncated()
     if on_exceed in ("downgrade", "clamp"):
         return  # already handled pre-flight (interceptor rerouted the model / clamped the cap)
-    raise BudgetExceeded(
+    if on_exceed == "break" and call.metadata.get(_TG_BROKEN_KEY):
+        return  # the mid-stream breaker already cut + raised for this call — exactly one raise
+    reason = (
         f"budget exceeded: spent ${frame.spent_usd} > cap ${frame.cap_usd} "
         f"after {frame.calls} call(s); last model={call.model}. "
-        f"on_exceed='raise' is post-flight, so the cap is crossed by this one in-flight call — "
-        f"use on_exceed='block' for a pre-flight hard cap that never overspends."
     )
+    if on_exceed == "break":
+        # break cut runaway *streams* mid-flight; this call still settled over the cumulative cap
+        # post-flight (a non-streamed call, or one whose per-stream allowance held) — same overshoot
+        # window as 'raise'. Use 'block' for a pre-flight hard cap that never overspends.
+        reason += (
+            "on_exceed='break' cuts runaway streams mid-flight, but a call can still cross the "
+            "cumulative cap post-flight — use on_exceed='block' for a pre-flight hard cap."
+        )
+    else:
+        reason += (
+            "on_exceed='raise' is post-flight, so the cap is crossed by this one in-flight call — "
+            "use on_exceed='block' for a pre-flight hard cap that never overspends."
+        )
+    raise BudgetExceeded(reason)
 
 
 class _Budget:
@@ -657,6 +845,8 @@ class _Budget:
 
     def _open(self) -> None:
         _ensure_subscribed()
+        if self._on_exceed == "break":
+            _ensure_breaker_armed()  # register the core stream observer only when break is used
         self.frame = _Frame(
             self._cap_usd,
             self._cap_tokens,
@@ -780,9 +970,28 @@ def budget(
     pre-flight, so no projection can bound one call in advance. Two mechanisms handle them: the
     cumulative gate (``"raise"``/``"block"``) enforces on the *exact* recorded usage — which already
     includes reasoning — so a runaway loop still stops; and ``on_exceed="clamp"`` injects the
-    provider's own output ceiling (``max_completion_tokens`` / ``max_tokens``, which include
-    reasoning) so a single call is capped *server-side* to the remaining token budget. See
-    docs/tokenguard.md §7.
+    provider's own output ceiling (``max_completion_tokens`` / ``max_tokens`` /
+    ``inferenceConfig.maxTokens`` / ``options.num_predict`` / Gemini dict
+    ``config.max_output_tokens``,
+    which include reasoning where the provider enforces it server-side) so a single call is capped
+    to
+    the remaining token budget; and ``on_exceed="break"`` cuts a *streamed* call mid-flight the
+    moment
+    its running output estimate crosses the remaining budget. See docs/tokenguard.md §7.
+
+    **Streaming runaways (``on_exceed="break"``):** ``clamp`` sets one server-side ceiling *before*
+    a
+    call; ``"break"`` watches a stream *as it arrives* and cuts it the instant its running token
+    estimate (visible text + visible thinking) crosses the remaining ``tokens=``/``usd=`` budget.
+    You
+    **keep the partial output already yielded**; the provider still bills the tokens generated up to
+    the cut (~one chunk + one RTT past — it stops the meter, it does not un-bill the provider), and
+    the
+    settled usage is an estimate flagged ``usage_estimated``. It also acts as a post-flight
+    cumulative
+    gate (like ``"raise"``) for non-streamed calls. Hidden reasoning (OpenAI-native/Gemini) never
+    streams, so a heavy-thinking model cuts *late* unless you raise ``reasoning_reserve`` (cuts
+    early).
 
     Args:
         usd: Maximum USD spend before the breaker trips.
@@ -794,10 +1003,15 @@ def budget(
             runs, so it never executes — a true circuit breaker, projection-based), ``"clamp"``
             (**pre-flight**: inject a provider output ceiling so the call can't exceed the remaining
             ``tokens=`` budget — the only way to bound a reasoning model's runtime spend; requires a
-            ``tokens=`` cap and supported on OpenAI/Anthropic, else falls back to a block — see
-            :func:`clamps`), ``"truncate"`` (degrade gracefully — the decorated function returns
-            ``None`` / the ``with`` block exits cleanly), ``"downgrade"`` (pre-flight reroute to a
-            cheaper model, never raises), or a callable invoked with a context dict.
+            ``tokens=`` cap and supported on OpenAI/Anthropic/Bedrock/Ollama + Gemini dict configs,
+            else falls back to a block — see :func:`clamps`), ``"break"`` (**mid-stream**: cut a
+            streamed call the instant its running output estimate crosses the remaining budget — you
+            keep the partial output, the provider bills to the cut; also a post-flight cumulative
+            gate
+            for non-streamed calls), ``"truncate"`` (degrade gracefully — the decorated function
+            returns ``None`` / the ``with`` block exits cleanly), ``"downgrade"`` (pre-flight
+            reroute
+            to a cheaper model, never raises), or a callable invoked with a context dict.
         scope: Optional label (e.g. ``"session"``) for nested budgets.
         downgrade: For ``on_exceed="downgrade"`` — a ``{model: cheaper_model}`` map (required for
             that mode). When a call would push the budget over its USD cap, it's rerouted to the

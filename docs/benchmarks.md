@@ -37,6 +37,7 @@ One `instrument()` seam, provider-aware token counting, and offline pricing — 
 | tokens.count throughput — tiktoken exact | **10.1K ops/s** | on a 1.4 KB string |
 | instrument() overhead per call | **14.51 µs** | bus emit + usage extraction + Decimal pricing; over a no-op client |
 | bus dispatch (3 subscribers) | **1.97M emits/s** | synchronous fan-out to subscribed tools |
+| streaming per-chunk overhead — no observer | **~3.6 µs** | zero-observer fast path (one check/chunk), 200-chunk stream — the pre-existing proxy per-chunk cost; the observer seam adds only ~noise |
 
 ## cendor-contextkit
 
@@ -79,6 +80,7 @@ Budget enforcement + spend attribution as a bus subscriber: the cost it adds per
 |---|---|---|
 | Added overhead per call (@budget + track) | **1.64 µs** | records spend by tags + checks the active budget(s) |
 | report() over 5000 spend rows | **7.39 ms** | group-by aggregation into per-tag cost rows |
+| streaming per-chunk overhead — armed breaker | **~4 µs/chunk** | `on_exceed="break"` running estimate over the no-observer baseline (visible text + visible thinking extraction + the hybrid re-encode). Opt-in and only while a break budget is active; negligible vs. a stream chunk's network cadence (ms). |
 
 ## cendor-guardrails
 
