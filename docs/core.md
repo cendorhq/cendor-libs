@@ -583,8 +583,9 @@ default).
   any family. Money is always exact (`Decimal`).
 - **Capture is best-effort, not a billing guarantee.** A call that *raises* before returning
   emits no `usage`/`cost`; a streamed response whose provider reports no usage is priced from
-  an offline estimate (flagged `usage_estimated`). Bedrock's separate `converse_stream`
-  entrypoint isn't wrapped — use `converse`.
+  an offline estimate (flagged `usage_estimated`). Bedrock's `converse_stream` entrypoint **is**
+  captured — it is detected as an always-stream target and its usage rides the trailing `metadata`
+  event (Python since core 1.10; TypeScript since `@cendor/core` 0.12.2).
 - **Some provider entrypoints bypass `instrument()` entirely (silent — no bus event):** OpenAI's
   structured-output helpers `chat.completions.parse` / `responses.parse`, Anthropic's
   `messages.stream()` helper and `tool_runner`, and the Batch APIs are **not wrapped** — calls

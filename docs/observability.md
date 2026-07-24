@@ -292,9 +292,24 @@ with live_spans():
 
 <!-- tab: TypeScript -->
 
-> **Python only (for now).** The wiring is identical in TypeScript — use `@opentelemetry/sdk-node`
-> with the OTLP HTTP exporter (or `@aws/otel` distro), then `liveSpans()`. See the
-> [parity matrix](languages.md).
+<!-- ts-check: skip -->
+
+```ts
+// npm i @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http @opentelemetry/api
+// OTEL_EXPORTER_OTLP_ENDPOINT + AWS auth headers per the CloudWatch GenAI observability setup
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+
+new NodeSDK({ traceExporter: new OTLPTraceExporter() }).start(); // the ONE global setup (or the ADOT distro)
+
+import { run, liveSpans } from '@cendor/sdk';
+const span = liveSpans();
+try {
+  await run(agent, '…');                             // agent span tree -> CloudWatch GenAI views
+} finally {
+  span.close();
+}
+```
 
 <!-- /tabs -->
 
