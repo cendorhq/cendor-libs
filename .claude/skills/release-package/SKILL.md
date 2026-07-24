@@ -25,6 +25,10 @@ uv run pytest -q
 - Add a `## [X.Y.Z] — <date>` section to that package's `CHANGELOG.md` **and** a `[X.Y.Z]: https://pypi.org/project/...` link-reference (release notes are auto-extracted from this section).
 - Leave a package's version **unchanged** if its content didn't change. The **umbrella** `cendor` has unpinned deps, so usually leave it as-is — do **not** re-tag an unchanged version (PyPI rejects duplicate uploads → the release run fails).
 - `uv lock` so `uv.lock` matches the bumped versions; commit it.
+- **Prices snapshot freshness (P14 — check when releasing `core`):** the bundled offline price table
+  carries an `_updated` stamp. If it is stale (models added / rates moved since that date), regenerate
+  the snapshot from the officially-verified source and commit it with the `core` bump, so the offline
+  default stays honest (`truth = the product`). **Never hand-edit a rate** — only the generator's output.
 
 ## 2. Check in to `main`
 Commits: author is the repo owner, **no `Co-Authored-By: Claude` trailer**.

@@ -17,10 +17,10 @@ status, and how-to-run.
 
 | Layer | What it proves | Where | Runs in CI | Status |
 |---|---|---|---|---|
-| **A. Unit** | logic is correct (mocked, offline) | `packages/*/tests/` | ✅ yes | ✅ in place (430+ tests) |
+| **A. Unit** | logic is correct (mocked, offline) | `packages/*/tests/` | ✅ yes | ✅ in place (780+ tests; 826 cases across 74 files) |
 | **B. Install / import smoke** | the wheels + PEP 420 namespace import for a real user | clean venv (matrix 3.11–3.13) | ✅ yes | ✅ in place (`smoke` job) |
 | **C. Cookbook integration** | documented usage runs against installed packages | `cendor-cookbook` (separate public repo) | n/a here | ⏳ in the cookbook |
-| **D. Real-provider fixtures** | `instrument()` parses *actual* OpenAI/Anthropic/Bedrock/Gemini/Ollama responses | recorded cassettes | gated | ⏳ planned (record-once → replay) |
+| **D. Real-provider fixtures** | `instrument()` parses *actual* OpenAI/Anthropic/Bedrock/Gemini/Ollama responses | recorded cassettes / `cendor-testsuits` | gated | ✅ fulfilled org-wide by **`cendor-testsuits`** (a private black-box suite that installs the *published* packages and drives them against live provider APIs); in-repo recorded-cassette fixtures optional |
 | **E. Property / edge** | invariants hold for arbitrary inputs | `packages/*/tests/test_*_properties.py` (hypothesis) | ✅ yes | ✅ in place (9 tests) |
 
 Plus static gates in CI: `ruff check`, `ruff format --check`, **`mypy`** (all seven packages), and the namespace-guard.
@@ -74,15 +74,18 @@ The public `cendor-cookbook` repo's offline examples (mock client, no keys) doub
 end-to-end checks that documented usage works on the installed packages. Lives there, not here, so
 this repo stays the clean library source.
 
-### Layer D — Real-provider fixtures *(to add)*
+### Layer D — Real-provider fixtures *(fulfilled org-wide by `cendor-testsuits`)*
 The mocks in Layer A approximate provider responses; only real calls confirm the adapters parse
-actual `usage`/shape. The pattern (uses `cassette`):
-1. Run a provider example **once with real keys** (small `max_tokens`).
-2. `cassette` records the run to `fixtures/<provider>.json`.
-3. Commit the fixture; **replay it offline forever** in CI — real-shape coverage, zero per-run cost.
+actual `usage`/shape. This is **fulfilled at the org level by the private `cendor-testsuits` repo**:
+it installs the *published* PyPI/npm packages (never local checkouts) and drives them against **live**
+OpenAI / Anthropic / Azure / Gemini / Bedrock / Ollama APIs with real keys, recording findings into a
+merged `REPORT.md` (missing key ⇒ skip, known-issue ⇒ record + pass). That is the real-provider
+regression coverage for `instrument()`'s adapters — kept out of this repo so the libraries stay
+"no network, ever".
 
-This belongs alongside the cookbook's `providers/*` examples; the recorded cassettes are the
-regression suite for `instrument()`'s adapters.
+An in-repo recorded-cassette variant remains optional (record a provider example once with real keys →
+`cassette` writes `fixtures/<provider>.json` → replay it offline forever), useful alongside the
+cookbook's `providers/*` examples; it is a convenience, not a gap.
 
 ### Layer E — Property / edge tests *(implemented)*
 `hypothesis` property tests (`packages/*/tests/test_*_properties.py`) for the deterministic guarantees:
@@ -102,8 +105,10 @@ regression suite for `instrument()`'s adapters.
 - **`smoke` job:** build wheels → install into a clean venv (offline) on Python 3.11/3.12/3.13 →
   import the namespace (Layer B).
 
-**Not yet in CI:** Layer D (real-provider fixtures) — it needs provider secrets and lives with the
-cookbook; wire it as a gated/manual job when those fixtures exist.
+**Not in this repo's CI (by design):** Layer D (real-provider fixtures) needs provider secrets and
+lives out-of-repo — the private **`cendor-testsuits`** suite runs it against the published packages
+and live APIs, so this repo stays "no network, ever". An optional in-repo recorded-cassette job can be
+added later; it is not a gap.
 
 ## When you add or change code
 1. Add/expand **Layer A** unit tests in the package's `tests/` (mock clients, golden values, no
