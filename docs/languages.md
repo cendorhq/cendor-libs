@@ -128,6 +128,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | Live progress / prompt caching / live OTel spans | ✅ | ✅ |
 | MCP client (tools / prompts / resources) | ✅ | ✅ (`@modelcontextprotocol/sdk` optional peer) |
 | Checkpoint / resume | ✅ | ✅ (atomic JSON; single + multi-agent; **streamed runs too** since SDK ≥ 1.15 / 0.20 — `run.stream`/`run.astream` take `checkpoint`, done-resume replays a lone `RunComplete`, an unfinished resume skips prepare and does not re-yield prior deltas) |
+| **Structural telemetry spans** (SDK ≥ 1.16 / 0.21) | ✅ | ✅ | opt-in `cendor.sdk` child spans for **RAG** (`rag.assemble`/`rag.compress`), **memory** (`memory.load`/`save`), **orchestration** handoffs, **checkpoints**, a first-class **tool** domain (source `local`\|`mcp`, outcome `ok`\|`error`\|`blocked`), and **MCP** server attribution (`mcp.connect`/`mcp.list_tools`) + a forward-compat `sdk_events` envelope — zero-core, both languages, content rules unchanged (labels/ids/counts, never bodies). Rendered by **Cendor Monitor 0.9**'s SDK-door structure pages (Orchestration · Tools · MCP · RAG · Memory · Checkpoints) |
 | A2A server / client | ✅ | ✅ (JSON-RPC; `serve()` on node:http) |
 | Foundry / Bot-Framework adapter | ✅ | ✅ |
 
