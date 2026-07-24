@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.1] — 2026-07-24
+Package-level store exports. Backward-compatible.
+
+### Added
+- `MemoryStore` and `SQLiteStore` are now exported at the package top level (`from cendor.squeeze import SQLiteStore`) and listed in `__all__`, matching the TypeScript port's index exports. They remain available under the `cendor.squeeze.store` submodule as before, so no existing import breaks.
+
 ## [1.1.0] — 2026-07-20
 Compression visibility on the bus (G21) — squeeze stops being dark to a monitor/audit.
 

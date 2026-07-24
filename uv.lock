@@ -424,7 +424,7 @@ requires-dist = [
 
 [[package]]
 name = "cendor-squeeze"
-version = "1.1.0"
+version = "1.1.1"
 source = { editable = "packages/cendor-squeeze" }
 dependencies = [
     { name = "cendor-core" },
@@ -435,7 +435,7 @@ requires-dist = [{ name = "cendor-core", editable = "packages/cendor-core" }]
 
 [[package]]
 name = "cendor-tokenguard"
-version = "1.5.0"
+version = "1.5.1"
 source = { editable = "packages/cendor-tokenguard" }
 dependencies = [
     { name = "cendor-core" },

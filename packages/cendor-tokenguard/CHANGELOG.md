@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.5.1] — 2026-07-24
+QueueSink drop observability + a docstring fix. Backward-compatible.
+
+### Added
+- **`QueueSink` drop observability** — an optional `on_drop_error(exc, entry)` constructor callback and a `dropped_rows` counter. When the wrapped inner sink's `write` raises (disk full, DB locked), the offending row is dropped so the failure can't kill the background drain worker — and now that drop is *counted* and optionally surfaced, instead of being silently swallowed. A broken callback is swallowed too (it can't kill the worker either).
+
+### Fixed
+- The module docstring's stale "Enforcement model (v0)" wording now describes the shipped three-point model — pre-flight (`estimate` + `clamp`/`downgrade`), mid-stream (`break`), and post-flight (bus record + breaker). Documentation only; no behavior change.
+
 ## [1.5.0] — 2026-07-23
 Mid-stream budget breaker (`on_exceed="break"`) + nested-provider `clamp`. Backward-compatible.
 
