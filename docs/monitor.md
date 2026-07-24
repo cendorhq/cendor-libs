@@ -19,7 +19,7 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.8.0
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.9.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -38,9 +38,9 @@ automatically when you pass `run(session=…)`, so there is no trace id to paste
 The monitor is a self-contained view over the same standard wire — no query language, no dashboard to
 assemble. Screenshots are of the real monitor rendering a seeded demo (synthetic data, content
 capture opted in for the demo). _(The shots below are from v0.4.0; the `docker run` above pulls the
-current v0.6.0, whose operate-wave (v0.5) — the per-run audit-evidence pointer, tokenguard
-budget-utilization, period-over-period compare, run A/B, and the three-tier Settings — is described in
-the text and lands below these panels.)_
+current v0.9.0 — the two-doors-split UX (two stores, path-routed Libraries | SDK modes, the SDK
+structure pages, the status footer, and the SSE live channel) and the earlier operate-wave (v0.5) are
+described in the text and land beyond these panels.)_
 
 ### Overview
 
@@ -79,21 +79,32 @@ governance count is never a dead end: open the run and every verdict sits on the
 <img class="theme-dark" src="/monitor/console-journey-dark.webp" alt="Cendor Monitor — run journey with governance inline" loading="lazy" />
 <img class="theme-light" src="/monitor/console-journey-light.webp" alt="Cendor Monitor — run journey with governance inline (light theme)" loading="lazy" />
 
-### Two doors: SDK runs and libs-only calls
+### Two doors: SDK runs and libs-only calls (v0.9 — two stores, two modes)
 
 The monitor renders **two doors**, because the two ways to use Cendor put different amounts of
 *identity* on the wire — the truth is identical, the shape isn't. A run under **cendor-sdk**
-(`live_spans()` / `span_tree()`) carries an `agent.run` root, so it gets the full **run ▸ session ▸
-agent** hierarchy and shows an **`sdk`** badge. A **libs-only** app (you called `instrument()` and
-`use_span_emitter()` yourself, scope `cendor.core`) emits flat governed calls with no run root, so it
-shows a **`libs`** badge — tokens, cost, and governance are all there (the run row rolls them up from
-its own steps), but there is no session/agent hierarchy, *by design*. Filter Runs by **door**, and the
-empty Agents/Sessions pages explain the difference rather than looking broken. The split adds **no wire
-attribute** — it reads the OTel instrumentation-scope name already on every span. Same wire, richer
-identity: an `sdk` run is never "more governed" than a `libs` call. Give a libs app run identity with
-`core.trace("run-id")` scopes (+ an ambient agent provider), or move to the SDK.
+(`live_spans()` / `span_tree()`, scope `cendor.sdk`) carries an `agent.run` root, so it gets the full
+**run ▸ session ▸ agent** hierarchy. A **libs-only** app (you called `instrument()` and
+`use_span_emitter()` yourself, scope `cendor.core`) emits flat governed calls with no run root —
+tokens, cost, and governance are all there (the row rolls them up from its own steps), but there is no
+session/agent hierarchy, *by design*. The split adds **no wire attribute** — it reads the OTel
+instrumentation-scope name already on every span. Same wire, richer identity: an `sdk` run is never
+"more governed" than a `libs` call.
 
-> *(Screenshots of the door badge + filter land in the next monitor showcase touch.)*
+**v0.9 makes the split first-class.** Each door is its **own store** (`/data/libs.db` + `/data/sdk.db`,
+or point either at Postgres — mixed mode is supported), and the console has **two full UX modes** with
+the door in the URL (`/libs/…`, `/sdk/…` — real routes, so two browser tabs can watch two doors at
+once). A persistent **Libraries | SDK** switcher swaps the whole surface; single-door installs never
+see it. The **Libraries** mode is Overview · Calls · Governance · Models + the seven proof pages (no
+agent/session vocabulary). The **SDK** mode adds Apps · Agents · Sessions · Runs and a **Structure**
+group — **Orchestration** (a per-run agent-handoff graph + a fleet flow map), **Tools** (per-tool
+invocations, error/block rate, `local` vs `mcp`), **MCP** (servers seen + per-server attribution),
+**RAG**, **Memory**, and **Checkpoints** — all rendered from the structural `cendor.sdk` spans the SDK
+emits (cendor-sdk ≥ 1.16 / @cendor/sdk ≥ 0.21). A slim **status footer** shows the honest ingest truth
+("listening :4318 · last span 12s ago", never "app connected"), each door's store backend + size, and
+the image version. **Go Live** streams updates over Server-Sent Events (live *steps*, not live tokens);
+it falls back to polling automatically. Fresh v0.9 stores start empty — there is **no migration** from
+a pre-v0.9 single store (a dev-phase breaking change; the old volume is left untouched).
 
 ### Apps — the libs door's top level (v0.8)
 

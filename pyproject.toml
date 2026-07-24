@@ -32,7 +32,7 @@ dev = [
   "pytest-asyncio>=0.23",
   "pytest-cov>=5",
   "hypothesis>=6",
-  "ruff>=0.6",
+  "ruff==0.15.20",
   "mypy>=1.10",
   # Integration-test deps: exercise the real LangChain/LangGraph stack with HTTP mocked by respx
   # (no network, no keys). The tests importorskip these, so a plain install without them still runs.
