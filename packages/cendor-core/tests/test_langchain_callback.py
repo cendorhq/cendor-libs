@@ -21,6 +21,26 @@ from langchain_openai import ChatOpenAI  # noqa: E402
 CHAT = "https://api.openai.com/v1/chat/completions"
 
 
+def _make_agent(model, tools):
+    """Build a tool-calling agent, preferring LangChain's canonical ``create_agent``.
+
+    ``create_react_agent`` was moved to ``langchain.agents.create_agent`` in LangGraph V1 (removed
+    in V2). This repo's dev env pins ``langgraph`` without the ``langchain`` meta-package, so we
+    fall back to the deprecated original and silence its single move-warning on that path. Either
+    entry point is a drop-in ``builder(model, tools)`` for these recording-only tests."""
+    try:
+        from langchain.agents import create_agent
+    except ImportError:
+        import warnings
+
+        from langgraph.prebuilt import create_react_agent
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return create_react_agent(model, tools)
+    return create_agent(model, tools)
+
+
 @pytest.fixture
 def events():
     bus._reset()
@@ -116,7 +136,6 @@ def test_per_call_config_callbacks(events):
 
 def test_langgraph_agent_correlates_calls_and_emits_toolcall(events):
     from langchain_core.tools import tool
-    from langgraph.prebuilt import create_react_agent
 
     @tool
     def weather(city: str) -> str:
@@ -124,7 +143,7 @@ def test_langgraph_agent_correlates_calls_and_emits_toolcall(events):
         return f"Sunny in {city}"
 
     llm = ChatOpenAI(model="gpt-4o", api_key="sk-fake")
-    agent = create_react_agent(llm, [weather])
+    agent = _make_agent(llm, [weather])
     tool_calls = [
         {
             "id": "call_1",
@@ -167,11 +186,9 @@ def test_langgraph_agent_correlates_calls_and_emits_toolcall(events):
 
 
 def test_separate_agents_get_distinct_trace_ids(events):
-    from langgraph.prebuilt import create_react_agent
-
     llm = ChatOpenAI(model="gpt-4o", api_key="sk-fake")
-    agent_a = create_react_agent(llm, [])
-    agent_b = create_react_agent(llm, [])
+    agent_a = _make_agent(llm, [])
+    agent_b = _make_agent(llm, [])
     handler = CendorCallbackHandler()
     with respx.mock:
         respx.post(CHAT).mock(

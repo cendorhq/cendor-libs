@@ -4,10 +4,14 @@ It **subscribes** to ``cendor.core``'s event bus and never patches a client itse
 locked architecture: one ``instrument()``, many subscribers). Once a client is instrumented,
 ``@budget`` enforces a cap and ``track(...)`` attributes spend by tags — with zero per-call wiring.
 
-Enforcement model (v0): every instrumented call emits an ``LLMCall`` on the bus *after* it
+Enforcement model: a budget is checked at three points around an instrumented call. *Pre-flight*
+— :func:`estimate` projects a call's cost, and the ``clamp``/``downgrade`` ``on_exceed`` modes can
+rewrite or reject the request before it is sent (via core's interceptor seam). *Mid-stream* — the
+``break`` mode recounts a running stream against the cap and stops it the moment it would be
+exceeded. *Post-flight* — every instrumented call emits an ``LLMCall`` on the bus *after* it
 returns; tokenguard's subscriber records the spend and, if it pushes an active budget over its
 cap, trips the breaker *synchronously inside that call* — so a runaway loop stops before the
-next call runs. :func:`estimate` provides true pre-flight projection you can check proactively.
+next call runs.
 """
 
 from __future__ import annotations

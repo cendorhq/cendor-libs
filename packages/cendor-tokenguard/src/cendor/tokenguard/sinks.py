@@ -13,6 +13,7 @@ import json
 import queue
 import sqlite3
 import threading
+from collections.abc import Callable
 from typing import Any
 
 
@@ -87,15 +88,35 @@ class QueueSink:
     ``max_queue`` bounds the queue; when it's full, ``write()`` **blocks** until the worker drains
     room (back-pressure — a spend/audit row is never silently dropped). ``None`` (default) is
     unbounded.
+
+    A row *can* still be lost the other way: if the inner sink's ``write`` **raises** (disk full, DB
+    locked), the offending row is dropped so the failure doesn't kill the worker. Those drops are
+    observable — :attr:`dropped_rows` counts them, and an optional ``on_drop_error(exc, entry)``
+    callback fires for each (its own exceptions are swallowed too, so a broken callback can't kill
+    the worker either).
     """
 
-    def __init__(self, inner: Any, *, max_queue: int | None = None) -> None:
+    def __init__(
+        self,
+        inner: Any,
+        *,
+        max_queue: int | None = None,
+        on_drop_error: Callable[[Exception, Any], None] | None = None,
+    ) -> None:
         self._inner = inner
         self._queue: queue.Queue = queue.Queue(maxsize=max_queue or 0)
         self._closed = False
         self._lock = threading.Lock()
+        self._on_drop_error = on_drop_error
+        self._dropped = 0  # written only by the single drain worker; read lock-free elsewhere
         self._worker = threading.Thread(target=self._drain, name="cendor-queuesink", daemon=True)
         self._worker.start()
+
+    @property
+    def dropped_rows(self) -> int:
+        """Number of rows discarded because the inner sink's ``write`` raised (never kills the
+        worker). ``0`` in the healthy path; a rising count flags a failing durable sink."""
+        return self._dropped
 
     def _drain(self) -> None:
         while True:
@@ -104,8 +125,13 @@ class QueueSink:
                 if item is _SHUTDOWN:
                     return
                 self._inner.write(item)
-            except Exception:  # noqa: BLE001 - a bad row must not kill the worker (drop it, go on)
-                pass
+            except Exception as exc:  # noqa: BLE001 - a bad row must not kill the worker (count it)
+                self._dropped += 1
+                if self._on_drop_error is not None:
+                    try:
+                        self._on_drop_error(exc, item)
+                    except Exception:  # noqa: BLE001 - a broken callback must not kill the worker
+                        pass
             finally:
                 self._queue.task_done()
 

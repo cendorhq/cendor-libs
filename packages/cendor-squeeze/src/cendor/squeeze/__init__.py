@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 from cendor.core import bus, current_trace_id, tokens
 
-from .store import MemoryStore
+from .store import MemoryStore, SQLiteStore
 
 __all__ = [
     "compress",
@@ -33,6 +33,8 @@ __all__ = [
     "Handle",
     "SqueezeCompressor",
     "CompressionEvent",
+    "MemoryStore",
+    "SQLiteStore",
 ]
 
 

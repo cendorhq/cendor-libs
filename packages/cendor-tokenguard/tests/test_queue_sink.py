@@ -142,6 +142,59 @@ def test_max_queue_applies_backpressure_without_dropping():
     assert inner.rows == list(range(50))  # all 50 preserved despite the small queue
 
 
+class _FlakySink(_ListSink):
+    """Raises on rows whose value is in ``bad``; records the rest (a failing durable sink)."""
+
+    def __init__(self, bad):
+        super().__init__()
+        self.bad = set(bad)
+
+    def write(self, entry):
+        if entry in self.bad:
+            raise RuntimeError(f"cannot persist {entry!r}")
+        super().write(entry)
+
+
+def test_failing_inner_write_is_counted_and_drain_continues():
+    inner = _FlakySink(bad={2, 5})
+    q = QueueSink(inner)
+    for i in range(8):
+        q.write(i)
+    q.flush()
+    # The two bad rows were dropped; every other row still made it through, in order.
+    assert inner.rows == [0, 1, 3, 4, 6, 7]
+    assert q.dropped_rows == 2  # the silent drops are now observable
+    q.close()
+
+
+def test_on_drop_error_callback_fires_per_dropped_row():
+    seen: list[tuple[str, object]] = []
+    inner = _FlakySink(bad={"boom"})
+    q = QueueSink(inner, on_drop_error=lambda exc, entry: seen.append((str(exc), entry)))
+    q.write("ok")
+    q.write("boom")
+    q.flush()
+    assert inner.rows == ["ok"]
+    assert q.dropped_rows == 1
+    assert len(seen) == 1
+    assert seen[0][1] == "boom" and "cannot persist" in seen[0][0]  # (exc, entry) delivered
+    q.close()
+
+
+def test_broken_on_drop_error_callback_does_not_kill_worker():
+    def broken(_exc, _entry):
+        raise ValueError("the callback itself is broken")
+
+    inner = _FlakySink(bad={"bad"})
+    q = QueueSink(inner, on_drop_error=broken)
+    q.write("bad")  # inner raises → callback raises → both swallowed
+    q.write("good")  # worker must still be alive to drain this
+    q.flush()
+    assert inner.rows == ["good"]
+    assert q.dropped_rows == 1
+    q.close()
+
+
 def test_queue_sink_wraps_sqlite_through_the_bus(tmp_path):
     # End-to-end: durable spend logging via tokenguard's sink seam, off the hot path.
     inner = SQLiteSink(str(tmp_path / "spend.db"))
