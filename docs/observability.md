@@ -203,7 +203,7 @@ Cendor never operates a telemetry endpoint. The monitor is an **operational copy
 **file**, never on what the monitor shows.
 
 ```bash
-docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.9.3
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.9.4
 # then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
 ```
 
