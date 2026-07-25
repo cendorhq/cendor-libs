@@ -198,14 +198,19 @@ def test_live_spans_scope_still_wins_over_the_auto_emitter(otel_traces):
 
 
 def test_predicate_cost_is_noise(otel_traces):
-    """The dormant path costs one predicate check per event; keep it far under instrument()'s own
-    overhead (~15 µs). Generous bound — this guards a regression, not a benchmark claim."""
+    """The dormant path costs one predicate check per event, so it must stay a lookup.
+
+    This is a **regression guard, not a benchmark** — it catches the class of mistake where the
+    predicate starts doing real work per event (the TypeScript port briefly loaded a module per
+    call: ~90 µs, measured). The bound is deliberately loose: a shared CI runner has shown ~3.5 µs
+    for a call that is ~0.3 µs on a quiet machine, and no published number depends on this test.
+    """
     n = 2000
     start = time.perf_counter()
     for _ in range(n):
         otel.provider_configured()
     per_call_us = (time.perf_counter() - start) / n * 1e6
-    assert per_call_us < 2.0, f"provider_configured() took {per_call_us:.2f} µs/call"
+    assert per_call_us < 20.0, f"provider_configured() took {per_call_us:.2f} µs/call"
 
 
 def test_debug_env_prints_one_line(otel_traces, monkeypatch, capsys):
