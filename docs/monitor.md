@@ -36,8 +36,10 @@ automatically when you pass `run(session=…)`, so there is no trace id to paste
 ## The monitor tour
 
 The monitor is a self-contained view over the same standard wire — no query language, no dashboard to
-assemble. Screenshots are of the real monitor rendering a seeded demo (synthetic data, content
-capture opted in for the demo). _(The shots below are from v0.4.0; the `docker run` above pulls the
+assemble. Screenshots are of the real monitor rendering a seeded workload (synthetic runs, content
+capture opted in for the capture) — the image itself **ships no sample app and fabricates nothing**:
+every screen you see is fed by your own runs, and an empty store just means nothing has been sent
+yet. _(The shots below are from v0.4.0; the `docker run` above pulls the
 current v0.10.0 — the two-doors-split UX (two stores, path-routed Libraries | SDK modes, the SDK
 structure pages, the status footer, and the SSE live channel) and the earlier operate-wave (v0.5) are
 described in the text and land beyond these panels.)_
