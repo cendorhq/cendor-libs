@@ -574,7 +574,10 @@ A span is active for audit entries emitted **inside `live_spans()`** (Python; Ty
 `liveSpans` from `@cendor/sdk` ≥ 0.17 — it makes the run's root span the active context span for the
 run body, matching Python) and **inside `core.otel.span(...)`** (Python; TypeScript `otel.span` from
 `@cendor/core` ≥ 0.9). Each SDK run inside a `live_spans` scope correlates its whole governance
-trail — budget blocks, guardrail decisions, tool calls — to that run's trace.
+trail — budget blocks, guardrail decisions, tool calls — to that run's trace. This holds for
+**streamed** runs too (`run.stream` / `run.astream`) — in TypeScript from `@cendor/sdk` **0.23.2**,
+which binds the automatic scope to each generator resumption; on 0.22–0.23.1 a streamed run's audit
+spans landed in their own traces.
 
 **Run-id fallback.** Even when no OTel span was active at append time — a post-hoc `span_tree`
 (the trace is built after the run) or an app with no OTel context manager installed — an audit entry
