@@ -19,7 +19,7 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.9.9
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.10.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -38,7 +38,7 @@ automatically when you pass `run(session=…)`, so there is no trace id to paste
 The monitor is a self-contained view over the same standard wire — no query language, no dashboard to
 assemble. Screenshots are of the real monitor rendering a seeded demo (synthetic data, content
 capture opted in for the demo). _(The shots below are from v0.4.0; the `docker run` above pulls the
-current v0.9.9 — the two-doors-split UX (two stores, path-routed Libraries | SDK modes, the SDK
+current v0.10.0 — the two-doors-split UX (two stores, path-routed Libraries | SDK modes, the SDK
 structure pages, the status footer, and the SSE live channel) and the earlier operate-wave (v0.5) are
 described in the text and land beyond these panels.)_
 
@@ -197,14 +197,25 @@ shows the effective config and builds the exact `docker run` / compose command t
 
 | Variable | Default | What it does |
 |---|---|---|
+Since **v0.10.0** the two doors are configured independently: anything that governs a door's data or
+its view exists once **per door** (`…_LIBS` / `…_SDK`, no container-wide fallback) and appears only on
+that door's Settings page; the handful of settings that govern the container itself live on the
+door-less Container page. Pre-v0.10.0 container-wide names were removed — the container maps a legacy
+value forward onto both doors and logs a deprecation warning, so nothing changes silently on upgrade.
+
+| Variable | Default | What it does |
+|---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | *Set in your **app**, not the container* — `http://localhost:4318`. The whole integration. |
-| `CENDOR_MONITOR_DB` | *(unset → embedded SQLite)* | External **Postgres** DSN (`postgres://…`, ≥ 14) for team/private-network deploys. Unset ⇒ embedded SQLite (WAL) on `/data`. One image; Postgres is never bundled. Read from env only, never logged. |
-| `CENDOR_MONITOR_RETENTION` | `7d` | Store retention. An ingest-side sweeper deletes runs/steps/governance/metrics older than this (both backends). |
-| `CENDOR_MONITOR_RETENTION_CONTENT` | *(unset)* | Optional **shorter** window for the opt-in content columns only (v0.5) — drops prompts/responses sooner than metadata, which lives its full term. |
-| `CENDOR_MONITOR_FORWARD_ENDPOINT` | *(unset)* | **Gateway mode.** When set, the collector *additionally* forwards all OTLP onward — the same image doubles as a prod gateway in front of your own backend. |
-| `CENDOR_MONITOR_FORWARD_CONTENT` | `false` | When forwarding, whether to include content attributes. **Default strips them** — content stays in your store only. |
-| `CENDOR_MONITOR_THEME` | `dark` | Default theme (`dark`\|`light`); a `?theme=` query or the viewer's saved toggle always overrides. |
-| `CENDOR_MONITOR_BASIC_AUTH` | *(unset)* | Optional `user:password` — HTTP basic auth over the whole UI + API. **No auth by default** (localhost dev tool — do not expose publicly). |
+| `CENDOR_MONITOR_DB_LIBS` / `_DB_SDK` | *(unset → embedded SQLite)* | **Per door.** External **Postgres** DSN (`postgres://…`, ≥ 14) for that door; unset ⇒ embedded SQLite (WAL) on `/data`. Mixed mode (one door Postgres, one SQLite) is first-class. One image; Postgres is never bundled. Read from env only, never logged. |
+| `CENDOR_MONITOR_RETENTION_LIBS` / `_SDK` | `7d` each | **Per door.** An ingest-side sweeper deletes that door's runs/steps/governance/metrics older than its own window (both backends). |
+| `CENDOR_MONITOR_RETENTION_CONTENT_LIBS` / `_SDK` | *(unset)* | **Per door.** Optional **shorter** window for the opt-in content columns only — drops that door's prompts/responses sooner than its metadata, which lives its full term. |
+| `CENDOR_MONITOR_MAX_SIZE_LIBS` / `_SDK` | *(unset)* | **Per door.** Size cap (e.g. `500m`, `2g`); the sweeper evicts that door's oldest runs first when its store exceeds it. |
+| `CENDOR_MONITOR_ALLOW_DELETE_LIBS` / `_SDK` | `false` each | **Per door.** Opt-in in-UI delete buttons for that door, backed by env-gated POST endpoints. Off ⇒ the read API stays GET-only. Opting one door in never opens the other. |
+| `CENDOR_MONITOR_THEME_LIBS` / `_SDK` | `dark` each | **Per door.** That door's default theme (`dark`\|`light`); a `?theme=` query or the viewer's saved toggle always overrides. |
+| `CENDOR_MONITOR_FORWARD_ENDPOINT` | *(unset)* | *Container-level.* **Gateway mode:** the collector *additionally* relays all OTLP onward — the same image doubles as a prod gateway in front of your own backend. It runs before the ingest assigns a door, so it is not a per-door setting. |
+| `CENDOR_MONITOR_FORWARD_CONTENT` | `false` | *Container-level.* When forwarding, whether to include content attributes. **Default strips them** — content stays in your store only. |
+| `CENDOR_MONITOR_BASIC_AUTH` | *(unset)* | *Container-level.* Optional `user:password` — HTTP basic auth over the whole UI + API. One credential per container. **No auth by default** (localhost dev tool — do not expose publicly). |
+| `CENDOR_MONITOR_THEME` | `dark` | *Container-level.* Theme of the door-less pages (the landing and the Container page). |
 
 **Ports:** `3000` = the monitor + `/api/cendor/` (same origin via nginx); `4317` = OTLP/gRPC ingest;
 `4318` = OTLP/HTTP ingest. The monitor always listens on `3000` inside the container — remap the host
@@ -264,8 +275,9 @@ image repo):
   (a reverse proxy — Caddy/nginx/Traefik), and add SSO via **forward-auth** (oauth2-proxy / Cloudflare
   Access / Authelia — no monitor-side code). **The OTLP ports (`4317`/`4318`) have no auth, ever** —
   keep them on a private network your apps share; never publish them to the internet.
-- **Retention** — `CENDOR_MONITOR_RETENTION` (metadata) + the optional shorter
-  `CENDOR_MONITOR_RETENTION_CONTENT` (content dropped sooner). The Settings page previews the next sweep.
+- **Retention** — per door: `CENDOR_MONITOR_RETENTION_{LIBS,SDK}` (metadata) + the optional shorter
+  `CENDOR_MONITOR_RETENTION_CONTENT_{LIBS,SDK}` (that door's content dropped sooner). Each door's
+  Settings page previews its own next sweep.
 - **Scale envelope** — designed for dev/team scale and **measured to 100k runs / 500k steps**
   (~125–162 MiB): the paginated runs list + content search stay interactive (single-digit-to-~20 ms);
   whole-fleet all-time aggregates land ~0.5–1.5 s (windowed queries are far faster; a live store under
@@ -288,7 +300,7 @@ image repo):
 - **Content is opt-in and off by default.** The monitor never enables content capture; without it,
   runs render metadata-only. When on, content lands only where your OTLP goes.
 - **Dev-tool scale.** SQLite by default suits a single builder's dev loop; point
-  `CENDOR_MONITOR_DB` at your own Postgres for a shared team deploy. No auth by default — set
+  `CENDOR_MONITOR_DB_{LIBS,SDK}` at your own Postgres for a shared team deploy. No auth by default — set
   `CENDOR_MONITOR_BASIC_AUTH` and don't expose it publicly.
 - **Licensing** — a permissive aggregate, **no AGPL/GPL**. See [Licensing](#licensing) below.
 
