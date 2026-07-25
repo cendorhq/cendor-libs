@@ -587,6 +587,14 @@ event to its run by `otel_trace_id` when present and `run_id` otherwise, so link
 (Standards-native backends group by the OTel trace; `run_id` is a Cendor attribute for tools that
 understand it.)
 
+**A libs-only correlation id is as precise as the scope you opened.** With no SDK run, the id a
+governance event carries is whatever `core.trace(...)` scope was active — so if you wrap *several*
+calls in one `core.trace("nightly-sync")`, the event links to that **scope**, not to one call, and a
+tool that lists runs will show one row matching more than one call (Cendor Monitor renders this
+honestly: `has_run: false` with more than one candidate rather than guessing a call). That is the
+correct behaviour for a deliberately coarse scope — open a `trace()` per unit you want to see as a
+unit, and the linkage is exact.
+
 ## How it works
 
 ```mermaid
