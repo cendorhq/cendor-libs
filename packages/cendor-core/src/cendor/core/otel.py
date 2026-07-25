@@ -64,6 +64,7 @@ def ingest(attributes: dict, *, messages: list[dict] | None = None, emit: bool =
     from .instrument import current_trace_id
     from .types import LLMCall, Usage
 
+    _arm_auto_telemetry()  # a managed-runtime app never calls instrument() — this is its adoption
     model = attributes.get("gen_ai.request.model") or attributes.get("gen_ai.response.model") or ""
     provider = attributes.get("gen_ai.system", "")
     inp = attributes.get("gen_ai.usage.input_tokens", attributes.get("gen_ai.usage.prompt_tokens"))
@@ -381,8 +382,96 @@ def _internal_provider(call: Any, public: str) -> str:
 
 
 # =================================================================================================
-# G20 — bus→span emitter. Opt-in subscriber that turns LLMCall/ToolCall bus events into semconv
-# spans, so a libs-only app (no SDK) lights up a trace-based monitor. Honors content capture.
+# The telemetry switch (DR-1 / DR-6) — "it just flows".
+#
+# Cendor emits into the OpenTelemetry provider **your app configured**; it has no endpoint, no
+# exporter and no collector of its own. So when OTel is installed AND a real (non-default) global
+# provider exists, emitting is the useful default — the same posture every OTel instrumentation
+# library takes. ``CENDOR_TELEMETRY=off`` turns all of it off, process-wide, with no code change.
+#
+# Nothing here is identity: the app name stays the OTel resource's ``service.name``
+# (``OTEL_SERVICE_NAME``), and there is no Cendor identity env var.
+# =================================================================================================
+
+#: The one switch. ``off`` disables every Cendor-side emitter; unset (or ``auto``) means
+#: "emit when a provider is configured".
+TELEMETRY_ENV = "CENDOR_TELEMETRY"
+#: Set to ``1`` for a one-shot stderr line describing what was detected and wired.
+DEBUG_ENV = "CENDOR_DEBUG_TELEMETRY"
+
+_debug_said: set[str] = set()
+
+
+def telemetry_mode() -> Literal["auto", "off"]:
+    """The effective telemetry mode from ``CENDOR_TELEMETRY``: ``"auto"`` (default) or ``"off"``.
+
+    ``auto`` means *emit when the app has configured an OpenTelemetry provider* (see
+    :func:`provider_configured`). ``off`` disables every Cendor-side emitter — the span emitter, the
+    spend tap, and the audit mirror's auto-attach — without touching your code. An unrecognised
+    value
+    is treated as ``auto`` (noted once under ``CENDOR_DEBUG_TELEMETRY=1``), because a typo must
+    never
+    silently disable telemetry.
+
+    Example:
+        >>> from cendor.core import otel
+        >>> otel.telemetry_mode()          # 'auto' unless CENDOR_TELEMETRY=off
+        'auto'
+    """
+    raw = os.environ.get(TELEMETRY_ENV, "").strip().lower()
+    if raw == "off":
+        return "off"
+    if raw not in ("", "auto"):
+        _debug(f"CENDOR_TELEMETRY={raw!r} is not 'auto' or 'off' — treating it as 'auto'")
+    return "auto"
+
+
+def provider_configured() -> bool:
+    """True when the app has registered a real (non-default) global OpenTelemetry tracer provider.
+
+    This is the honest signal that *somebody is listening*: it is False before the app's one-time
+    OTel setup (the API hands out a ``ProxyTracerProvider``) and True after it. It never inspects
+    exporters or endpoints — Cendor does not care where your spans go. False when OpenTelemetry is
+    not installed at all.
+
+    Example:
+        >>> from cendor.core import otel
+        >>> otel.provider_configured()     # False until your app configures OTel
+        False
+    """
+    try:
+        from opentelemetry import trace
+        from opentelemetry.trace import ProxyTracerProvider
+    except ImportError:
+        return False
+    return not isinstance(trace.get_tracer_provider(), ProxyTracerProvider)
+
+
+def _debug(message: str) -> None:
+    """One-shot stderr note, only under ``CENDOR_DEBUG_TELEMETRY=1``. Never warns by default: the
+    silent no-op is load-bearing for local-first (an offline app must not be nagged)."""
+    if os.environ.get(DEBUG_ENV, "").strip() not in ("1", "true", "TRUE", "yes"):
+        return
+    if message in _debug_said:
+        return
+    _debug_said.add(message)
+    import sys
+
+    print(f"cendor telemetry: {message}", file=sys.stderr)
+
+
+def _otel_importable() -> bool:
+    try:
+        import opentelemetry.trace  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# =================================================================================================
+# G20 — bus→span emitter. Turns LLMCall/ToolCall bus events into semconv spans, so a libs-only app
+# (no SDK) lights up a trace-based monitor. Honors content capture. Attached automatically under the
+# switch above (and explicitly by use_span_emitter, which always wins).
 # =================================================================================================
 
 #: Nonzero while an SDK ``live_spans`` context is open — the emitter defers to it (no double spans).
@@ -399,39 +488,167 @@ def exit_live_spans() -> None:
     _live_span_depth.set(max(0, _live_span_depth.get() - 1))
 
 
-def _live_spans_active() -> bool:
+def live_spans_active() -> bool:
+    """True while an SDK ``live_spans`` scope is open in this context.
+
+    The SDK reads it to decide whether to open its **automatic** run scope: an explicit
+    ``live_spans()`` the user opened always wins, so a run is never wrapped twice.
+
+    Example:
+        >>> from cendor.core import otel
+        >>> otel.live_spans_active()
+        False
+    """
     return _live_span_depth.get() > 0
 
 
+def _live_spans_active() -> bool:
+    return live_spans_active()
+
+
 def use_span_emitter(tracer: Any = None) -> Callable[[], None]:
-    """Opt-in: emit a ``chat``/``execute_tool`` semconv span per ``LLMCall``/``ToolCall`` bus event.
+    """Emit a ``chat``/``execute_tool`` semconv span per ``LLMCall``/``ToolCall`` bus event.
 
-    A libs-only app (using ``instrument()`` but not the SDK) can wire this once to light up any
-    trace-based monitor without writing manual spans. Honors content capture (G17). When an SDK
-    ``live_spans`` context is active it defers to it (no double spans); it is otherwise mutually
-    exclusive with the SDK's ``span_tree``/``live_spans`` — don't wire both for the same run.
+    **You usually do not need to call this.** Under ``CENDOR_TELEMETRY=auto`` (the default) the same
+    emitter attaches itself as soon as you use ``instrument()`` and your app has an OpenTelemetry
+    provider configured. Call it explicitly to pass your own ``tracer``, or to emit regardless of
+    the
+    switch. **A manual call always wins:** it detaches the automatic subscription, so events are
+    never
+    rendered twice.
 
-    Returns a disposer that unsubscribes the emitter. No-op if OpenTelemetry isn't installed.
+    Honors content capture (G17). When an SDK ``live_spans`` context is active it defers to it (no
+    double spans); it is otherwise mutually exclusive with the SDK's ``span_tree``/``live_spans`` —
+    don't wire both for the same run.
+
+    Returns a disposer that unsubscribes the emitter (and re-arms the automatic path). No-op if
+    OpenTelemetry isn't installed and no tracer was passed.
     """
     from . import bus
-    from .types import LLMCall, ToolCall
 
-    try:
-        from opentelemetry import trace
-    except ImportError:
-        return lambda: None
-    tr = tracer or trace.get_tracer("cendor.core")
+    # An explicitly passed tracer wins and needs no OpenTelemetry import: the caller already has one
+    # (a custom tracer, or a recording double). Only the default path needs the package — and
+    # returns
+    # a no-op disposer without it. (Before W0.5 the ImportError check ran first, so passing a tracer
+    # into an env without OTel installed silently subscribed nothing — the TS port never had that
+    # asymmetry: `tracer ?? loadRichTracer()`.)
+    tr = tracer
+    if tr is None:
+        try:
+            from opentelemetry import trace
+        except ImportError:
+            return lambda: None
+        tr = trace.get_tracer("cendor.core")
 
     def on_event(ev: Any) -> None:
-        if _live_spans_active():
-            return
-        if isinstance(ev, LLMCall):
-            _emit_llm_span(tr, ev)
-        elif isinstance(ev, ToolCall):
-            _emit_tool_span(tr, ev)
+        _render_bus_event(tr, ev)
 
+    global _manual_emitters
+    _manual_emitters += 1
+    _detach_auto_emitter()  # manual wins — exactly one emitter, ever
     bus.subscribe(on_event)
-    return lambda: bus.unsubscribe(on_event)
+    _debug("span emitter attached (manual)")
+
+    def dispose() -> None:
+        global _manual_emitters
+        bus.unsubscribe(on_event)
+        _manual_emitters = max(0, _manual_emitters - 1)
+
+    return dispose
+
+
+def _render_bus_event(tr: Any, ev: Any) -> None:
+    """Render one bus event as a span (the shared body of the manual + automatic emitters)."""
+    from .types import LLMCall, ToolCall
+
+    if _live_spans_active():
+        return
+    if isinstance(ev, LLMCall):
+        _emit_llm_span(tr, ev)
+    elif isinstance(ev, ToolCall):
+        _emit_tool_span(tr, ev)
+
+
+# --------------------------------------------------------------- automatic attach (DR-1 = "auto")
+# One subscription, made the first time the app adopts a capture path (``instrument()`` /
+# ``ingest()``) and only when OpenTelemetry is importable. It stays dormant — re-checking the cheap
+# provider predicate per event (~300 ns, measured) — until the app's provider appears, then latches
+# and renders. So attach order never matters, a provider configured after the first call is still
+# caught, and an app that never configures OTel pays a predicate check and nothing else.
+_auto_emitter: Any = None  # the subscribed callable, or None
+_auto_ready = False  # True once a real provider was seen (the latch)
+_manual_emitters = 0  # >0 ⇒ the user wired their own; the auto path stands down
+
+
+def _auto_on_event(ev: Any) -> None:
+    global _auto_ready
+    if _manual_emitters:
+        return
+    if telemetry_mode() == "off":
+        return  # read per event: `off` takes effect even if exported late
+    if not _auto_ready:
+        if not provider_configured():
+            return
+        _auto_ready = True
+        _debug("mode=auto, provider=detected, emitter=attached")
+    from opentelemetry import trace
+
+    _render_bus_event(trace.get_tracer("cendor.core"), ev)
+
+
+def _arm_auto_telemetry() -> None:
+    """Called from the capture entry points (``instrument()``, :func:`ingest`). Idempotent +
+    cheap."""
+    global _auto_emitter
+    if _auto_emitter is not None or _manual_emitters:
+        return
+    if telemetry_mode() == "off":
+        return
+    if not _otel_importable():
+        # Local-first rail: with OpenTelemetry absent nothing is subscribed at all — the bus keeps
+        # exactly the subscribers it had, and behaviour is byte-identical to a pre-switch release.
+        return
+    from . import bus
+
+    _auto_emitter = _auto_on_event
+    bus.subscribe(_auto_on_event)
+    _debug("armed (mode=auto); waiting for a provider" if not provider_configured() else "armed")
+
+
+def _detach_auto_emitter() -> None:
+    global _auto_emitter
+    if _auto_emitter is None:
+        return
+    from . import bus
+
+    bus.unsubscribe(_auto_emitter)
+    _auto_emitter = None
+
+
+def _reset_auto_telemetry() -> None:
+    """Test helper: forget the automatic subscription + its latch."""
+    global _auto_ready, _manual_emitters
+    _detach_auto_emitter()
+    _auto_ready = False
+    _manual_emitters = 0
+    _debug_said.clear()
+
+
+def auto_telemetry_state() -> dict[str, Any]:
+    """What the automatic path currently thinks — for diagnostics (``doctor``) and tests.
+
+    Keys: ``mode`` (``auto``/``off``), ``otel`` (importable), ``provider`` (configured),
+    ``armed`` (a dormant-or-live auto subscription exists), ``emitting`` (the latch fired),
+    ``manual`` (how many explicit ``use_span_emitter`` attachments are live).
+    """
+    return {
+        "mode": telemetry_mode(),
+        "otel": _otel_importable(),
+        "provider": provider_configured(),
+        "armed": _auto_emitter is not None,
+        "emitting": _auto_ready and not _manual_emitters,
+        "manual": _manual_emitters,
+    }
 
 
 def _emit_llm_span(tr: Any, call: Any) -> None:

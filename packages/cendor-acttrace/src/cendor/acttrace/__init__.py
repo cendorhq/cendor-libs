@@ -370,6 +370,36 @@ def _meta_signature(key_bytes: bytes, meta: dict) -> str:
     return hmac.new(key_bytes, body.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _resolve_mirror(mirror: Any) -> Any:
+    """Decide an ``AuditLog``'s mirror (DR-2a).
+
+    * an explicit sink ⇒ exactly that sink;
+    * ``False`` ⇒ never mirror this log (the per-log opt-out);
+    * ``None`` (the default) ⇒ an :class:`~cendor.acttrace.OTelMirror` when telemetry is on and
+      OpenTelemetry is installed, else no mirror.
+
+    The mirror is the **operational copy** the docs already promise; auto-attaching it does not
+    change
+    what evidence *is* — the hash-chained file (or a signed ``export()``) stays the only artifact
+    ``verify()`` checks, and nothing here creates an ``AuditLog`` that the user did not create.
+    """
+    if mirror is False:
+        return None
+    if mirror is not None:
+        return mirror
+    try:
+        from cendor.core.otel import telemetry_mode
+
+        if telemetry_mode() == "off":
+            return None
+        from opentelemetry import trace  # noqa: F401 — presence check only
+
+        from .otel import OTelMirror
+    except Exception:  # noqa: BLE001 — OTel absent, or an older core without the switch
+        return None
+    return OTelMirror()
+
+
 class AuditLog:
     """A hash-chained, append-only, auto-populating audit log. docs/acttrace.md §3, §5.
 
@@ -422,7 +452,12 @@ class AuditLog:
 
         ``mirror`` attaches an optional :class:`~cendor.core.protocols.Sink` (e.g.
         :class:`~cendor.acttrace.OTelMirror`) that receives every chained :class:`AuditEntry` *in
-        addition to* the file — an **operational copy** for monitoring/alerting/SIEM. A mirror is
+        addition to* the file — an **operational copy** for monitoring/alerting/SIEM. **Left unset
+        it
+        auto-attaches an** :class:`~cendor.acttrace.OTelMirror` when OpenTelemetry is installed and
+        ``CENDOR_TELEMETRY`` isn't ``off``, so a governed app's operational copy reaches the backend
+        it already configured with no extra line; pass ``mirror=False`` to never mirror this log, or
+        your own sink to use exactly that one. A mirror is
         best-effort: a failing mirror is swallowed and never breaks the chain, and the on-disk file
         (not the mirror) remains the sole artifact ``verify()`` checks. If the mirror implements the
         optional ``flush()``/``close()`` lifecycle, :meth:`detach` calls them. When OpenTelemetry is
@@ -441,7 +476,11 @@ class AuditLog:
         self._policy = policy or Policy.default()
         self._redactor = redactor or _redact  # _redact sentinel => built-in policy-driven path
         self._flag_on_redact = flag_on_redact
-        self._mirror = mirror  # optional Sink: an operational copy (APM/SIEM); never the evidence
+        # optional Sink: an operational copy (APM/SIEM); never the evidence. `mirror=None` (the
+        # default) auto-attaches an OTelMirror under the telemetry switch — you declared governance,
+        # so its operational copy flows to the backend you configured, with no extra line. Pass
+        # `mirror=False` for "never mirror this log", or your own sink to use exactly that.
+        self._mirror = _resolve_mirror(mirror)
         # Cache the OTel trace module once so per-entry correlation stays cheap and is a no-op when
         # OpenTelemetry isn't installed (the local-first default).
         try:

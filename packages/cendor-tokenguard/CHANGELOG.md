@@ -2,6 +2,20 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.6.0] — 2026-07-25
+**Spend reaches your backend with zero telemetry code** (see `cendor-core` 1.12.0 for the switch).
+
+### Added
+- **An internal OpenTelemetry spend tap.** When telemetry is on, every priced spend row is also written
+  to an internal `OTelSink`, so `gen_ai.client.token.usage` / `.cost.usd` / `.reasoning.token.usage`
+  (dimensioned by `model` **and** your `track(...)` tags) appear in the backend you configured without
+  `use_sink(sinks.OTelSink())`. `CENDOR_TELEMETRY=off` disables it; without OpenTelemetry it is inert.
+- **Your `use_sink` slot is untouched by it** — the tap is *additive*, beside the slot, precisely
+  because `use_sink` **replaces**: routing automatic export through it would have meant a later
+  `use_sink(SQLiteSink(...))` silently switching backend spend off.
+- **No double counting on upgrade.** If your own sink already *is* an `OTelSink` (or a `QueueSink`
+  wrapping one — what the current docs show), the tap stands down, so counters stay 1×.
+
 ## [1.5.1] — 2026-07-24
 QueueSink drop observability + a docstring fix. Backward-compatible.
 

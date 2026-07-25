@@ -156,13 +156,8 @@ def test_g15_counter_is_noop_without_otel():  # G15 — the increment never rais
             _call(client)
 
 
-def test_g15_counter_increments_with_otel(monkeypatch):  # G15 — real wire when OTel is present
-    metrics = pytest.importorskip("opentelemetry.metrics")
-    from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-
-    reader = InMemoryMetricReader()
-    metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
+def test_g15_counter_increments_with_otel(monkeypatch, otel_metrics):  # G15 — real wire with OTel
+    reader = otel_metrics  # a fresh in-memory meter provider (see the workspace conftest)
     # force the lazily-bound counter to (re)create against the provider we just set
     monkeypatch.setattr(tokenguard, "_budget_events_counter", None)
     monkeypatch.setattr(tokenguard, "_budget_events_counter_checked", False)

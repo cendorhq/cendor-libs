@@ -44,6 +44,13 @@ dev = [
   # The tests importorskip these, so a plain install without them still runs.
   "openai-agents>=0.1",
   "azure-ai-agents>=1.0",
+  # OpenTelemetry (the `cendor-core[otel]` extra) — a TEST dep here, never a runtime one. The
+  # telemetry-switch tests must observe real spans/metrics through a real (in-memory) provider, and
+  # the provider predicate must be checked against the actual ProxyTracerProvider semantics. The
+  # OTel-ABSENT path stays pinned by an import-blocking fixture (tests/_no_otel.py), so installing it
+  # here does not cost us the local-first coverage.
+  "opentelemetry-api>=1.25",
+  "opentelemetry-sdk>=1.25",
   "cendor-core",
   "cendor-tokenguard",
   "cendor-contextkit",

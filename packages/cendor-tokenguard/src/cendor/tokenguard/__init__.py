@@ -212,10 +212,65 @@ def use_sink(sink: Any) -> Any:
 
     The in-memory aggregation (:func:`report`) always runs; a sink *additionally* persists each
     row. Pass ``None`` to detach. docs/tokenguard.md §5.
+
+    This slot is **yours**: it holds exactly the sink you set (replacing any previous one).
+    Automatic
+    OpenTelemetry spend export does **not** live here — it rides a separate internal tap, so setting
+    or clearing your sink can never turn backend spend off. See ``CENDOR_TELEMETRY``.
     """
     global _sink
     previous, _sink = _sink, sink
     return previous
+
+
+# ------------------------------------------------------------------ the internal spend tap (DR-3)
+# Automatic OTel spend export writes through an *additive* tap beside the user's sink — never
+# through `use_sink`, whose replace semantics would mean a later `use_sink(SQLiteSink(...))`
+# silently switched backend spend off (or vice versa). The tap is one internal OTelSink, built on
+# the first priced row and only when telemetry is on; it is inert without OpenTelemetry installed,
+# and Python's proxy meter means construction order never matters.
+_tap: Any = None
+_tap_off = False  # a hard stop after a construction failure (never retry-loop on every row)
+
+
+def _user_sink_already_exports() -> bool:
+    """True when the user's own sink IS (or wraps) an ``OTelSink`` — then the tap stands down, so an
+    app that follows the older docs (``use_sink(sinks.OTelSink())``) never double-counts spend."""
+    candidate = _sink
+    for _ in range(3):  # unwrap QueueSink(...) and any similar single-inner wrapper
+        if candidate is None:
+            return False
+        if getattr(candidate, "_cendor_otel_spend", False):
+            return True
+        candidate = getattr(candidate, "_inner", None) or getattr(candidate, "inner", None)
+    return False
+
+
+def _tap_write(row: dict) -> None:
+    global _tap, _tap_off
+    if _tap_off:
+        return
+    if _user_sink_already_exports():
+        return
+    try:
+        from cendor.core.otel import telemetry_mode
+
+        if telemetry_mode() == "off":
+            return
+        if _tap is None:
+            from .sinks import OTelSink
+
+            _tap = OTelSink()
+        _tap.write(row)
+    except Exception:  # noqa: BLE001 — telemetry must never break a governed call
+        _tap_off = True
+
+
+def _reset_tap() -> None:
+    """Test helper: drop the internal OTel spend tap."""
+    global _tap, _tap_off
+    _tap = None
+    _tap_off = False
 
 
 def configure(*, max_records: int | None = _UNSET, on_unpriced: str = _UNSET) -> None:
@@ -732,17 +787,17 @@ def _on_call(call: object) -> None:
             overflow = len(_records) - _max_records
             del _records[:overflow]  # evict oldest (FIFO); counted, never silently
             _dropped += overflow
+    row = {
+        "tags": tags,
+        "usd": str(usd),
+        "input_tokens": inp,
+        "output_tokens": out,
+        "reasoning_tokens": rsn,
+        "model": call.model,
+    }
     if _sink is not None:
-        _sink.write(
-            {
-                "tags": tags,
-                "usd": str(usd),
-                "input_tokens": inp,
-                "output_tokens": out,
-                "reasoning_tokens": rsn,
-                "model": call.model,
-            }
-        )
+        _sink.write(row)
+    _tap_write(row)
 
     for frame in frames:
         frame.spent_usd += usd
@@ -1194,6 +1249,7 @@ def reset() -> None:
     _on_unpriced = _DEFAULT_ON_UNPRICED
     _tags.set({})
     _budgets.set(())
+    _reset_tap()
     _ensure_subscribed()
 
 

@@ -181,6 +181,10 @@ class OTelSink:
     Python originals byte-for-byte to the TypeScript ``OTelSink``.
     """
 
+    #: Marks this class as the OTel spend emitter, so tokenguard's internal telemetry tap can stand
+    #: down when the user has already wired one themselves (no double-counted spend).
+    _cendor_otel_spend = True
+
     def __init__(self, *, tags: bool = True) -> None:
         self._tokens: Any = None
         self._cost: Any = None

@@ -1,6 +1,6 @@
 [project]
 name = "cendor-acttrace"
-version = "1.10.1"
+version = "1.11.0"
 description = "An automatic, tamper-evident log of your AI's decisions — every model and tool call is recorded and can be verified offline; change any past entry and the check fails."
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -17,7 +17,7 @@ classifiers = [
 ]
 readme = "README.md"
 # >=1.1: guard()'s redact-before-send needs core's Reroute(messages=…), added in cendor-core 1.1.
-dependencies = ["cendor-core>=1.9,<2.0"]
+dependencies = ["cendor-core>=1.12,<2.0"]  # telemetry switch (telemetry_mode) — the mirror auto-attach reads it
 
 [project.optional-dependencies]
 # Optional NER-backed redaction for free-text names/addresses (Microsoft Presidio). Never a hard

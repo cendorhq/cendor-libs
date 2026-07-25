@@ -1,6 +1,6 @@
 [project]
 name = "cendor-tokenguard"
-version = "1.5.1"
+version = "1.6.0"
 description = "Spending limits for LLM calls: stop a call before it runs if it would blow the budget, and see cost broken down per feature."
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -16,7 +16,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 readme = "README.md"
-dependencies = ["cendor-core>=1.10,<2.0"]
+dependencies = ["cendor-core>=1.12,<2.0"]  # telemetry switch (telemetry_mode) — the spend tap reads it
 
 [project.urls]
 Homepage = "https://github.com/cendorhq/cendor-libs"

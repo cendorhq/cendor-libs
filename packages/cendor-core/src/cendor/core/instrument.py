@@ -232,6 +232,12 @@ def instrument(client: T) -> T:
     client = instrument(OpenAI())   # every call now emits an LLMCall on the bus; sync/async/stream
     ```
     """
+    # Telemetry (DR-1): adopting a capture path arms the automatic span emitter — it stays dormant
+    # until the app's OpenTelemetry provider exists, and does nothing at all when OTel isn't
+    # installed or `CENDOR_TELEMETRY=off`. Cheap + idempotent; see cendor.core.otel.
+    from .otel import _arm_auto_telemetry
+
+    _arm_auto_telemetry()
     targets = _find_targets(client)
     # The check-then-setattr below is a race; serialize so two threads can't both wrap the same fn.
     with _install_lock:

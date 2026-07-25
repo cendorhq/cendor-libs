@@ -2,6 +2,55 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.12.0] — 2026-07-25
+**Telemetry now flows with zero telemetry code — and `CENDOR_TELEMETRY=off` turns it all off.**
+
+⚠️ **This is a default-behaviour change.** If OpenTelemetry is installed (`pip install
+"cendor-core[otel]"`) **and** your app configures a global tracer provider (`configure_azure_monitor()`,
+a plain `set_tracer_provider`, an OTLP endpoint pointed at Cendor Monitor…), then after upgrading a
+governed call arrives in **your** backend as a standard `gen_ai.*` span without a line of Cendor
+telemetry code. You will see:
+
+| What appears | From | Scope / names |
+|---|---|---|
+| `chat …` / `execute_tool …` span per governed call | this package — the emitter attaches itself at your first `instrument()` (or `otel.ingest()`) | `cendor.core`, standard `gen_ai.*` |
+
+(`cendor-tokenguard` 1.6.0 adds the spend counters, `cendor-acttrace` 1.11.0 the `audit.*` mirror,
+`cendor-sdk` 1.18.0 the run root — same switch, same default.)
+
+Cendor still has **no endpoint, no exporter and no collector of its own**: it emits into the provider
+*you* configured. With OpenTelemetry absent, or with no provider configured, behaviour is
+byte-identical to 1.11.x — not one extra bus subscriber. Prompt/response **content stays opt-in**
+(`otel.capture_content()`). No new identity: the app name is still the OTel resource's `service.name`.
+
+**Turning it off / diagnosing it**
+- `CENDOR_TELEMETRY=off` — process-wide, no code change; read per event, so it applies even if you
+  export it late. `OTEL_SDK_DISABLED=true` (the standard switch) composes for free.
+- `CENDOR_DEBUG_TELEMETRY=1` — one stderr line stating the mode, whether a provider was detected and
+  what got wired. Silent otherwise: Cendor never nags an offline app.
+
+### Added
+- **`otel.telemetry_mode()`** — the effective mode from `CENDOR_TELEMETRY` (`"auto"` default | `"off"`;
+  an unrecognised value is `auto`, noted once under `CENDOR_DEBUG_TELEMETRY=1`, because a typo must
+  never silently disable telemetry).
+- **`otel.provider_configured()`** — True once the app registered a real (non-proxy) global tracer
+  provider. It never inspects exporters or endpoints.
+- **`otel.live_spans_active()`** — whether an SDK `live_spans` scope is open in this context (the SDK
+  reads it so an explicit scope always wins over its automatic one).
+- **`otel.auto_telemetry_state()`** — a diagnostics dict (`mode`/`otel`/`provider`/`armed`/`emitting`/
+  `manual`), for `cendor-init doctor` and tests.
+- **Automatic span emitter.** `instrument()` / `otel.ingest()` arm **one** bus subscriber that stays
+  dormant — re-checking the ~300 ns provider predicate per event — until a provider appears, then
+  latches and renders. Attach order therefore never matters, and a provider configured *after* the
+  first call is still caught. `use_span_emitter()` still works and **always wins**: a manual
+  attachment detaches the automatic one, so an event is never rendered twice.
+
+### Fixed
+- **`use_span_emitter(tracer)` now honours an explicitly passed tracer when OpenTelemetry is not
+  installed.** The `ImportError` guard ran first, so passing your own tracer (or a recording double)
+  into an OTel-less environment silently subscribed nothing. The TypeScript port never had this
+  asymmetry.
+
 ## [1.11.1] — 2026-07-24
 **Fix: the openai-agents adapter now actually stamps the agent name on live calls.** Found by the black-box testsuits live probe: the OpenAI Agents SDK runs each model call in an async context **isolated** from the `RunHooks`, so the `ContextVar` set in `on_agent_start` (or `on_llm_start`) never reached the captured `LLMCall` — the name was silently dropped live (the offline fixture passed because it drove hooks + call in one context). `instrument()` *did* capture the call with real usage, so "the calls ride the standard client" always held; only the name was missing.
 

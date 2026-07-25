@@ -64,3 +64,13 @@ def _reset() -> None:
     """Test helper: clear all subscribers."""
     with _lock:
         _subscribers.clear()
+
+
+def _subscriber_count() -> int:
+    """Test helper: how many subscribers are registered.
+
+    Used by the local-first pins: with OpenTelemetry absent, auto-wiring must subscribe **nothing**
+    (zero added bus cost), and a manual attachment plus the auto one must never both be subscribed.
+    """
+    with _lock:
+        return len(_subscribers)

@@ -2,6 +2,21 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.11.0] — 2026-07-25
+**Governance is one line, not four** (see `cendor-core` 1.12.0 for the switch).
+
+### Added
+- **`AuditLog(...)` auto-attaches an `OTelMirror`** when you pass no `mirror`, OpenTelemetry is
+  installed and `CENDOR_TELEMETRY` isn't `off`. You already declared governance by constructing the
+  log; its **operational copy** now reaches the backend you configured with no extra line.
+- **`AuditLog(mirror=False)`** — the per-log opt-out ("never mirror this log"). An explicit mirror is
+  still used verbatim.
+
+**Unchanged, deliberately:** nothing ever *creates* an `AuditLog` for you; the chain, the file format
+and `verify()` are identical; the mirror remains an **operational copy** — the hash-chained file (or a
+signed `export()` pack) is still the only artifact `verify()` checks, and a failing mirror is still
+swallowed rather than breaking the chain (rule 6).
+
 ## [1.10.1] — 2026-07-22
 
 ### Added
