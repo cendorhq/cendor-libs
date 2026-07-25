@@ -26,6 +26,17 @@ def on_call(call):                   # normalized LLMCall with usage + cost
 client = instrument(openai_or_anthropic_client)   # idempotent, additive · sync · async · streaming
 ```
 
+
+## Telemetry: it flows (and `CENDOR_TELEMETRY=off` stops it)
+
+Since **1.13.0**, with OpenTelemetry installed and a provider configured **by your app**, core emits
+`gen_ai.*` spans for every governed call as soon as you call `instrument()` — plus `governance.*` spans
+for the budget/guardrail decisions the other libraries make. No emitter to attach, no exporter to
+install: core has **no endpoint of its own** and emits into your provider. `CENDOR_TELEMETRY=off` turns
+it off process-wide; `CENDOR_DEBUG_TELEMETRY=1` prints one line saying what was detected; `otel.telemetry_mode()` / `provider_configured()` let
+you check the state yourself. With OpenTelemetry absent, nothing is subscribed and behaviour is
+byte-identical.
+
 ## Highlights
 
 - **`instrument()`** — wrap any client once: **OpenAI** (Chat Completions + Responses API + **Embeddings**, since 1.6.0) **· Anthropic · Hugging Face** (`InferenceClient`) **· AWS Bedrock · Google Gemini** (`google-genai` + legacy `google-generativeai`) **· Ollama**, detected by *shape*; sync, async, **and streaming**; idempotent + additive. Embedding calls carry `metadata["embedding"]` and ride the same pre-flight interceptor pass (budgets can block, guards can redact). `instrument_tool()` does the same for tools.

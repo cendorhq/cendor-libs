@@ -64,6 +64,9 @@ Call shapes that are easy to get wrong:
 - Python is a PEP 420 namespace — `from cendor.tokenguard import budget`; no top-level `cendor` module.
 - Provider SDKs are optional (Python extras, TS peer deps) — install only what you call.
 - SDK provider keys: the SDK builds the client, so use the provider's standard env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …) or `Agent(api_key=…)` / a pre-built `client=`. There is no Cendor key config.
+- Telemetry: **do not write any**. With OpenTelemetry installed and a provider configured in the app, Cendor emits `gen_ai.*` call spans, spend counters, an `agent.run` tree per SDK `run()`, and `governance.*` decisions on its own (core ≥ 1.13 / 0.15, sdk ≥ 1.19 / 0.22). Never add `use_span_emitter()` / `use_sink(OTelSink())` / `live_spans()` unless the user asks for explicit control — and never invent an endpoint, key or exporter: Cendor has none, it emits into the app's own provider.
+- The off switch is the env var `CENDOR_TELEMETRY=off` (process-wide, no code change); `CENDOR_DEBUG_TELEMETRY=1` prints one line saying whether a provider was detected. With no provider (or no OTel installed) everything is a silent no-op — that is correct, not a bug.
+- `AuditLog(system=…)` is the *governance* line; its OTel mirror auto-attaches (pass `mirror=False` to opt out). The mirror is an **operational copy** — `verify()` runs on the hash-chained file. The automatic `governance.*` spans are operational signals too, never "an audit trail".
 
 Honest limits: deterministic guardrails don't stop novel adversarial attacks; acttrace produces
 *evidence*, not a compliance guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants

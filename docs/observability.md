@@ -7,14 +7,32 @@ events flow into whatever backend that pipeline points at — Azure Monitor / Ap
 CloudWatch, Datadog, Grafana, New Relic, Honeycomb, an OTLP collector, or an LLM-observability tool
 like Langfuse — **with no Cendor-specific exporter to install or maintain.**
 
-Cendor is **local-first**: it never configures a telemetry backend for you and never opens a network
-connection on its own. Export is opt-in — you install the OpenTelemetry extra, configure a provider
-once, and attach the emitters you want. Without that, everything below is a silent no-op.
+> ### It flows. You write no telemetry code.
+>
+> Install the OpenTelemetry extra, configure a provider once **the way you already would**, and use
+> Cendor normally. That's it:
+>
+> * every governed call becomes a `gen_ai.*` **span** — the moment you call `instrument()`;
+> * spend becomes **counters** (`gen_ai.client.token.usage` / `.cost.usd`), dimensioned by model and
+>   your `track(...)` tags;
+> * an SDK `run()` becomes a **run tree** — root, steps, usage/cost rollups — with your `session` id as
+>   the conversation key;
+> * **enforcement decisions** — a budget that blocked a call, a guardrail that tripped — become
+>   `governance.*` spans, correlated to the call or run they governed;
+> * and if you keep an `AuditLog`, its **operational copy** rides along as `audit.*` spans too.
+>
+> **The off switch is one env var: `CENDOR_TELEMETRY=off`** — process-wide, no code change. With
+> OpenTelemetry absent, or with no provider configured, nothing is emitted and nothing is even
+> subscribed. Prompt/response **content stays opt-in** either way.
+>
+> Requires cendor-core ≥ 1.13 / @cendor/core ≥ 0.15 (+ cendor-sdk ≥ 1.19 / @cendor/sdk ≥ 0.22 for the
+> automatic run scope). Older versions need the explicit attachments — still supported, see
+> [Attach it yourself](#attach-it-yourself-explicit-control).
 
-> **The short version.** `pip install "cendor-core[otel]"` (or add `@opentelemetry/api`), point an
-> OTel pipeline at your backend, and: `live_spans()` streams the agent trajectory, `OTelSink()`
-> streams spend as metrics, and `AuditLog(mirror=OTelMirror())` streams the governance/audit trail.
-> The tamper-evident audit **file** stays your system of record; the mirror is an operational copy.
+Cendor is **local-first**: it never configures a telemetry backend for you, never opens a network
+connection of its own, and has no endpoint. It emits into **your** provider — which is why "on by
+default when a provider exists" is a safe default rather than a surprise: the data goes only where you
+already pointed a pipeline.
 
 > **Want to *see* all this in one screen while you build?** [**Cendor Monitor**](monitor.md) — an
 > optional, self-hosted **journey view** — renders the same standard OTLP wire as an Agents →
@@ -48,7 +66,7 @@ npm i @azure/monitor-opentelemetry
 
 The most portable path: set the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable and start
 an OTel SDK. Everything Cendor emits is exported to that endpoint (a collector, or a vendor's OTLP
-intake).
+intake). **There is no Cendor telemetry code in either sample.**
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -65,9 +83,7 @@ provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
 trace.set_tracer_provider(provider)               # the ONE global setup — your app owns it
 
 from cendor.sdk import Agent, run
-from cendor.sdk.otel import live_spans
-with live_spans():                                # agent trajectory -> your backend
-    result = run(agent, "What's the weather in Paris?")
+result = run(agent, "What's the weather in Paris?")   # trajectory + spend + governance: exported
 ```
 
 <!-- tab: TypeScript -->
@@ -82,12 +98,89 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 new NodeSDK({ traceExporter: new OTLPTraceExporter() }).start(); // the ONE global setup
 
 import { run } from '@cendor/sdk';
+const result = await run(agent, "What's the weather in Paris?"); // trajectory + spend + governance
+```
+
+<!-- /tabs -->
+
+A **libs-only** app (no SDK) is the same story with `instrument()` as the trigger:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import instrument
+from cendor.tokenguard import budget
+
+client = instrument(OpenAI())                      # arms the span emitter + the spend tap
+with budget(usd=5, name="per-run cap"):            # a block becomes a governance.* span
+    client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { instrument } from '@cendor/core';
+import { withBudget } from '@cendor/tokenguard';
+
+const client = instrument(new OpenAI());           // arms the span emitter + the spend tap
+await withBudget({ usd: 5, name: 'per-run cap' }, async () => {
+  await client.chat.completions.create({ model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] });
+});
+```
+
+<!-- /tabs -->
+
+### The switch — `CENDOR_TELEMETRY`
+
+| Value | Meaning |
+|---|---|
+| *(unset)* or `auto` | **Emit when OpenTelemetry is installed and your app has configured a global provider.** Nothing before that — the check is re-run per event, so a provider configured later is still picked up. |
+| `off` | **Nothing is emitted, at all**: no span emitter, no spend tap, no audit-mirror auto-attach, no `governance.*` spans. Read per event, so exporting it later takes effect immediately. |
+
+`OTEL_SDK_DISABLED=true` (the standard OTel switch) composes for free: your SDK then registers no real
+provider, so Cendor finds none and stays silent.
+
+**Nothing appearing?** Set `CENDOR_DEBUG_TELEMETRY=1` for a one-line answer on stderr —
+`cendor telemetry: mode=auto, provider=detected, emitter=attached` — or run
+`uvx cendor-init doctor` / `npx @cendor/init doctor`, which static-checks the wiring. Cendor never
+warns on its own: an offline app is a supported posture, not a mistake.
+
+### Attach it yourself (explicit control)
+
+The explicit attachments still exist and **always win** over the automatic path — use them to pass your
+own tracer, to name a run, or to emit regardless of the switch. A manual `use_span_emitter()` detaches
+the automatic one, so an event is never rendered twice; an explicit `live_spans()` means `run()` opens
+no second scope.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import otel
+from cendor.sdk.otel import live_spans
+
+otel.use_span_emitter()                            # explicit; supersedes the automatic emitter
+with live_spans(label="nightly sweep"):            # a human-authored run label
+    result = run(agent, "…")
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+import { otel } from '@cendor/core';
 import { liveSpans } from '@cendor/sdk';
-const span = liveSpans();                          // agent trajectory -> your backend
+
+otel.useSpanEmitter();                             // explicit; supersedes the automatic emitter
+const scope = liveSpans({ label: 'nightly sweep' });
 try {
-  const result = await run(agent, "What's the weather in Paris?");
+  await run(agent, '…');
 } finally {
-  span.close();
+  scope.close();                                   // the explicit API needs this; the automatic one owns its own finally
 }
 ```
 
@@ -101,15 +194,17 @@ try {
 
 ## What Cendor emits (and ingests)
 
-| Direction | API | Signal | What lands in your backend |
+| Direction | Trigger | Signal | What lands in your backend |
 |---|---|---|---|
-| Agent trajectory | `cendor.sdk.otel.span_tree(result)` / `live_spans()` (TS `spanTree`/`liveSpans`) | Traces | A root `agent.run` span (with `cendor.run.agents` + usage/cost rollups) → per-agent → per model call (`chat {model}`, carrying `gen_ai.usage.*`/`gen_ai.usage.cost`, `cendor.ttft_ms` on streamed calls, and `cendor.usage_estimated="true"` when the streamed count was estimated offline) / tool (`execute_tool {name}`) |
-| Per-call span | `core.otel.span(model, provider=…)` | Traces | A single `chat {model}` span you wrap a call in |
-| Spend | `tokenguard.use_sink(sinks.OTelSink())` | Metrics | Counters `gen_ai.client.token.usage` / `.cost.usd` / `.reasoning.token.usage`, dimensioned by `model` + your `track(...)` tags |
-| **Governance & audit** | `AuditLog(mirror=OTelMirror())` | Traces | An `audit.<type>` span per chained entry — decisions, guardrail actions, **budget breaches**, policy flags, human oversight |
+| Agent trajectory | `run()` — automatic; or `live_spans()` / `span_tree(result)` explicitly | Traces | A root `agent.run` span (with `cendor.run.agents` + usage/cost rollups) → per-agent → per model call (`chat {model}`, carrying `gen_ai.usage.*`/`gen_ai.usage.cost`, `cendor.ttft_ms` on streamed calls, and `cendor.usage_estimated="true"` when the streamed count was estimated offline) / tool (`execute_tool {name}`) |
+| Flat governed calls (libs apps) | `instrument()` — automatic; or `otel.use_span_emitter()` explicitly | Traces | One `chat {model}` / `execute_tool {name}` span per call, scope `cendor.core` |
+| Per-call span (by hand) | `core.otel.span(model, provider=…)` | Traces | A single `chat {model}` span you wrap a call in |
+| Spend | `instrument()` + a priced call — automatic; or `use_sink(sinks.OTelSink())` explicitly | Metrics | Counters `gen_ai.client.token.usage` / `.cost.usd` / `.reasoning.token.usage`, dimensioned by `model` + your `track(...)` tags |
+| **Enforcement decisions** | automatic (tokenguard / guardrails) | Traces | `governance.budget_event` / `governance.guardrail_decision` with `cendor.gov.*` attributes — action, budget name, projected vs cap, guardrail, stage — correlated by `cendor.trace_id` |
+| **Governance & audit** | `AuditLog(system=…)` — the mirror auto-attaches | Traces | An `audit.<type>` span per chained entry — decisions, guardrail actions, **budget breaches**, policy flags, human oversight |
 | Ingest (inbound) | `core.otel.ingest(attrs)` | — | A managed runtime's `gen_ai.*` spans → the Cendor bus, so budgets/audit apply to calls your process never made |
 
-The first four are **outbound** (Cendor → your backend). The last is **inbound** — see
+Everything except the last row is **outbound** (Cendor → your backend). The last is **inbound** — see
 [Managed runtimes](providers.md#managed-runtimes-opentelemetry-ingestion) for the Foundry/Assistants
 capture path.
 
@@ -203,7 +298,7 @@ Cendor never operates a telemetry endpoint. The monitor is an **operational copy
 **file**, never on what the monitor shows.
 
 ```bash
-docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.10.1
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.12.0
 # then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
 ```
 
@@ -380,21 +475,56 @@ zero-code change.
 
 An observability backend usually sees *cost and latency*. Cendor also lets it see **governance**: a
 budget breaker firing, a guardrail blocking an injection, a human approving a refund, a policy flag on
-PII. Two mechanisms carry these.
+PII. Two paths carry these, and **you only ever get one of them for a given decision.**
+
+| Path | You wrote | On the wire | Use it for |
+|---|---|---|---|
+| **Enforcement telemetry** (default) | nothing | `governance.budget_event` / `governance.guardrail_decision` with `cendor.gov.*` | *monitoring*: what did my stack decide, and why did that run stop? |
+| **The audit mirror** | `AuditLog(system=…)` | `audit.<type>` per **chained** entry with `cendor.audit.*` | *the record*: the hash-chained trail, mirrored for SIEM/alerting |
+
+**Precedence: the mirror wins.** While an `AuditLog` with a span-emitting mirror is attached, the
+enforcement spans stand down — the mirrored entries are richer (chained, hashed, sequenced) and one
+decision must never render twice. Detach the log and the ops spans resume. A *custom* mirror that
+writes somewhere else (your own SIEM sink) deliberately does **not** suppress them: nothing
+audit-shaped is on the OTel wire in that case, so the ops spans are still the only thing you'd see.
+
+### Enforcement as telemetry — `governance.*` spans
+
+The libraries that **make** the decision emit it, with no audit object involved:
+
+| Span | Attributes (all `cendor.gov.*` unless noted) |
+|---|---|
+| `governance.budget_event` | `type`, `action` (`blocked` / `downgraded` / `clamped` / `broken`), `budget` (the `budget(name=…)`), `scope`, `model`, `to_model`, `projected_usd`, `cap_usd` (money as strings — the `Decimal` rule), `projected_tokens`, `cap_tokens`, plus `cendor.trace_id` |
+| `governance.guardrail_decision` | `type`, `guardrail`, `stage` (`input`/`tool_call`/`tool_output`/`output`), `action` (`block`/`redact`/`flag`), `agent`, `tool`, plus `cendor.trace_id` |
+
+Scope is `cendor.core` for a libs app. Inside an SDK `run()` the same decision is emitted as a **child
+of the `agent.run` root** (scope `cendor.sdk`), so a backend shows it inline, next to the step it
+governed — which is how you see *why* a run stopped.
+
+> **These are operational signals, not evidence — and they are not "audit".** There is no `audit.*`
+> span name and no `cendor.audit.*` attribute on them, deliberately: "audit" keeps meaning the
+> hash-chained file that `verify()` checks. A populated governance view built from these spans says
+> *"here is what my stack enforced"*, never *"here is my audit trail"*.
+>
+> **No `reason` string rides these spans.** A guardrail's reason is written by the rule — and for
+> `rules.llm_judge` by a *judge model*, i.e. free text that can paraphrase the payload; the URL rules
+> embed the matched host. So the field is not emitted at all: the numbers and the rule's identity are,
+> and the human-readable reason lives in the audit chain, an artifact you explicitly declared. (Content
+> capture stays a separate, opt-in decision — see above.)
 
 ### Budget breaches on the bus (`BudgetEvent`)
 
 When a pre-flight budget action fires — **blocked**, **downgraded**, or **clamped** — `tokenguard`
 emits a `BudgetEvent` on the core bus. A *blocked* call never reaches the bus as an `LLMCall` (it's
 refused before it runs), so this event is the **only** signal the breaker fired — precisely what you
-want to alert on. `acttrace` chains it as a `budget_event` entry, and an attached `OTelMirror` turns
-it into an `audit.budget_event` span carrying `cendor.audit.action` (`blocked`/…),
-`cendor.audit.model`, the budget's name as `cendor.audit.budget` (from `budget(name=…)`), and the
-projected-vs-cap figures as dedicated numeric attributes — `cendor.audit.projected_usd` /
-`cendor.audit.cap_usd` (money as strings, per the `Decimal` rule) and `cendor.audit.projected_tokens`
-/ `cendor.audit.cap_tokens` (ints) — so a monitor shows *which* budget blocked *what*, not just a
-free-text reason. (Requires `acttrace ≥ 1.7` / `@cendor/acttrace ≥ 0.8` and `tokenguard ≥ 1.3` /
-`@cendor/tokenguard ≥ 0.4` for the budget name.)
+want to alert on. It becomes a `governance.budget_event` span by default; with an `AuditLog` attached
+`acttrace` chains it as a `budget_event` entry and the mirror turns it into an `audit.budget_event`
+span carrying `cendor.audit.action` (`blocked`/…), `cendor.audit.model`, the budget's name as
+`cendor.audit.budget` (from `budget(name=…)`), and the projected-vs-cap figures as dedicated numeric
+attributes — `cendor.audit.projected_usd` / `cendor.audit.cap_usd` (money as strings, per the
+`Decimal` rule) and `cendor.audit.projected_tokens` / `cendor.audit.cap_tokens` (ints) — so a monitor
+shows *which* budget blocked *what*, not just a free-text reason. (Requires `acttrace ≥ 1.7` /
+`@cendor/acttrace ≥ 0.8` and `tokenguard ≥ 1.3` / `@cendor/tokenguard ≥ 0.4` for the budget name.)
 
 Every pre-flight budget action also increments the `cendor.tokenguard.budget.events` **counter**
 (`cendor_tokenguard_budget_events_total` in Prometheus), so you can chart block *rates* — see
@@ -402,7 +532,11 @@ Every pre-flight budget action also increments the `cendor.tokenguard.budget.eve
 
 ### The audit mirror (`OTelMirror`)
 
-`AuditLog(mirror=OTelMirror())` sends **every** chained entry — decisions, `llm_call`/`tool_call`,
+`AuditLog(system=…)` **attaches the mirror for you** (when OpenTelemetry is installed and
+`CENDOR_TELEMETRY` isn't `off`) — you declared governance, so its operational copy flows to the backend
+you already configured. Pass `mirror=OTelMirror()` explicitly to control it, your own sink to replace
+it, or **`mirror=False` to never mirror this log**. Either way the mirror sends **every** chained entry
+— decisions, `llm_call`/`tool_call`,
 `guardrail_decision`, `budget_event`, `policy_flag`, `human_oversight`, `context_assembly` — to
 OpenTelemetry as an `audit.<type>` span, in addition to the file. So "the guardrail blocked an
 injection" or "ops@bank approved this refund" becomes queryable and alertable in Azure Monitor /
@@ -412,10 +546,13 @@ context-assembly block counts, budget names + caps — never raw content; the fu
 in the [acttrace span-attributes table](acttrace.md#mirror-to-an-observability-backend).
 
 ```python
-from cendor.acttrace import AuditLog, OTelMirror
+from cendor.acttrace import AuditLog
 
-audit = AuditLog(system="support", path="audit.jsonl", mirror=OTelMirror())
-# every decision, guardrail action, budget breach, and oversight event now also lands in your backend
+audit = AuditLog(system="support", path="audit.jsonl")
+# the mirror auto-attaches: every decision, guardrail action, budget breach and oversight event lands
+# in your backend as an audit.* span — and the hash-chained file is still the only evidence.
+
+AuditLog(system="support", path="audit.jsonl", mirror=False)   # …or never mirror this log
 ```
 
 > **The mirror is an operational copy, never the evidence.** The hash-chained **file** written by
@@ -456,7 +593,7 @@ graph LR
     BUS["cendor.core bus"]
     TG["tokenguard<br/>budget + spend"]
     AT["acttrace AuditLog<br/>hash-chained file"]
-    SPANS["live_spans / span_tree"]
+    SPANS["run tree / call spans<br/>(auto)"]
     SINK["OTelSink (metrics)"]
     MIRROR["OTelMirror (spans)"]
     OTEL["global OpenTelemetry SDK<br/>(YOUR pipeline)"]
@@ -465,8 +602,10 @@ graph LR
     INSTR --> BUS
     BUS --> TG --> SINK --> OTEL
     BUS --> AT
-    AT -->|"mirror"| MIRROR --> OTEL
+    AT -->|"mirror (auto)"| MIRROR --> OTEL
     BUS --> SPANS --> OTEL
+    BUS -->|"budget / guardrail<br/>decisions"| GOV["governance.* spans"] --> OTEL
+    AT -.->|"mirror active ⇒<br/>stand down"| GOV
     AT -->|"file = evidence"| FILE["audit.jsonl (verify offline)"]
     OTEL --> BACKEND
 
@@ -477,10 +616,24 @@ graph LR
 Cendor emits into the global OTel SDK; the SDK (which you configure once) exports to your backend. The
 audit **file** is a separate, offline-verifiable path — not dependent on any backend.
 
+Everything on the left of the SDK is armed automatically the first time you use Cendor (under
+`CENDOR_TELEMETRY`, and only once a real provider exists); everything on the right is yours. Cendor has
+no exporter, no endpoint and no collector of its own.
+
 ## Honest limits
 
 - **Cendor exports; it does not collect.** You still configure an OpenTelemetry pipeline (a collector
   or a vendor distro) in your process — Cendor never runs one for you (local-first).
+- **"It flows" needs a provider, and says so silently.** Emission starts only when a real global
+  provider exists; before that (and with OpenTelemetry not installed) every emitter is an inert no-op
+  that **does not warn** — an offline app is a supported posture, so warning would punish the majority.
+  `CENDOR_DEBUG_TELEMETRY=1` and `cendor-init doctor` are the diagnosis path.
+- **The switch is process-wide, not per call.** `CENDOR_TELEMETRY=off` turns everything off; there is
+  no per-signal env var. Per-signal control is code: an explicit emitter/sink/mirror, or
+  `AuditLog(mirror=False)`.
+- **Governance telemetry ≠ the audit trail.** `governance.*` spans are operational signals with no
+  chain, no hashes and no sequence numbers; they carry no `reason` (see above) and are suppressed while
+  a real audit mirror is attached. If you need a *record*, keep an `AuditLog` with `path=`.
 - **The mirror is not the evidence.** `verify()` runs on the hash-chained file, never on the mirror.
   If your compliance record must be centralized, mirror to a backend *and* retain the signed file/
   export pack.

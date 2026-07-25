@@ -69,7 +69,8 @@ differ or where a plausible guess is wrong.
 | Calls `instrument()` does **not** capture | `chat.completions.parse` / `responses.parse`, Anthropic `messages.stream()` helper + `tool_runner`, Batch APIs | same entrypoints — the helpers bypass the wrapped `create` seam | These emit **no bus event** (silent — budgets/audit never see them). For governed calls use `chat.completions.create`, `responses.create`, or `messages.create` (`stream=True` / `stream: true`). Openai-shaped `embeddings.create` **is** captured since core 1.6.0 / 0.6.0 (`metadata["embedding"] = True`; pre-flight budgets/guards apply); embeddings on other client shapes remain uncaptured. |
 | Tool / output schema version (SDK) | schema derives from type hints — no zod | `tool(fn, { parameters: z.object({...}) })` / `outputType` — a **zod 4** schema | `@cendor/sdk` ≥ 0.11 requires **zod 4**; a zod 3 schema is rejected with a clear error. On zod 3.25+ use `import { z } from 'zod/v4'`, or upgrade zod to `^4`, or pass a raw `jsonSchema:`. (zod ships with the SDK — you don't match its version.) SDK ≤ 0.10 used zod 3 and **silently emitted an empty parameter schema** for a zod-4 schema — upgrade. |
 | Agent names from your framework (libs) | LangChain: `CendorCallbackHandler()`; openai-agents: `Runner.run(agent, …, hooks=CendorAgentHooks())` (extra `[openai-agents]`); Foundry: `observe_foundry_agents(client)` (extra `[foundry]`) | LangChain: `new CendorCallbackHandler()`; openai-agents: `observeOpenAIAgents(runner)` (`@cendor/core/openai-agents`); Foundry: `observeFoundryAgents(client)` (`@cendor/core/foundry`) | When your app runs **under a third-party framework**, attach the matching `cendor.core` adapter — the framework owns the agent name; core carries it onto the bus (never-overwrite). openai-agents' model calls ride the standard OpenAI client, so `instrument()` still gets tokens/cost/streaming; **Foundry is attribution-only** (agent + `conversation_id` stamped, but the model runs server-side → no per-step token/cost). Don't invent a `CENDOR_AGENT_NAME` — there is none; an app-level name is the standard `OTEL_SERVICE_NAME`. |
-| Telemetry emitters are silent no-ops | nothing installed ⇒ `use_span_emitter()` / `OTelSink()` / `OTelMirror()` do nothing, no warning | same | **This silence is by design** (local-first): without OpenTelemetry installed, or with no provider configured, every emitter is an inert no-op that never warns — so an app that simply forgot the `[otel]` extra sees exactly nothing. Diagnose it, don't guess: `CENDOR_DEBUG_TELEMETRY=1` prints one line saying whether a provider was detected and what got wired, and `cendor-init doctor` / `npx @cendor/init doctor` static-checks the wiring. **Historical TS ordering trap:** in `@cendor/tokenguard` **< 0.7.0**, `new OTelSink()` constructed *before* the app's provider was registered bound a no-op counter **permanently** (the JS metrics API has no proxy; Python was always order-safe). From 0.7.0 the meter is acquired lazily per write, so order no longer matters. |
+| Telemetry: it flows, and the off switch is one env var | `CENDOR_TELEMETRY=off` \| `auto` (default); `CENDOR_DEBUG_TELEMETRY=1` to diagnose | same env vars | With OpenTelemetry installed **and a provider configured in your app**, Cendor emits on its own — call spans at `instrument()`, spend counters, an `agent.run` tree per SDK `run()`, `governance.*` decisions, and an `AuditLog`'s mirror (core ≥ 1.13 / 0.15, sdk ≥ 1.19 / 0.22). Nothing before that: **every emitter is a silent no-op** with no provider or no OTel installed, and it deliberately does **not warn** (offline is a supported posture). So diagnose, don't guess — `CENDOR_DEBUG_TELEMETRY=1` prints one line (`mode=auto, provider=detected, emitter=attached`), and `cendor-init doctor` / `npx @cendor/init doctor` static-checks the wiring. There is still **no Cendor endpoint, exporter or key** — it emits into *your* provider. **Historical TS ordering trap:** in `@cendor/tokenguard` **< 0.7.0** a `new OTelSink()` constructed before the provider bound a no-op counter permanently; from 0.7.0 the meter is acquired lazily, so order never matters.
+| Governance telemetry ≠ audit | `governance.*` spans (`cendor.gov.*`) are automatic; `AuditLog(system=…)` is the record | same | Two different things. **`governance.budget_event` / `governance.guardrail_decision`** spans are *operational* signals the enforcing libraries emit by default (no `AuditLog`, no chain, no hashes) — that's how a telemetry user sees a budget block or a guardrail verdict with zero governance code. The **audit trail** is `AuditLog` (+ `path=` for the hash-chained file that `verify()` checks); its `OTelMirror` now auto-attaches, and **while a mirror is on the wire the `governance.*` spans stand down** — one decision, one rendering, mirror wins. These ops spans carry **no `reason` string** (a rule's reason — and an `llm_judge` verdict — can contain input-derived text) and never any `audit.*` name or `cendor.audit.*` attribute. Never call a populated governance board an audit trail. |
 
 A few cross-cutting rules that don't fit a row:
 
@@ -350,45 +351,43 @@ per-agent cap is `Agent(max_usd=…)`, not a `budget=` field. Full walkthrough:
 
 ### Watch runs locally (Cendor Monitor)
 
-The connection is **one standard OTLP env var** — there is no Cendor API, key, or endpoint to call.
-Run the optional self-hosted monitor, point your app's OpenTelemetry at it (`export
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`), and attach the same emitters you use for any
-backend. Your production default stays your own OTel backend (Azure Monitor / CloudWatch / Datadog /
-any OTLP); this is optional dev tooling. See [Cendor Monitor](monitor.md).
+The connection is **one standard OTLP env var** — there is no Cendor API, key, or endpoint to call,
+and **no Cendor telemetry code**: with an OpenTelemetry provider configured in your app, calls, run
+trees, spend and enforcement decisions flow on their own (core ≥ 1.13 / 0.15, sdk ≥ 1.19 / 0.22).
+`CENDOR_TELEMETRY=off` stops it; `CENDOR_DEBUG_TELEMETRY=1` says why nothing is arriving. Your
+production default stays your own OTel backend (Azure Monitor / CloudWatch / Datadog / any OTLP); this
+is optional dev tooling. See [Cendor Monitor](monitor.md).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
 
 ```python
-# 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.10.1
+# 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.12.0
 # 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+#    …plus your usual OTel SDK setup (a provider). No Cendor telemetry code.
 from cendor.sdk import run
-from cendor.sdk.otel import live_spans
 
-with live_spans():                 # your runs stream to Cendor Monitor at http://localhost:3000
-    result = run(agent, "…")
+result = run(agent, "…")           # runs stream to Cendor Monitor at http://localhost:3000
 ```
 
 <!-- tab: TypeScript -->
 
 ```ts
-// 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.10.1
+// 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.12.0
 // 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-import { run, liveSpans } from '@cendor/sdk';
+//    …plus your usual NodeSDK setup (a provider). No Cendor telemetry code.
+import { run } from '@cendor/sdk';
 
-const span = liveSpans();          // your runs stream to Cendor Monitor at http://localhost:3000
-try {
-  const result = await run(agent, '…');
-} finally {
-  span.close();
-}
+const result = await run(agent, '…'); // runs stream to Cendor Monitor at http://localhost:3000
 ```
 
 <!-- /tabs -->
 
 Prompt/response **content is captured only if you opt in** (`otel.capture_content()` — off by
 default; the monitor never enables it). The monitor is an **operational copy** — `verify()` still runs
-on the tamper-evident audit **file**, never on what the monitor shows.
+on the tamper-evident audit **file**, never on what the monitor shows. On older versions (core < 1.13 /
+0.15) attach the emitters explicitly instead — `otel.use_span_emitter()`, `use_sink(sinks.OTelSink())`,
+`live_spans()` — see [Observability](observability.md).
 
 ## Wire up your assistant — three ways
 

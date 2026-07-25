@@ -19,19 +19,25 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.10.1
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.12.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_SERVICE_NAME=my-app          # optional — names your app on the Apps page
 
 # 3. open the monitor
 #    http://localhost:3000
 ```
 
-That is the whole integration — a **standard OTLP env var**, no Cendor API, key, or endpoint. Attach
-the emitters you already use for any backend (`live_spans()` / `OTelSink()` / `OTelMirror()` — see
-[Observability](observability.md)) and your runs appear as you build. Sessions group runs
-automatically when you pass `run(session=…)`, so there is no trace id to paste anywhere.
+**That is the whole integration** — a **standard OTLP env var**, no Cendor API, key, or endpoint, and
+**no Cendor telemetry code**: with an OpenTelemetry provider configured in your app (which the env var
+above plus your usual SDK setup gives you), calls, run trees, spend and enforcement decisions all flow
+on their own. Sessions group runs automatically when you pass `run(session=…)`, so there is no trace id
+to paste anywhere. Requires cendor-core ≥ 1.13 / @cendor/core ≥ 0.15 (+ cendor-sdk ≥ 1.19 /
+@cendor/sdk ≥ 0.22); on older versions attach the emitters explicitly, as
+[Observability](observability.md) describes. Nothing arriving? `CENDOR_DEBUG_TELEMETRY=1` prints one
+line telling you whether a provider was detected — and `CENDOR_TELEMETRY=off` is the way to stop
+sending, with no code change.
 
 ## The monitor tour
 
@@ -40,7 +46,7 @@ assemble. Screenshots are of the real monitor rendering a seeded workload (synth
 capture opted in for the capture) — the image itself **ships no sample app and fabricates nothing**:
 every screen you see is fed by your own runs, and an empty store just means nothing has been sent
 yet. _(The shots below are from v0.4.0; the `docker run` above pulls the
-current v0.10.1 — the two-doors-split UX (two stores, path-routed Libraries | SDK modes, the SDK
+current v0.12.0 — the two-doors-split UX (two stores, path-routed Libraries | SDK modes, the SDK
 structure pages, the status footer, and the SSE live channel) and the earlier operate-wave (v0.5) are
 described in the text and land beyond these panels.)_
 
@@ -73,10 +79,18 @@ exact step where a **budget block, guardrail verdict, or compression** fired, sh
 conversation (not in a separate log). Prompt/response content appears only if you opted in (below);
 without it, the journey shows the same structure metadata-only.
 
-Governance events link back to the run that produced them — a live governed run (inside
-`live_spans()` / `liveSpans`, with `@cendor/sdk` ≥ 1.12 / 0.17) correlates its whole trail to the
-run's trace, and a run built post-hoc from `span_tree` still links by run id. So a run's
-governance count is never a dead end: open the run and every verdict sits on the step it governed.
+Governance events link back to the run that produced them — a governed run correlates its whole trail
+to the run's trace (the run root is the active span; automatic since cendor-sdk 1.19 / @cendor/sdk
+0.22, or inside an explicit `live_spans()` / `liveSpans` with sdk ≥ 1.12 / 0.17), and a run built
+post-hoc from `span_tree` still links by run id. So a run's governance count is never a dead end: open
+the run and every verdict sits on the step it governed.
+
+**You get governance without writing any governance code.** A budget block or guardrail verdict arrives
+as a `governance.*` span (`cendor.gov.*` attributes) and renders in the same Governance board and the
+same inline run verdicts. If you *do* keep an `AuditLog`, its mirrored `audit.*` entries take over
+(richer: chained, hashed, sequenced) and the ops spans stand down, so nothing is shown twice. Either
+way the board is an **operational copy** — the hash-chained file on your host is the only thing
+`verify()` checks.
 
 <img class="theme-dark" src="/monitor/console-journey-dark.webp" alt="Cendor Monitor — run journey with governance inline" loading="lazy" />
 <img class="theme-light" src="/monitor/console-journey-light.webp" alt="Cendor Monitor — run journey with governance inline (light theme)" loading="lazy" />

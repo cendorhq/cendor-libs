@@ -29,6 +29,16 @@ audit.export("evidence_q3.jsonl", framework="eu_ai_act")     # evidence pack (al
 acttrace verify evidence_q3.jsonl --key "…"   # re-walks the chain + checks signatures; non-zero if broken
 ```
 
+
+## The mirror attaches itself (1.11.0)
+
+With OpenTelemetry installed and a provider configured **by your app**, `AuditLog(system="support", path="audit.jsonl")` also streams every
+chained entry to your backend as an `audit.<type>` span — no `mirror=` line. Pass mirror=False to never mirror
+a log, your own sink to use exactly that one, or set `CENDOR_TELEMETRY=off` to stop all Cendor
+telemetry. **The mirror is an operational copy**: the hash-chained file (or a signed `export()` pack)
+stays the only artifact `verify()` checks, and a failing mirror is swallowed rather than breaking the
+chain.
+
 ## Highlights
 
 - **Offline detection engine + policy** — a validator-gated `Detector` registry spanning secrets, PII, financial, government-ID, free-text credentials, and GDPR special-category data (20 categories), plus a `Policy` that maps each to `allow` · `flag` · `redact` · `block`. Regex + local checksums (Luhn / IBAN mod-97 / Verhoeff / ABA) — no model, no network, no account. Presets: `Policy.default()` / `gdpr()` / `pci()` / `strict()`.
