@@ -121,6 +121,11 @@ class OTelMirror:
     always safe to attach. Pass a specific ``tracer`` to override the default ``cendor.acttrace``.
     """
 
+    #: Marks this mirror as one that puts governance on the OpenTelemetry **wire**. Core's Option C
+    #: ``governance.*`` spans stand down while such a mirror is attached (the mirror is richer and
+    #: must win); a custom SIEM mirror that writes elsewhere deliberately does NOT suppress them.
+    _cendor_otel_governance = True
+
     def __init__(self, tracer: Any = None) -> None:
         self._tracer: Any = None
         self._system = ""  # learned from the opening entry, then stamped on every span

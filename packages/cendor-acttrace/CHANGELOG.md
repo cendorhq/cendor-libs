@@ -2,6 +2,17 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.12.0] — 2026-07-25
+**The mirror wins:** when an `AuditLog` attaches a mirror that emits OpenTelemetry spans, acttrace now
+tells `cendor-core` (refcounted; released on `detach()`), so core's new Option C `governance.*` ops
+spans stand down while the chained `audit.*` spans are on the wire — one decision, one rendering.
+
+A *custom* mirror that writes elsewhere (your SIEM sink) deliberately does **not** suppress them:
+nothing audit-shaped is on the OTel wire in that case, so a telemetry user still needs the ops spans.
+
+### Changed
+- Floor: `cendor-core>=1.13` (the `governance_mirrored` seam).
+
 ## [1.11.0] — 2026-07-25
 **Governance is one line, not four** (see `cendor-core` 1.12.0 for the switch).
 

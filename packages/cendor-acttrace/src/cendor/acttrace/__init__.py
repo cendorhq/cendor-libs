@@ -370,6 +370,31 @@ def _meta_signature(key_bytes: bytes, meta: dict) -> str:
     return hmac.new(key_bytes, body.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _mirror_reaches_the_wire(mirror: Any) -> bool:
+    """True when this mirror (or a wrapper around it) emits OpenTelemetry spans."""
+    candidate = mirror
+    for _ in range(3):  # unwrap a QueueSink-style single-inner wrapper
+        if candidate is None:
+            return False
+        if getattr(candidate, "_cendor_otel_governance", False):
+            return True
+        candidate = getattr(candidate, "_inner", None) or getattr(candidate, "inner", None)
+    return False
+
+
+def _signal_governance_mirror(mirror: Any, on: bool) -> bool:
+    """Refcount this log's wire-mirror with core (best-effort). Returns whether it counted."""
+    if not _mirror_reaches_the_wire(mirror):
+        return False
+    try:
+        from cendor.core.otel import governance_mirrored
+
+        governance_mirrored(on)
+    except Exception:  # noqa: BLE001 — an older core simply has no ops spans to stand down
+        return False
+    return True
+
+
 def _resolve_mirror(mirror: Any) -> Any:
     """Decide an ``AuditLog``'s mirror (DR-2a).
 
@@ -481,6 +506,10 @@ class AuditLog:
         # so its operational copy flows to the backend you configured, with no extra line. Pass
         # `mirror=False` for "never mirror this log", or your own sink to use exactly that.
         self._mirror = _resolve_mirror(mirror)
+        # If this mirror puts governance on the OpenTelemetry wire, tell core so its Option C
+        # ``governance.*`` ops spans stand down — the chained ``audit.*`` spans are richer and must
+        # win. Refcounted, and released by :meth:`detach`.
+        self._gov_mirrored = _signal_governance_mirror(self._mirror, True)
         # Cache the OTel trace module once so per-entry correlation stays cheap and is a no-op when
         # OpenTelemetry isn't installed (the local-first default).
         try:
@@ -824,6 +853,9 @@ class AuditLog:
         Also flushes/closes the optional ``mirror`` if it implements those lifecycle methods (e.g. a
         ``QueueSink``-wrapped mirror), so no mirrored tail is lost at shutdown."""
         bus.unsubscribe(self._on_event)
+        if self._gov_mirrored:  # release the refcount so core's ops spans resume (idempotent)
+            _signal_governance_mirror(self._mirror, False)
+            self._gov_mirrored = False
         with self._lock:
             if self._fh is not None:
                 self._fh.flush()

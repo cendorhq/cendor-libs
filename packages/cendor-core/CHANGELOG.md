@@ -2,6 +2,37 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.13.0] — 2026-07-25
+**Governance is now visible as ordinary telemetry — with no audit object and no `audit.*` vocabulary.**
+
+Until now the only way a budget block or a guardrail verdict reached your backend was the *audit
+mirror*, so seeing enforcement meant adopting the evidence library. Under the telemetry switch, the
+decisions your stack makes are rendered as plain monitoring spans:
+
+| Span | Attributes |
+|---|---|
+| `governance.budget_event` | `cendor.gov.type/action/budget/scope/model/to_model/projected_usd/cap_usd/projected_tokens/cap_tokens` + `cendor.trace_id` |
+| `governance.guardrail_decision` | `cendor.gov.type/guardrail/stage/action/agent/tool` + `cendor.trace_id` |
+
+Scope is `cendor.core` for a libs app; inside an SDK run, `cendor-sdk` renders the same events as
+children of the run root (`cendor.sdk`), so the decision sits next to the steps it governed.
+
+### Added
+- The two renderings above on the bus→span emitter, duck-typed exactly like `acttrace` chains them
+  (core imports no tool — rule 2).
+- **`otel.governance_mirrored(on)` / `otel.governance_mirror_active()`** — `acttrace` refcounts a
+  mirror that emits spans, and while one is live these ops renderings **stand down**: the chained
+  `audit.*` spans are richer and must win, and an event must never render twice. A *custom* mirror
+  (a SIEM sink) deliberately does not suppress them — nothing audit-shaped is on the wire then.
+
+### Rule 6 (honesty), by construction
+No `audit.*` span name, no `cendor.audit.*` attribute, nothing evidence-shaped: "audit" keeps meaning
+the hash-chained file `verify()` checks. And **no `reason` string is emitted** — a guardrail's reason is
+written by the rule, and by a judge *model* for `rules.llm_judge` (free text that can paraphrase the
+payload; the URL rules embed the matched host). The audit chain — an artifact you declared — keeps
+carrying it; these default-on spans do not. A test pins that no payload marker can reach a
+`cendor.gov.*` attribute.
+
 ## [1.12.0] — 2026-07-25
 **Telemetry now flows with zero telemetry code — and `CENDOR_TELEMETRY=off` turns it all off.**
 

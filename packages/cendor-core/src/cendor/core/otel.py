@@ -567,6 +567,119 @@ def _render_bus_event(tr: Any, ev: Any) -> None:
         _emit_llm_span(tr, ev)
     elif isinstance(ev, ToolCall):
         _emit_tool_span(tr, ev)
+    else:
+        _emit_governance_span(tr, ev)
+
+
+# =================================================================================================
+# Option C (DR-2c) — governance ENFORCEMENT as ordinary telemetry.
+#
+# A telemetry user wants to see the decisions their stack made: a budget that blocked a call, a
+# guardrail that tripped. Until now the only wire path for those was the *audit mirror* — so
+# seeing them meant adopting the evidence library. Option C renders them as plain monitoring
+# spans instead:
+#
+#   governance.budget_event · governance.guardrail_decision   (scope cendor.core / cendor.sdk)
+#
+# Deliberately **no ``audit.*`` vocabulary and no AuditLog involved** (rule 6): these are
+# operational signals, and "audit" keeps meaning the hash-chained evidence file. When a real audit
+# mirror IS on the wire, the ops renderings stand down (:func:`governance_mirror_active`), so
+# nothing renders twice.
+#
+# Content: metadata only. The events' ``reason`` strings are NOT emitted — a guardrail's reason
+# comes from the rule, and for ``rules.llm_judge`` from a judge *model* (free text that can
+# paraphrase the payload; ``rules.url_*`` embeds the matched host), so it can carry input-derived
+# text. The audit chain — an artifact the user explicitly declared — keeps carrying it; these
+# default-on spans do not.
+# =================================================================================================
+
+#: How many live audit mirrors are on the wire (refcounted by ``acttrace``). While > 0, governance
+#: enforcement events are already arriving as ``audit.*`` spans, so the ops renderings stand down.
+_gov_mirrors = 0
+
+
+def governance_mirrored(on: bool) -> None:
+    """Tell core that an audit mirror is (or is no longer) putting governance on the wire.
+
+    Called by ``cendor-acttrace`` when an ``AuditLog`` attaches or detaches a mirror that emits
+    OpenTelemetry spans. Refcounted, so several logs compose. While the count is above zero, the
+    Option C ``governance.*`` spans stand down — the mirror is richer (chained, hashed,
+    sequenced) and must win, and an event must never render twice.
+    """
+    global _gov_mirrors
+    _gov_mirrors = max(0, _gov_mirrors + (1 if on else -1))
+
+
+def governance_mirror_active() -> bool:
+    """True while at least one audit mirror is putting governance on the wire."""
+    return _gov_mirrors > 0
+
+
+def _reset_governance_mirrors() -> None:
+    """Test helper: forget the mirror refcount."""
+    global _gov_mirrors
+    _gov_mirrors = 0
+
+
+def _gov_attrs(ev: Any) -> tuple[str, dict[str, Any]] | None:
+    """Map an enforcement event to ``(span name, cendor.gov.* attrs)``, or None if it isn't one.
+
+    Duck-typed exactly like ``acttrace``'s chaining (core imports no tool — rule 2). Fields are the
+    factual ones only: what acted, at which stage, with which numbers.
+    """
+    # tokenguard BudgetEvent
+    if hasattr(ev, "action") and hasattr(ev, "projected_usd") and hasattr(ev, "cap_usd"):
+        attrs: dict[str, Any] = {
+            "cendor.gov.type": "budget_event",
+            "cendor.gov.action": str(getattr(ev, "action", "") or ""),
+            "cendor.gov.budget": getattr(ev, "name", None),
+            "cendor.gov.scope": getattr(ev, "scope", None),
+            "cendor.gov.model": getattr(ev, "model", None) or None,
+            "cendor.gov.to_model": getattr(ev, "to_model", None),
+            "cendor.gov.projected_usd": _str_or_none(getattr(ev, "projected_usd", None)),
+            "cendor.gov.cap_usd": _str_or_none(getattr(ev, "cap_usd", None)),
+            "cendor.gov.projected_tokens": getattr(ev, "projected_tokens", None),
+            "cendor.gov.cap_tokens": getattr(ev, "cap_tokens", None),
+        }
+        return "governance.budget_event", attrs
+    # guardrails GuardrailDecision
+    if hasattr(ev, "guardrail") and hasattr(ev, "stage") and hasattr(ev, "action"):
+        return "governance.guardrail_decision", {
+            "cendor.gov.type": "guardrail_decision",
+            "cendor.gov.guardrail": str(getattr(ev, "guardrail", "") or ""),
+            "cendor.gov.stage": str(getattr(ev, "stage", "") or ""),
+            "cendor.gov.action": str(getattr(ev, "action", "") or ""),
+            "cendor.gov.agent": getattr(ev, "agent", "") or None,
+            "cendor.gov.tool": getattr(ev, "tool", "") or None,
+        }
+    return None
+
+
+def _str_or_none(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
+def _emit_governance_span(tr: Any, ev: Any) -> None:
+    """Render an enforcement event as a ``governance.*`` span (Option C). Zero-duration: a
+    decision is a point in time, not an operation with a span of work."""
+    if governance_mirror_active():
+        return  # the audit mirror is on the wire — it wins (no double render)
+    mapped = _gov_attrs(ev)
+    if mapped is None:
+        return
+    name, attrs = mapped
+    now = time.time_ns()
+    span = tr.start_span(name, start_time=now)
+    try:
+        for key, value in attrs.items():
+            if value is not None:
+                span.set_attribute(key, value)
+        trace_id = getattr(ev, "trace_id", "") or ""
+        if trace_id:
+            # The monitor joins this to the run row exactly like a chat span's cendor.trace_id.
+            span.set_attribute("cendor.trace_id", trace_id)
+    finally:
+        span.end(end_time=now)
 
 
 # --------------------------------------------------------------- automatic attach (DR-1 = "auto")
