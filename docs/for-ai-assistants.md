@@ -364,7 +364,7 @@ is optional dev tooling. See [Cendor Monitor](monitor.md).
 <!-- tab: Python -->
 
 ```python
-# 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.14.0
+# 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.14.1
 # 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 #    …plus your usual OTel SDK setup (a provider). No Cendor telemetry code.
 from cendor.sdk import run
@@ -375,7 +375,7 @@ result = run(agent, "…")           # runs stream to Cendor Monitor at http://l
 <!-- tab: TypeScript -->
 
 ```ts
-// 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.14.0
+// 1) run the monitor:  docker run --rm -p 3000:3000 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.14.1
 // 2) point your app's OpenTelemetry at it (shell): export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 //    …plus your usual NodeSDK setup (a provider). No Cendor telemetry code.
 import { run } from '@cendor/sdk';
