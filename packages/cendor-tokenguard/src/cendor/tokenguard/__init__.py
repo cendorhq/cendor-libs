@@ -656,6 +656,19 @@ def _clamp_descriptor(
     kwargs = call.metadata.get("request_kwargs") or {}
     if provider in _CLAMP_KWARG:
         kwarg = _CLAMP_KWARG[provider]
+        # OpenAI accepts EITHER `max_completion_tokens` (the newer name, required by
+        # reasoning models) or the older `max_tokens` — and rejects both together with a
+        # 400. So when the caller already set `max_tokens`, clamp must reuse THAT kwarg:
+        # injecting the other one both ignored their cap and broke a call that worked a
+        # moment earlier ("Setting 'max_tokens' and 'max_completion_tokens' at the same
+        # time is not supported"). `_projected_output` already reads either spelling;
+        # this makes the injection agree with it.
+        if (
+            provider == "openai"
+            and kwargs.get(kwarg) is None
+            and kwargs.get("max_tokens") is not None
+        ):
+            kwarg = "max_tokens"
         return kwargs.get(kwarg), (lambda t: {kwarg: t}), kwarg
     if provider == "bedrock":
         cfg = kwargs.get("inferenceConfig")

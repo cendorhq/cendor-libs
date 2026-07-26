@@ -2,6 +2,24 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.6.1] — 2026-07-26
+**Fix: `on_exceed="clamp"` no longer breaks an OpenAI call that already sets `max_tokens`.**
+
+OpenAI accepts *either* `max_completion_tokens` (the newer name, required by reasoning models) or the
+older `max_tokens`, and **rejects both together** with a 400. `clamp` read only
+`max_completion_tokens` as the caller's existing cap and injected that kwarg regardless — so a plain
+call with `max_tokens=4` inside a `budget(tokens=…, on_exceed="clamp")` scope returned
+
+```
+400 — Setting 'max_tokens' and 'max_completion_tokens' at the same time is not supported
+```
+
+Two problems in one: the caller's own cap was ignored (so the clamp always injected), and the injected
+kwarg collided with theirs — a call that worked a moment earlier started failing the instant a clamp
+budget was added around it. The clamp now **reuses whichever name the caller used**, which is what
+`_projected_output` already did when reading the cap. Found live while seeding the monitor fit-gap
+verification.
+
 ## [1.6.0] — 2026-07-25
 **Spend reaches your backend with zero telemetry code** (see `cendor-core` 1.12.0 for the switch).
 

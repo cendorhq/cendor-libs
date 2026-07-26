@@ -435,7 +435,7 @@ requires-dist = [{ name = "cendor-core", editable = "packages/cendor-core" }]
 
 [[package]]
 name = "cendor-tokenguard"
-version = "1.6.0"
+version = "1.6.1"
 source = { editable = "packages/cendor-tokenguard" }
 dependencies = [
     { name = "cendor-core" },
