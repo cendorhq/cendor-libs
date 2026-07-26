@@ -181,13 +181,15 @@ class OTelMirror:
             # The value comes from core's ambient registry, so acttrace learns nothing about the SDK
             # (rule 2): the SDK registers a provider, core merges it, this reads it. An agent name
             # is app-supplied configuration, never input-derived text.
+            # The payload's own value wins; the ambient one fills the gap. Written in BOTH cases —
+            # `agent` is not in the generic `_ATTR_KEYS` loop, so a payload that carries one (a
+            # `decision_record`, measured) would otherwise reach no attribute at all.
+            _amb = _ambient()
             for _key, _attr in (
                 ("agent", "cendor.audit.agent"),
                 ("agent_id", "cendor.audit.agent_id"),
             ):
-                if payload.get(_key):
-                    continue
-                _set_scalar(span, _attr, _ambient().get(_key))
+                _set_scalar(span, _attr, payload.get(_key) or _amb.get(_key))
             etype = str(getattr(entry, "type", ""))
             for key in _ATTR_KEYS:
                 # A budget's `name` is exposed as `cendor.audit.budget` (below), not the generic
