@@ -196,7 +196,7 @@ try {
 
 | Direction | Trigger | Signal | What lands in your backend |
 |---|---|---|---|
-| Agent trajectory | `run()` — automatic; or `live_spans()` / `span_tree(result)` explicitly | Traces | A root `agent.run` span (with `cendor.run.agents` + usage/cost rollups) → per-agent → per model call (`chat {model}`, carrying `gen_ai.usage.*`/`gen_ai.usage.cost`, `cendor.ttft_ms` on streamed calls, and `cendor.usage_estimated="true"` when the streamed count was estimated offline) / tool (`execute_tool {name}`) |
+| Agent trajectory | `run()` — automatic; or `live_spans()` / `span_tree(result)` explicitly | Traces | A root `agent.run` span (with `cendor.run.agents` + usage/cost rollups) → per-agent → per model call (`chat {model}`, carrying `gen_ai.usage.*`/`gen_ai.usage.cost`, `cendor.ttft_ms` on streamed calls, and `cendor.usage_estimated="true"` when the streamed count was estimated offline) / tool (`execute_tool {name}`). `gen_ai.usage.cost` is a **bare decimal string** — parse it as a number; the currency is USD. (`@cendor/sdk` < 0.23.3 wrote `"<amount> USD"` there; the *audit chain* payload does carry the currency, in both languages, and that stays.) |
 | Flat governed calls (libs apps) | `instrument()` — automatic; or `otel.use_span_emitter()` explicitly | Traces | One `chat {model}` / `execute_tool {name}` span per call, scope `cendor.core` |
 | Per-call span (by hand) | `core.otel.span(model, provider=…)` | Traces | A single `chat {model}` span you wrap a call in |
 | Spend | `instrument()` + a priced call — automatic; or `use_sink(sinks.OTelSink())` explicitly | Metrics | Counters `gen_ai.client.token.usage` / `.cost.usd` / `.reasoning.token.usage`, dimensioned by `model` + your `track(...)` tags |
@@ -298,7 +298,7 @@ Cendor never operates a telemetry endpoint. The monitor is an **operational copy
 **file**, never on what the monitor shows.
 
 ```bash
-docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.12.1
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.12.2
 # then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
 ```
 
