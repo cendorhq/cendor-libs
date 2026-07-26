@@ -2,6 +2,53 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.14.0] — 2026-07-26
+**`core.trace()` groups your calls into one trace, and a governance row can finally name the agent it stopped.**
+
+### `trace()` is a real span — the behaviour change to read before upgrading
+
+`with trace("id"):` used to stamp an ambient id onto every `LLMCall`/`ToolCall` and nothing more, so
+every call inside still arrived as its **own root span**: one logical unit of work became N unrelated
+traces in any backend that groups by trace. Measured against Cendor Monitor on 2026-07-26, a scope
+around a chat call *and* a tool call produced **two** traces sharing one id — one run, two rows, no
+parent, its governance fanned out to both, and per-run governance counts doubled.
+
+The scope now brackets its calls with a `cendor.trace <id>` span (instrumentation scope `cendor.core`,
+carrying `cendor.run.id` and `cendor.scope="trace"`), so **one scope is one trace**, and each child
+call carries a 1-based `cendor.step`. The ambient id is stamped exactly as before, so correlation by
+`cendor.trace_id` is unaffected.
+
+Nothing is emitted when there is nobody to emit to (no OpenTelemetry, no configured provider, or
+`CENDOR_TELEMETRY=off`), and **no span is opened inside a cendor-sdk run** — that run already owns its
+trace, so the calls attach to it rather than to a competing root. Nesting is a no-op for the inner
+scope: one root per scope family.
+
+**If your backend groups by trace id today and you want the old shape**, one switch restores it:
+`CENDOR_TRACE_SPAN=off`, or `trace(id, span=False)` for a single scope.
+
+### `ambient_attrs()` — so a governance record can name its actor
+
+`apply_ambient` covers everything that *is* an event. A governance record is not: an audit entry or an
+enforcement decision is built by `acttrace` / `tokenguard` / `guardrails`, which must not import the
+SDK, and so had no way to learn which agent was acting. Measured: **13 of 386** governance rows named
+their agent. `ambient_attrs()` is a **read** of the same registry — core still carries no identity of
+its own — and core's own `governance.*` spans now use it, so a **budget block** (an event with no agent
+field at all) stops being an anonymous row. An agent name is app-supplied configuration, not
+input-derived text, so it does not breach the rule that keeps a guardrail `reason` off these spans.
+
+### Provider-native agent identity, in the adapters
+
+* `gen_ai.agent.id` is emitted on a call span whenever something stamped one — **never** hashed and
+  never a placeholder. A name is a label (two apps can share one, and a rename loses that agent's
+  history); an id is identity.
+* **New `cendor.core.agent_ids`**: `bedrock_agent_scope(agent_id=…, agent_alias_id=…, session_id=…)`,
+  `openai_assistant_scope(assistant_id=…, thread_id=…)` and the generic `agent_scope(...)`, mapping the
+  ids those products already own onto `gen_ai.agent.id` / `gen_ai.conversation.id`.
+* `cendor.core.foundry` now also maps its `agent_id` onto `gen_ai.agent.id` (it keeps stamping `agent`,
+  so a dashboard grouping on the name dimension does not lose its rows).
+* All three stay **attribution-only**: mapping identity does not make a server-side runtime's tokens or
+  cost appear, and the docs say so.
+
 ## [1.13.0] — 2026-07-25
 **Governance is now visible as ordinary telemetry — with no audit object and no `audit.*` vocabulary.**
 

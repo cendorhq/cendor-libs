@@ -79,8 +79,9 @@ def current_trace_id() -> str:
 
 
 @contextmanager
-def trace(trace_id: str) -> Iterator[None]:
-    """Stamp ``trace_id`` onto every ``LLMCall``/``ToolCall`` emitted inside the block.
+def trace(trace_id: str, *, span: bool | None = None) -> Iterator[None]:
+    """Group a unit of work: stamp ``trace_id`` on every ``LLMCall``/``ToolCall`` in the block **and
+    open a real parent span**, so the calls inside become one trace.
 
     Gives direct-SDK (non-framework) agents the same run correlation the LangChain callback path
     gets for free. Nests and works across sync/async calls (it's a ``contextvars`` binding).
@@ -88,11 +89,34 @@ def trace(trace_id: str) -> Iterator[None]:
     ```python
     with trace("run-42"):
         client.chat.completions.create(...)   # emitted LLMCall.trace_id == "run-42"
+        do_a_tool_call()                      # …and both spans are children of ONE trace
     ```
+
+    **Behaviour change in core 1.14.0.** Before it, the scope stamped an id and nothing else, so
+    every call inside still arrived as its own root span — one logical unit of work became N
+    unrelated traces in any backend that groups by trace. The scope now brackets them with a
+    ``cendor.trace <id>`` span (instrumentation scope ``cendor.core``, carrying ``cendor.run.id``
+    and ``cendor.scope="trace"``), and each child call carries a 1-based ``cendor.step``. The
+    ambient id is still stamped exactly as before, so correlation by ``cendor.trace_id`` is
+    unaffected.
+
+    Nothing is emitted when there is nobody to emit to (no OpenTelemetry, no configured provider,
+    or ``CENDOR_TELEMETRY=off``), and **no span is opened inside a cendor-sdk run** — that run
+    already owns its trace, and the calls attach to it rather than to a competing root. Nesting is
+    a no-op for the inner scope: one root per scope family.
+
+    Args:
+        trace_id: The id to stamp (and to name the parent span).
+        span: Force the parent span on/off for this scope. Default follows ``CENDOR_TRACE_SPAN``
+            (default **on**) — ``off`` restores the pre-1.14.0 shape for a backend that groups by
+            trace id today.
     """
+    from . import otel as _otel
+
     token = _trace_id.set(str(trace_id))
     try:
-        yield
+        with _otel.trace_span(str(trace_id), span=span):
+            yield
     finally:
         _trace_id.reset(token)
 

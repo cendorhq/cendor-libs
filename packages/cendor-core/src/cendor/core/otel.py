@@ -506,6 +506,106 @@ def _live_spans_active() -> bool:
     return live_spans_active()
 
 
+# =================================================================================================
+# `core.trace()` as a REAL span (core 1.14.0).
+#
+# `trace("id")` used to stamp an ambient id onto every emitted `LLMCall`/`ToolCall` and nothing
+# more. Every call inside the block therefore arrived as its **own root span**, i.e. its own trace:
+# a scope around a chat call and a tool call produced TWO traces sharing one `cendor.trace_id`. In
+# a monitor that meant one logical run rendered as two unrelated rows, its governance fanned out to
+# both, and per-run governance counts doubled. Meanwhile the advice on the screen was "add
+# core.trace() to get a hierarchy" — a lever that could not move anything the user could see.
+#
+# The scope now opens a real span for its duration, so the calls inside it become its **children**
+# and one scope is one trace. Everything else about `trace()` is unchanged: the ambient id is still
+# stamped on every event, so an app that correlates by `cendor.trace_id` keeps working.
+#
+# Deliberate boundaries:
+#   * **Nothing is emitted when there is nobody to emit to.** No OpenTelemetry, no configured
+#     provider, or `CENDOR_TELEMETRY=off` — the scope is then exactly the pre-1.14 ContextVar.
+#   * **Inside an SDK run the scope opens NO span.** The SDK's `live_spans` already owns a run root
+#     and the run's trace; adding a second layer would put a `cendor.core`-scoped span inside a
+#     `cendor.sdk` trace, which is a door leak in any consumer that routes by scope. The calls
+#     attach to the run's trace either way — which is what "attach, don't compete" means.
+#   * **Re-entrance is a no-op.** The inner `trace()` of a nested pair rebinds the id (last writer
+#     wins, as before) but opens no second span: one root per scope family.
+#   * **One explicit off switch**, `CENDOR_TRACE_SPAN=off` (or `trace(id, span=False)`), for anyone
+#     whose backend groups by trace today and wants the pre-1.14 shape while they adapt.
+# =================================================================================================
+
+# : Turn the `trace()` parent span off without touching code. Default ON — the new, correct
+# behaviour.
+TRACE_SPAN_ENV = "CENDOR_TRACE_SPAN"
+
+#: The open `trace()` scope's step counter, so the child spans carry `cendor.step` ordinals just as
+#: an SDK run's steps do. A list (not an int) so it mutates in place across ContextVar copies.
+_trace_steps: ContextVar[list[int] | None] = ContextVar("cendor_trace_steps", default=None)
+#: True while THIS context already has a `trace()` span open (re-entrance guard).
+_trace_span_open: ContextVar[bool] = ContextVar("cendor_trace_span_open", default=False)
+
+
+def trace_span_enabled() -> bool:
+    """Whether :func:`cendor.core.trace` opens a real parent span (default **True**).
+
+    ``CENDOR_TRACE_SPAN=off`` restores the pre-1.14.0 shape (an ambient id, no parent span) for an
+    app whose backend groups by trace id today. ``CENDOR_TELEMETRY=off`` disables it too, like every
+    other Cendor emitter.
+
+    Example:
+        >>> from cendor.core import otel
+        >>> otel.trace_span_enabled()      # True unless CENDOR_TRACE_SPAN/TELEMETRY is off
+        True
+    """
+    raw = os.environ.get(TRACE_SPAN_ENV, "").strip().lower()
+    if raw in ("off", "0", "false", "no"):
+        return False
+    if raw not in ("", "on", "1", "true", "yes", "auto"):
+        _debug(f"CENDOR_TRACE_SPAN={raw!r} is not 'on' or 'off' — treating it as 'on'")
+    return telemetry_mode() != "off"
+
+
+def next_trace_step() -> int | None:
+    """The next 1-based ordinal inside the open ``trace()`` scope, or None when none is open."""
+    steps = _trace_steps.get()
+    if steps is None:
+        return None
+    steps[0] += 1
+    return steps[0]
+
+
+@contextmanager
+def trace_span(trace_id: str, *, span: bool | None = None) -> Iterator[Any]:
+    """Open the parent span for a :func:`cendor.core.trace` scope. Yields the span, or ``None``.
+
+    A no-op (yielding ``None``) when OpenTelemetry is absent, no provider is configured, telemetry
+    or the span is switched off, an SDK ``live_spans`` scope already owns the run's trace, or a
+    ``trace()`` span is already open in this context.
+    """
+    want = trace_span_enabled() if span is None else span
+    if not want or _live_spans_active() or _trace_span_open.get() or not provider_configured():
+        yield None
+        return
+    try:
+        from opentelemetry import trace as _ot
+    except ImportError:
+        yield None
+        return
+    tracer = _ot.get_tracer("cendor.core")
+    open_token = _trace_span_open.set(True)
+    step_token = _trace_steps.set([0])
+    try:
+        with tracer.start_as_current_span(f"cendor.trace {trace_id}") as parent:
+            # `cendor.run.id` is the id the app chose; `cendor.scope` names what this span IS, so a
+            # consumer can tell a grouped call scope from an SDK agent run without guessing.
+            parent.set_attribute("cendor.run.id", str(trace_id))
+            parent.set_attribute("cendor.scope", "trace")
+            parent.set_attribute("cendor.operation.name", "trace")
+            yield parent
+    finally:
+        _trace_steps.reset(step_token)
+        _trace_span_open.reset(open_token)
+
+
 def use_span_emitter(tracer: Any = None) -> Callable[[], None]:
     """Emit a ``chat``/``execute_tool`` semconv span per ``LLMCall``/``ToolCall`` bus event.
 
@@ -624,9 +724,33 @@ def _reset_governance_mirrors() -> None:
 def _gov_attrs(ev: Any) -> tuple[str, dict[str, Any]] | None:
     """Map an enforcement event to ``(span name, cendor.gov.* attrs)``, or None if it isn't one.
 
-    Duck-typed exactly like ``acttrace``'s chaining (core imports no tool — rule 2). Fields are the
-    factual ones only: what acted, at which stage, with which numbers.
+    Duck-typed exactly like ``acttrace``'s chaining (core imports no tool — rule 2). Fields are
+    the factual ones only: what acted, at which stage, with which numbers — plus **who** acted (S4).
+
+    The actor comes from the event's own field when it has one (a guardrail decision does), and
+    otherwise from core's ambient registry — which is how a budget block, an event with no agent
+    field at all, stops being an anonymous row. Measured 2026-07-26: 13 of 386 governance rows
+    named their agent, so "which agent was blocked" could only be inferred from step ordering.
+
+    Why this does not breach the Option-C rule that a default-on span carries no input-derived
+    text: an agent NAME is app-supplied configuration — the string passed to ``Agent(name=…)`` or
+    stamped by an ambient provider. It cannot paraphrase a payload the way a guardrail ``reason``
+    can, which is why ``reason`` stays off these spans and a name does not.
     """
+    from .ambient import ambient_attrs
+
+    amb = ambient_attrs()
+
+    def _actor() -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        agent = getattr(ev, "agent", "") or amb.get("agent") or ""
+        if agent:
+            out["cendor.gov.agent"] = str(agent)
+        agent_id = amb.get("agent_id") or ""
+        if agent_id:
+            out["cendor.gov.agent_id"] = str(agent_id)
+        return out
+
     # tokenguard BudgetEvent
     if hasattr(ev, "action") and hasattr(ev, "projected_usd") and hasattr(ev, "cap_usd"):
         attrs: dict[str, Any] = {
@@ -640,6 +764,7 @@ def _gov_attrs(ev: Any) -> tuple[str, dict[str, Any]] | None:
             "cendor.gov.cap_usd": _str_or_none(getattr(ev, "cap_usd", None)),
             "cendor.gov.projected_tokens": getattr(ev, "projected_tokens", None),
             "cendor.gov.cap_tokens": getattr(ev, "cap_tokens", None),
+            **_actor(),
         }
         return "governance.budget_event", attrs
     # guardrails GuardrailDecision
@@ -649,8 +774,8 @@ def _gov_attrs(ev: Any) -> tuple[str, dict[str, Any]] | None:
             "cendor.gov.guardrail": str(getattr(ev, "guardrail", "") or ""),
             "cendor.gov.stage": str(getattr(ev, "stage", "") or ""),
             "cendor.gov.action": str(getattr(ev, "action", "") or ""),
-            "cendor.gov.agent": getattr(ev, "agent", "") or None,
             "cendor.gov.tool": getattr(ev, "tool", "") or None,
+            **_actor(),
         }
     return None
 
@@ -796,6 +921,12 @@ def _emit_llm_span(tr: Any, call: Any) -> None:
             span.set_attribute("cendor.replayed", True)
         if call.trace_id:
             span.set_attribute("cendor.trace_id", call.trace_id)
+        # core 1.14.0: inside a `trace()` scope this span is a CHILD step of the scope's parent
+        # span, so it carries a 1-based ordinal exactly like an SDK run's steps do — a grouped
+        # scope reads in order instead of by timestamp luck.
+        step = next_trace_step()
+        if step is not None:
+            span.set_attribute("cendor.step", step)
         # GLR-10 (D2=YES): surface an ambient-stamped agent (a libs-only app's own
         # add_ambient_provider, or the LangChain handler's node/chain name — GLR-11a) on semconv
         # semconv attribute, so a trace-based monitor shows it. Core invents nothing — only what was
@@ -803,6 +934,13 @@ def _emit_llm_span(tr: Any, call: Any) -> None:
         agent = (call.metadata or {}).get("agent")
         if isinstance(agent, str) and agent:
             span.set_attribute("gen_ai.agent.name", agent)
+        # W4/§6.1: the semconv sibling — an agent's stable IDENTITY, not its label. A name collides
+        # across apps and a rename loses history; an id does neither. Emitted ONLY when something
+        # stamped one (a framework adapter that owns a real id, or `Agent(id=…)` in the SDK).
+        # Absent, the attribute is omitted — never hashed, never placeholdered: no invented id.
+        agent_id = (call.metadata or {}).get("agent_id")
+        if isinstance(agent_id, str) and agent_id:
+            span.set_attribute("gen_ai.agent.id", agent_id)
         for k, v in content_attrs(
             input_messages=call.messages, output_messages=response_messages(call)
         ).items():
@@ -822,6 +960,9 @@ def _emit_tool_span(tr: Any, tc: Any) -> None:
             span.set_attribute("cendor.latency_ms", tc.latency_ms)
         if tc.trace_id:
             span.set_attribute("cendor.trace_id", tc.trace_id)
+        step = next_trace_step()
+        if step is not None:
+            span.set_attribute("cendor.step", step)
         for k, v in tool_content_attrs(arguments=tc.arguments, result=tc.result).items():
             span.set_attribute(k, v)
     finally:

@@ -74,6 +74,42 @@ def apply_ambient(event: Any) -> None:
                 meta[key] = value
 
 
+class _Probe:
+    """A throwaway event stand-in, so :func:`ambient_attrs` reuses :func:`apply_ambient`'s merge
+    (registration order, never-overwrite, never-raise) instead of duplicating it."""
+
+    __slots__ = ("metadata",)
+
+    def __init__(self) -> None:
+        self.metadata: dict[str, Any] = {}
+
+
+def ambient_attrs() -> dict[str, Any]:
+    """What the registered providers would stamp **right now** — for a consumer with no event.
+
+    ``apply_ambient`` covers everything that *is* an event (an ``LLMCall``, a ``ToolCall``). A
+    governance record is not: an audit entry or an enforcement decision is built by ``acttrace`` /
+    ``tokenguard`` / ``guardrails``, which must not import the SDK (rule 2) and so had no way to
+    learn which agent was acting. Measured 2026-07-26: **13 of 386** SDK governance rows named their
+    agent, so "which agent was blocked" was answerable only by inferring it from step ordering — on
+    a governance product, the attribute most worth having.
+
+    This is a **read** of the same registry, not new state: core still carries no identity of its
+    own (the locked core-identity principle) — the app or the SDK registers a provider, core merges
+    what it returns. Zero-provider fast path is a single length check.
+
+    ```python
+    from cendor.core import ambient_attrs
+    ambient_attrs().get("agent")   # the acting agent, when something registered one
+    ```
+    """
+    if not _providers:
+        return {}
+    probe = _Probe()
+    apply_ambient(probe)
+    return probe.metadata
+
+
 def _reset_ambient() -> None:
     """Test helper: drop every registered provider."""
     with _lock:

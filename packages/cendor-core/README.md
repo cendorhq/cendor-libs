@@ -37,6 +37,32 @@ it off process-wide; `CENDOR_DEBUG_TELEMETRY=1` prints one line saying what was 
 you check the state yourself. With OpenTelemetry absent, nothing is subscribed and behaviour is
 byte-identical.
 
+## Group a unit of work: `core.trace()` (1.14.0)
+
+Several calls that *are* one unit of work — a retrieval, a chat, a tool — belong in one trace:
+
+```python
+with trace("nightly-sweep"):
+    client.chat.completions.create(...)
+    client.chat.completions.create(...)
+```
+
+Since **1.14.0** the scope opens a real `cendor.trace <id>` parent span, so its calls become children
+with a 1-based `cendor.step` — **one scope, one trace**. Before 1.14.0 it only stamped an ambient id, so
+every call inside still arrived as its own root span; the ambient id is unchanged, so correlation by
+`cendor.trace_id` is unaffected. Nothing is emitted with no provider configured or under
+`CENDOR_TELEMETRY=off`, and **no span is opened inside a cendor-sdk run** (that run owns its trace). If
+your backend groups by trace id today, `CENDOR_TRACE_SPAN=off` restores the old shape.
+
+## Agent identity, only when you have it (1.14.0)
+
+`gen_ai.agent.id` is emitted whenever something stamped one — an SDK `Agent(id=…)`, or an adapter for a
+product that owns a real id: `cendor.core.agent_ids.bedrock_agent_scope` / `openai_assistant_scope` /
+the generic `agent_scope`, and `cendor.core.foundry`. **No id ⇒ the attribute is omitted** — never a
+hash of the name, never a placeholder. A name is a label (two apps can share one, and a rename loses
+history); an id is identity. These scopes are **attribution-only**: mapping identity does not make a
+server-side runtime's tokens or cost appear.
+
 ## Highlights
 
 - **`instrument()`** — wrap any client once: **OpenAI** (Chat Completions + Responses API + **Embeddings**, since 1.6.0) **· Anthropic · Hugging Face** (`InferenceClient`) **· AWS Bedrock · Google Gemini** (`google-genai` + legacy `google-generativeai`) **· Ollama**, detected by *shape*; sync, async, **and streaming**; idempotent + additive. Embedding calls carry `metadata["embedding"]` and ride the same pre-flight interceptor pass (budgets can block, guards can redact). `instrument_tool()` does the same for tools.

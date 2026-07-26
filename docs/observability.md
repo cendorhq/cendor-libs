@@ -198,6 +198,7 @@ try {
 |---|---|---|---|
 | Agent trajectory | `run()` — automatic; or `live_spans()` / `span_tree(result)` explicitly | Traces | A root `agent.run` span (with `cendor.run.agents` + usage/cost rollups) → per-agent → per model call (`chat {model}`, carrying `gen_ai.usage.*`/`gen_ai.usage.cost`, `cendor.ttft_ms` on streamed calls, and `cendor.usage_estimated="true"` when the streamed count was estimated offline) / tool (`execute_tool {name}`). `gen_ai.usage.cost` is a **bare decimal string** — parse it as a number; the currency is USD. (`@cendor/sdk` < 0.23.3 wrote `"<amount> USD"` there; the *audit chain* payload does carry the currency, in both languages, and that stays.) |
 | Flat governed calls (libs apps) | `instrument()` — automatic; or `otel.use_span_emitter()` explicitly | Traces | One `chat {model}` / `execute_tool {name}` span per call, scope `cendor.core` |
+| **A grouped unit of work** | `core.trace("id")` — core ≥ 1.14 / `@cendor/core` ≥ 0.16 | Traces | A `cendor.trace <id>` parent span (scope `cendor.core`, carrying `cendor.run.id` + `cendor.scope="trace"`) whose children are the calls in the block, each with a 1-based `cendor.step` — so one scope is **one trace**. See [Grouping calls](#grouping-calls-with-coretrace) |
 | Per-call span (by hand) | `core.otel.span(model, provider=…)` | Traces | A single `chat {model}` span you wrap a call in |
 | Spend | `instrument()` + a priced call — automatic; or `use_sink(sinks.OTelSink())` explicitly | Metrics | Counters `gen_ai.client.token.usage` / `.cost.usd` / `.reasoning.token.usage`, dimensioned by `model` + your `track(...)` tags |
 | **Enforcement decisions** | automatic (tokenguard / guardrails) | Traces | `governance.budget_event` / `governance.guardrail_decision` with `cendor.gov.*` attributes — action, budget name, projected vs cap, guardrail, stage — correlated by `cendor.trace_id` |
@@ -226,6 +227,122 @@ set `OTEL_SERVICE_NAME=your-app` (and optionally `service.instance.id` via
 `OTEL_RESOURCE_ATTRIBUTES`). It rides `service.name` on every span — Cendor Monitor's **Apps** page
 groups a libs-only app's runs by it (per-process instances counted from `service.instance.id`), and any
 OTLP backend filters on it. Cendor invents no app identity of its own.
+
+## Grouping calls with `core.trace()`
+
+A libs-only app is a flat call log by design: `instrument()` reports one span per call, and there is no
+run hierarchy to speak of. When several of those calls *are* one unit of work — a retrieval, a chat, a
+tool — wrap them:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+```python
+from cendor.core import instrument, trace
+
+client = instrument(OpenAI())
+
+with trace("nightly-sweep"):
+    client.chat.completions.create(model="gpt-4o-mini", messages=[...])
+    client.chat.completions.create(model="gpt-4o-mini", messages=[...])
+```
+<!-- tab: TypeScript -->
+```ts
+import { instrument, trace } from '@cendor/core';
+
+const client = instrument(new OpenAI());
+
+await trace('nightly-sweep', async () => {
+  await client.chat.completions.create({ model: 'gpt-4o-mini', messages: [] });
+  await client.chat.completions.create({ model: 'gpt-4o-mini', messages: [] });
+});
+```
+<!-- /tabs -->
+
+Anything the block emits joins the scope — a model call through an `instrument()`-ed client, or a
+function wrapped with `instrument_tool` / `instrumentTool`.
+
+The scope opens a **real parent span** — `cendor.trace nightly-sweep`, instrumentation scope
+`cendor.core`, carrying `cendor.run.id` and `cendor.scope="trace"` — and every instrumented call inside
+becomes its child with a 1-based `cendor.step`. **One scope is one trace.** In Cendor Monitor that is one
+row on the Calls list with `STEPS = N` (a *call group*, not a session: the Libraries door still has no
+agents or run hierarchy); in any other backend it is an ordinary parent span.
+
+> **Behaviour change in core 1.14.0 / `@cendor/core` 0.16.0.** Before those versions `trace()` only
+> stamped an ambient id onto each event, so every call inside still arrived as its **own root span** —
+> one unit of work became N unrelated traces. Measured on 2026-07-26: a scope around a chat call and a
+> tool call produced **two** traces sharing one id, with the governance fanned out across both. The
+> ambient id is unchanged, so anything correlating on `cendor.trace_id` keeps working.
+>
+> **If your backend groups by trace id today** and you want the pre-1.14 shape while you adapt, one
+> switch restores it: `CENDOR_TRACE_SPAN=off`, or per scope `trace(id, span=False)` /
+> `trace(id, fn, { span: false })`.
+
+Nothing is emitted when there is nobody to emit to (no OpenTelemetry, no configured provider, or
+`CENDOR_TELEMETRY=off`), and **no span is opened inside a cendor-sdk run** — that run already owns its
+trace, so the calls attach to it instead of to a competing root. Nesting is a no-op for the inner scope:
+one root per scope family.
+
+## Agent identity — `gen_ai.agent.name` vs `gen_ai.agent.id`
+
+A **name** is a label. Two agents in two apps can share one, and renaming an agent loses its history. An
+**id** is identity. Both ride the standard semconv attributes, and Cendor emits the id **only when it has
+one**:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+```python
+from cendor.sdk import Agent
+
+agent = Agent(name="support", model="gpt-4o", id="reg-42")   # id → gen_ai.agent.id
+```
+<!-- tab: TypeScript -->
+```ts
+import { Agent } from '@cendor/sdk';
+
+const agent = new Agent({ name: 'support', model: 'gpt-4o', id: 'reg-42' }); // id → gen_ai.agent.id
+```
+<!-- /tabs -->
+
+**No id means the attribute is omitted** — never a hash of the name, never a placeholder. No provider
+returns an agent id for a plain chat call, so for a bare model call the honest answer is "there is none";
+and there is no `CENDOR_AGENT_NAME` env var, because `cendor-core` carries no identity of its own.
+
+Three products *do* own a real agent id, and a scope maps it:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+```python
+from cendor.core.agent_ids import bedrock_agent_scope, openai_assistant_scope
+
+with bedrock_agent_scope(agent_id="AGENT123", agent_alias_id="TSTALIASID", session_id="sess-7"):
+    ...   # gen_ai.agent.id = "AGENT123/TSTALIASID", gen_ai.conversation.id = "sess-7"
+
+with openai_assistant_scope(assistant_id="asst_abc", thread_id="thread_xyz"):
+    ...
+```
+<!-- tab: TypeScript -->
+<!-- The `@cendor/core/agent-ids` subpath ships in 0.16.0; `check:docs` typechecks against the
+     INSTALLED @cendor/core, so this block is skipped until that version is on the shelf. Remove the
+     skip in the same commit that bumps the consumer pins — a permanently-skipped block rots. -->
+<!-- ts-check: skip -->
+```ts
+import { bedrockAgentScope, openaiAssistantScope } from '@cendor/core/agent-ids';
+
+await bedrockAgentScope({ agentId: 'AGENT123', agentAliasId: 'TSTALIASID', sessionId: 'sess-7' },
+  async () => { /* … */ });
+
+await openaiAssistantScope({ assistantId: 'asst_abc', threadId: 'thread_xyz' }, async () => { /* … */ });
+```
+<!-- /tabs -->
+
+Azure AI Foundry Agent Service has its own adapter (`foundry_agent_scope` / `foundryAgentScope`) and now
+maps `agent_id` onto `gen_ai.agent.id` as well as `gen_ai.agent.name`.
+
+**All of these are attribution-only.** They attribute the calls made inside them; they do **not** make a
+server-side runtime's tokens or cost appear. When the agent loop runs on the provider's side no model
+call passes through `instrument()`, so there is nothing to price — anything else would be a fabricated
+number. An alias is included in the Bedrock id (`"<agentId>/<agentAliasId>"`) because an alias is what
+resolves to a version: two aliases of one agent are genuinely different things to attribute to.
 
 ## Content capture — opt-in, OFF by default
 
@@ -298,7 +415,7 @@ Cendor never operates a telemetry endpoint. The monitor is an **operational copy
 **file**, never on what the monitor shows.
 
 ```bash
-docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.12.2
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.14.0
 # then, in your app:  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   → open http://localhost:3000
 ```
 

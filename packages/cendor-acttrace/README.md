@@ -30,6 +30,16 @@ acttrace verify evidence_q3.jsonl --key "…"   # re-walks the chain + checks si
 ```
 
 
+## Every mirrored entry names its agent (1.13.0)
+
+`OTelMirror` used to stamp `cendor.audit.agent` only on a `guardrail_decision` — the one entry type whose
+payload carries an agent. Measured against Cendor Monitor: **13 of 386** governance rows named their
+agent, so "which agent was blocked" was answerable only by inferring it from step ordering. Since
+**1.13.0** the mirror reads the acting agent (and its id) from `cendor-core`'s ambient registry and
+stamps `cendor.audit.agent` / `cendor.audit.agent_id` on **every** entry — including a budget block, a
+decision record, an `llm_call`. The entry's own payload always wins, and the hash-chained evidence file
+is untouched: this is the operational copy.
+
 ## The mirror attaches itself (1.11.0)
 
 With OpenTelemetry installed and a provider configured **by your app**, `AuditLog(system="support", path="audit.jsonl")` also streams every

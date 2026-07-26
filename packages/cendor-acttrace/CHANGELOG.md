@@ -2,6 +2,22 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.13.0] — 2026-07-26
+**Every mirrored entry names the agent that produced it.**
+
+`OTelMirror` stamped `cendor.audit.agent` only on a `guardrail_decision` — the one entry type whose
+payload carries an agent. Measured against Cendor Monitor on 2026-07-26: **13 of 386** governance rows
+named their agent, so "which agent was blocked" was answerable only by inferring it from step ordering.
+On a governance product that is the attribute most worth having.
+
+The mirror now reads the acting agent (and its id, when the app gave one) from `cendor-core`'s ambient
+registry and stamps `cendor.audit.agent` / `cendor.audit.agent_id` on **every** entry — including the
+types with no agent field at all: a budget block, a decision record, an `llm_call`. The entry's own
+payload always wins. acttrace still imports no sibling tool: the SDK registers a provider, core merges
+it, the mirror reads it (and an older core without that read degrades to today's behaviour).
+
+Nothing about the hash-chained evidence file changes: this is the **operational copy**.
+
 ## [1.12.0] — 2026-07-25
 **The mirror wins:** when an `AuditLog` attaches a mirror that emits OpenTelemetry spans, acttrace now
 tells `cendor-core` (refcounted; released on `detach()`), so core's new Option C `governance.*` ops

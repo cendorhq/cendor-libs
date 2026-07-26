@@ -66,6 +66,13 @@ def _provider(_event: Any) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
     if active.get("agent"):
         out["agent"] = active["agent"]
+    # D3 (core 1.14.0): Foundry hands us a real, stable agent **id**, so it also rides the semconv
+    # identity attribute (``gen_ai.agent.id``) rather than only the name slot. ``agent`` keeps
+    # carrying it too — it has since this adapter shipped, and a dashboard grouping on the name
+    # dimension must not lose its rows on an upgrade. Still **attribution-only**: mapping the
+    # identity does not make Foundry's server-side tokens or cost appear (see the module docstring).
+    if active.get("agent_id"):
+        out["agent_id"] = active["agent_id"]
     if active.get("conversation_id"):
         out["conversation_id"] = active["conversation_id"]
     return out or None
@@ -83,6 +90,7 @@ def foundry_agent_scope(
     token = _active.set(
         {
             "agent": str(agent_id) if agent_id else "",
+            "agent_id": str(agent_id) if agent_id else "",
             "conversation_id": str(thread_id) if thread_id else "",
         }
     )

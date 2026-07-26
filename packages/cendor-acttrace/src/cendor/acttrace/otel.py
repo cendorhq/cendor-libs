@@ -48,6 +48,22 @@ _ATTR_KEYS = (
 _TEXT_MAX = 200
 
 
+def _ambient() -> dict[str, Any]:
+    """What core's ambient providers would stamp now (the acting agent, when an SDK/app set one).
+
+    Read through ``cendor.core`` so acttrace never imports a sibling tool (rule 2), and tolerant of
+    an older core with no such read — the mirror must keep working against any core on the shelf.
+    """
+    try:
+        from cendor.core import ambient_attrs
+    except ImportError:  # pragma: no cover — core < 1.14.0
+        return {}
+    try:
+        return ambient_attrs()
+    except Exception:  # pragma: no cover — never let telemetry break an audit write
+        return {}
+
+
 def _set_scalar(span: Any, attr: str, value: Any) -> None:
     """Set one scalar span attribute, skipping empties; stringify non-primitives (mirrors the
     generic ``_ATTR_KEYS`` loop's handling for the typed extras below)."""
@@ -156,6 +172,22 @@ class OTelMirror:
             system = self._system or str(payload.get("system", ""))
             if system:
                 span.set_attribute("cendor.audit.system", system)
+            # S4 — name the ACTOR on every mirrored entry, not just a guardrail decision. Measured
+            # 2026-07-26: 13 of 386 SDK governance rows carried an agent, so "which agent was
+            # blocked" had to be inferred from step ordering. The entry's own payload wins (set
+            # below in the typed handling); this fills the gap for the types with no agent field at
+            # all — a budget block, a decision record, an llm_call.
+            #
+            # The value comes from core's ambient registry, so acttrace learns nothing about the SDK
+            # (rule 2): the SDK registers a provider, core merges it, this reads it. An agent name
+            # is app-supplied configuration, never input-derived text.
+            for _key, _attr in (
+                ("agent", "cendor.audit.agent"),
+                ("agent_id", "cendor.audit.agent_id"),
+            ):
+                if payload.get(_key):
+                    continue
+                _set_scalar(span, _attr, _ambient().get(_key))
             etype = str(getattr(entry, "type", ""))
             for key in _ATTR_KEYS:
                 # A budget's `name` is exposed as `cendor.audit.budget` (below), not the generic

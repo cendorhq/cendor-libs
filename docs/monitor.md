@@ -19,7 +19,7 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.12.2
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.14.0
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -121,6 +121,55 @@ emits (cendor-sdk ≥ 1.16 / @cendor/sdk ≥ 0.21). A slim **status footer** sho
 the image version. **Go Live** streams updates over Server-Sent Events (live *steps*, not live tokens);
 it falls back to polling automatically. Fresh v0.9 stores start empty — there is **no migration** from
 a pre-v0.9 single store (a dev-phase breaking change; the old volume is left untouched).
+
+### The Libraries door in v0.12.3–v0.14.0 — call groups, the agent dimension, and an honest money table
+
+Four measured gaps closed, all on the door that had the least identity to work with:
+
+* **A call group is real now.** With cendor-core ≥ 1.14 / `@cendor/core` ≥ 0.16, `core.trace("id")`
+  opens a real parent span, so a scope over N calls arrives as **one row with `STEPS = N`** — the scope
+  id leads the Calls list (a `group` chip, the models beside it) and the detail heading reads **Run**
+  instead of **Call**. Before those versions the scope only stamped an id, so the same code produced N
+  unrelated rows; the console's own advice pointed at a lever that could not move. It is still a *call
+  group*, **not** a session: the Libraries door gains no agent-or-session hierarchy from it.
+* **The agent dimension appears when your framework provided one.** Cendor ships three framework
+  adapters whose whole purpose is to attach an agent name to a libs-door call, and the console used to
+  answer "the Libraries door has no agents" even when the store held one. There is now an
+  **Agents (from your framework)** page, an Agent column and an agent filter — shown **only when the
+  store actually contains an agent**, with the provenance stated on the page. A plain libs app still
+  sees no agent vocabulary, and **Sessions stays SDK-only**.
+* **`gen_ai.agent.id`, when you have one.** The Agents page shows the id as a chip beside the name, so
+  two agents that share a name across apps no longer collapse into one row and a rename no longer loses
+  that agent's history. Absent, nothing is shown — never a hash, never a placeholder.
+* **The cost-attribution caveat.** A spend metric datapoint carries **no run scope on the wire**, so
+  both stores receive every datapoint and **both doors show the same fleet-wide breakdown**. Measured at
+  one instant: the libs attribution table totalled `$0.0257` against a libs run rollup of `$0.0628` —
+  neither the door's spend nor a subset of it. That limit is real and cannot be fixed by splitting the
+  table; what was missing was the console saying so, which it now does under every spend list. Per-door
+  spend is the run rollup in the tiles above it.
+
+### Governance you can read (v0.13.0)
+
+The audit stream carries two different things and nine spellings of about five outcomes. Both are now
+addressed on the Governance page:
+
+* **One word per outcome.** `action_class=block|break|clamp|flag|redact` folds the raw values, because
+  the libraries name one concept differently per event type (`budget_event.blocked` vs
+  `guardrail_decision.block`; `policy_flag.redacted` vs `redact`) — so a single-select raw `action=`
+  could never answer "show me the blocks". `human_oversight.rejected` sits in **block** (a human
+  stopping an action stops it), and `broken` — a mid-stream `on_exceed="break"` — is its own outcome
+  because the call *did* run. The raw `action=` filter is still there for power users.
+* **Verdicts before trajectory.** `llm_call` / `tool_call` are audit *trajectory* entries, not verdicts,
+  and they made up 62–71 % of a measured stream. The page defaults to **Decisions**; **Trajectory** is
+  one click away, and each tab shows the other's count.
+* **One decision, one row.** `decision` + `decision_record` + `decision_end` collapse by `decision_id`.
+* **A blocked run looks like the product working.** A zero-step run with a blocking verdict reads
+  `blocked before any call`; one without is muted `no steps recorded`. 11 of 27 measured zero-step runs
+  were pre-flight blocks and looked exactly like noise.
+* **The mirror-completeness hint stops crying wolf.** `seq` is the audit *file's* counter, shared by
+  every run appended to that chain — and one chain per process is the recommended shape — so it warns
+  only when a run's own range is internally gapped, all its events share one audit system, and the run
+  is that chain's first.
 
 ### Apps — the libs door's top level (v0.8)
 
