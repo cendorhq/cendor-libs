@@ -2,6 +2,44 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.14.1] — 2026-07-27
+**A replayed call keeps its `await`, and a raw-response envelope keeps its cost.**
+
+Three capture repairs, all found by driving a real Microsoft 365 pro-code agent against the published
+shelf. Nothing is added to the public API.
+
+### Fixed
+- **A replayed call on an async client is awaitable again.** `openai`'s `chat.completions.create` and
+  `anthropic`'s `messages.create` are `async def`s behind a **sync** `functools.wraps` decorator, so
+  `inspect.iscoroutinefunction()` is `False` and core installs its sync wrapper. The live path already
+  repaired that; the *interceptor short-circuit* — the seam `cendor-cassette` replays through — handed
+  the recorded value back synchronously, so an ordinary `await client.chat.completions.create(...)`
+  raised `TypeError: object … can't be used in 'await' expression` under `cassette.using(…,
+  mode="replay")`. A **streamed** replay was worse: a *sync* proxy, so neither `await` nor `async for`
+  worked, which no app-side await-shim could paper over. The short-circuit now honours the wrapped
+  method's async contract (inferred once at wrap time via `inspect.unwrap`, and confirmed by the live
+  path's own observation, so record-then-replay works for a hand-written client too). A decorated
+  *sync* client is untouched, and a pre-flight refusal still raises in the caller's frame.
+- **Usage and cost survive a raw-response envelope.** A call made through
+  `client.responses.with_raw_response.create(...)` — the documented way to read response headers, and
+  what Microsoft Agent Framework 1.12.1 drives OpenAI through — returns an envelope (headers plus the
+  un-parsed body) carrying no `usage` of its own, so the call was captured with `usage=None` and
+  `cost=None` while the identical `responses.create` call priced exactly. Usage is now recovered from
+  the buffered body (duck-typed, no SDK import) and the entry is marked
+  `metadata["raw_response_envelope"]`. Strictly additive: the fallback runs only when direct
+  extraction found nothing, and an unread streaming body degrades to the previous `None` rather than
+  raising.
+- **`responses.parse` is captured.** The Responses structured-output entrypoint issues its own request
+  rather than delegating to `create`, so a structured-output call emitted **no event at all** (the
+  branch MAF takes whenever a `text_format` is set). It is now an instrumented target with the same
+  request/response shape as `create` — exactly one `LLMCall` per call — and `callable()`-gated, so an
+  older SDK without it is simply not wrapped.
+- **An async tool no longer records its own coroutine.** `instrument_tool()` never received the
+  async-detect repair, so a tool that is an `async def` behind a decorator (retry, cache, tracing)
+  recorded `ToolCall.result = <coroutine object …>` — which a recorder then persists *as that string*,
+  silently poisoning a cassette. The result is now awaited before it is recorded, and a replayed async
+  tool call is awaitable.
+
 ## [1.14.0] — 2026-07-26
 **`core.trace()` groups your calls into one trace, and a governance row can finally name the agent it stopped.**
 

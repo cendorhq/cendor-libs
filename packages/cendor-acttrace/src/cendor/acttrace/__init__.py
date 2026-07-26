@@ -23,6 +23,7 @@ import os
 import threading
 import uuid
 import warnings
+import weakref
 from collections import Counter, deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -86,6 +87,16 @@ __all__ = [
 ]
 
 GENESIS = "0" * 64
+
+#: Chain files with a **live** :class:`AuditLog` writing to them in this process, keyed by resolved
+#: path. Two live logs on one path each hold their own head/seq and both auto-capture the same
+#: process-global bus event, so they interleave two chains into one file and ``verify()`` fails at
+#: the first divergence — silently, until someone audits. A
+#: :class:`weakref.WeakValueDictionary`, so a log dropped without ``detach()`` cannot strand its
+#: path forever (it can only be collected once it has unsubscribed from the bus, which is exactly
+#: when the slot should be free).
+_open_chains: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
+_open_chains_lock = threading.Lock()
 
 #: Recommended vocabularies for a policy flag (normalized to lowercase; other strings are allowed).
 FlagAction = Literal["flagged", "redacted", "blocked"]
@@ -550,6 +561,11 @@ class AuditLog:
         # equivalent to "w", so the open mode is unconditional; only the resume vs. audit_open
         # branch differs. A corrupt file raises (never a silent restart-from-GENESIS — the bug this
         # fixes), because that would discard the prior chain.
+        # One live writer per chain file: claim the path before touching it (see _claim_chain_path).
+        # A *sequential* reopen — the process-restart case — is unaffected, because the previous log
+        # released its claim on detach() (or by being collected, which requires it to have
+        # unsubscribed). What this refuses is two logs writing one chain at the same time.
+        self._chain_key = self._claim_chain_path() if self.path is not None else None
         prior = self._read_existing_entries() if self.path is not None else []
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -566,6 +582,48 @@ class AuditLog:
             self._append("audit_open", {"system": system, "risk_tier": risk_tier})
         bus.subscribe(self._on_event)
         add_ambient_provider(_acttrace_ambient)  # GLR-6: capture the decision id pre-emit (F5)
+
+    def _claim_chain_path(self) -> str:
+        """Register this log as the one live writer of its chain file; raise if another already is.
+
+        The hash chain lives in ``head`` + the file, per instance. Two live logs on one path both
+        auto-capture every bus event and both append at their own ``seq``/``prev_hash`` —
+        identical right after a reopen — so the file ends up holding two interleaved chains and
+        ``verify()`` reports ``broken link at seq N: prev_hash mismatch``. Nothing warns at the
+        time; the evidence is only discovered to be broken when someone audits it. Refusing at
+        construction turns that into an error at the line that caused it (the same posture as the
+        corrupt-file refusal in :meth:`_read_existing_entries`).
+
+        A **sequential** reopen is untouched — that is the supported restart case, and it is what
+        :mod:`tests/test_resume.py` covers. Cross-process writers cannot be detected from here; one
+        writer per chain file is a documented limit.
+        """
+        assert self.path is not None
+        # resolve() so `logs/audit.jsonl` and `logs/sub/../audit.jsonl` are recognised as one file
+        key = str(self.path.resolve())
+        with _open_chains_lock:
+            existing = _open_chains.get(key)
+            if existing is not None:
+                raise ValueError(
+                    f"an AuditLog is already writing {self.path} in this process. Two live logs "
+                    "on one chain file interleave two hash chains into it, so verify() fails at "
+                    "the first divergence. Call detach() on the first log before reopening the "
+                    "path (a process restart does exactly that and resumes the chain), give this "
+                    "log its own file (one per process lifetime, dated or rotated), or reuse the "
+                    "existing log."
+                )
+            _open_chains[key] = self
+        return key
+
+    def _release_chain_path(self) -> None:
+        """Give up this log's live-writer claim (idempotent; a no-op for a path-less log)."""
+        key = self._chain_key
+        if key is None:
+            return
+        self._chain_key = None
+        with _open_chains_lock:
+            if _open_chains.get(key) is self:
+                del _open_chains[key]
 
     def _read_existing_entries(self) -> list[AuditEntry]:
         """Parse the entries already on disk so a reopened log resumes the chain instead of
@@ -851,8 +909,12 @@ class AuditLog:
         """Stop subscribing to the core event stream and close the log file handle (idempotent).
 
         Also flushes/closes the optional ``mirror`` if it implements those lifecycle methods (e.g. a
-        ``QueueSink``-wrapped mirror), so no mirrored tail is lost at shutdown."""
+        ``QueueSink``-wrapped mirror), so no mirrored tail is lost at shutdown, and releases
+        this log's one-live-writer claim on its chain file so the path can be reopened (a
+        restart).
+        """
         bus.unsubscribe(self._on_event)
+        self._release_chain_path()
         if self._gov_mirrored:  # release the refcount so core's ops spans resume (idempotent)
             _signal_governance_mirror(self._mirror, False)
             self._gov_mirrored = False

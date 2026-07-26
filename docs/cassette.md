@@ -286,3 +286,14 @@ Cendor's optional self-hosted monitor, marks which calls ran offline for $0 from
   static-embedding one.
 - **Tool calls with real side effects:** cassette records the *result* and stubs the side effect
   on replay — wrap your dispatcher with `core.instrument_tool` so tool calls join the stream.
+- **Replaying an async client needs `cendor-core` ≥ 1.14.1 (Python).** Below that, a replayed
+  `await client.chat.completions.create(...)` raised `TypeError: object … can't be used in 'await'
+  expression`, and a replayed *stream* was not `async for`-able at all — the recorded data was correct,
+  only the async-ness was lost. TypeScript was never affected. The remaining edge, documented rather
+  than fixed: a client whose method is a plain `def` that merely *returns* a coroutine is invisible to
+  detection, so in a **pure-replay** process (no live call first) its replay still comes back
+  synchronously. Real SDK clients and any `async def` are covered.
+- **A raw-response envelope records the envelope, not the payload.** If your code calls
+  `client.responses.with_raw_response.create(...)`, the value cendor sees — and therefore records — is
+  the envelope. Usage and cost are recovered from it (core ≥ 1.14.1), but a cassette of such a call is
+  not a faithful recording of the model's response; record through the normal entrypoint.

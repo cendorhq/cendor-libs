@@ -784,3 +784,11 @@ is an operational copy: `verify()` still runs on the hash-chained **file**, neve
   APM/SIEM for monitoring and alerting, but `verify()` only ever checks the hash-chained file. For a
   compliance record, retain the file (or a signed `export()` pack) — the mirror can lag or drop
   without weakening the chain. See [Observability](observability.md).
+- **One live writer per chain file.** A restart is fine: point a new `AuditLog` at the same path and it
+  resumes the chain from the last on-disk entry — no new `audit_open`, and `verify()` spans the whole
+  file. What does not work is **two logs writing one file at the same time**: each keeps its own head
+  and sequence, both auto-capture the same bus event, and the two chains interleave into one file. From
+  `cendor-acttrace` 1.13.1 / `@cendor/acttrace` 0.14.1 that raises at construction instead of producing
+  evidence that will not verify; call `detach()` when a log's life ends (a long-lived server should
+  rotate: one file per process lifetime, dated). Two separate **processes** appending to one file
+  cannot be detected from inside either of them — give each its own file.

@@ -14,6 +14,10 @@ Two cooperation hooks (used by ``cassette``; harmless otherwise):
   * **replay** — registered *interceptors* run *before* the real call; one may return a response
     to short-circuit it (returning :data:`MISS` to decline). This is how record/replay avoids a
     second instrumentation point: tools cooperate through ``core``, they never patch the client.
+
+A short-circuited call keeps the wrapped method's **async contract**: on an async client
+``await client.chat.completions.create(...)`` works and a replayed stream is ``async for``-able,
+even though the real SDK methods are not ``iscoroutinefunction`` (see :func:`_returns_awaitable`).
 """
 
 from __future__ import annotations
@@ -302,6 +306,13 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
     responses = getattr(client, "responses", None)  # OpenAI Responses API
     if responses is not None and callable(getattr(responses, "create", None)):
         targets.append((responses, "create", "openai_responses"))
+    # `responses.parse(...)` — the Responses structured-output entrypoint. It issues its own
+    # request rather than delegating to `create`, so without its own target a structured-output
+    # call emitted nothing at all (Microsoft Agent Framework takes this branch whenever a
+    # `text_format` is set). Same request/response shape as `create`, so it reuses the whole
+    # Responses path. `callable()`-gated: an older SDK without `parse` is simply not wrapped.
+    if responses is not None and callable(getattr(responses, "parse", None)):
+        targets.append((responses, "parse", "openai_responses"))
     # OpenAI-shaped embeddings endpoint (OpenAI + Azure-via-openai). Wrapping it closes the
     # embeddings capture gap: pre-flight interceptors (budget block/clamp, guard redaction) run,
     # and the emitted LLMCall carries metadata["embedding"] = True.
@@ -379,6 +390,23 @@ def _accepts_stream_options(fn: Any) -> bool:
     return "stream_options" in params
 
 
+def _returns_awaitable(fn: Any) -> bool:
+    """Whether ``fn`` is an async callable that :func:`inspect.iscoroutinefunction` cannot see.
+
+    The real SDK entrypoints are ``async def``s behind a **sync** ``functools.wraps`` decorator —
+    ``openai``'s ``chat.completions.create`` and ``anthropic``'s ``messages.create`` both go through
+    ``@required_args`` — so ``iscoroutinefunction(fn)`` is ``False`` and core installs its *sync*
+    wrapper. ``inspect.unwrap`` follows the ``__wrapped__`` chain that decorator left behind, which
+    makes the async-ness visible again. A decorated *sync* function unwraps to a sync function, so
+    there are no false positives; a hand-written sync method that merely *returns* a coroutine is
+    invisible here and is learned from the live call instead (L5).
+    """
+    try:
+        return inspect.iscoroutinefunction(inspect.unwrap(fn))
+    except Exception:  # noqa: BLE001 - a hostile __wrapped__ must never break instrumentation
+        return False
+
+
 def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
     always_stream = provider in _ALWAYS_STREAM
     # L1: inject stream_options={"include_usage": True} for OpenAI always; for HF only when the
@@ -414,6 +442,12 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
         setattr(awrapper, _WRAPPED, True)
         return awrapper
 
+    # F-1: is the wrapped method async in a way ``iscoroutinefunction`` missed? A one-element cell
+    # (not a plain local) because the live path *learns*: L5 below sets it once a call is observed
+    # returning an awaitable, which is what makes record-then-replay work in one process for a
+    # hand-written client too. Inferred at wrap time, so the per-call cost is one list read.
+    awaitable_target = [_returns_awaitable(fn)]
+
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         call, start = _pre(provider, args, kwargs, model_default)
@@ -425,6 +459,13 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
             response = fn(*args, **kwargs)
         elif directive is not MISS:
             call.metadata["replayed"] = True
+            # An interceptor short-circuited the call (``cassette`` replay). The recorded value
+            # is plain data, so it must be handed back through the *contract of the method it
+            # stands in for*: on an async client `await …create(...)` has to work, and a replayed
+            # stream has to be ``async for``-able. Without this a replay raised
+            # "object … can't be used in 'await' expression" on the two most common clients.
+            if awaitable_target[0]:
+                return _async_replay(call, directive, provider, start, streaming)
             if streaming:
                 return _replay_stream(call, directive, provider, start)
             _post(call, directive, provider, start)
@@ -436,6 +477,7 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
         # client never returns an awaitable, so continuing on the awaited value is a zero-false-
         # positive repair: usage is captured instead of silently lost on the un-awaited coroutine.
         if inspect.isawaitable(response):
+            awaitable_target[0] = True  # observed, not inferred: believe it for later replays
             return _async_continuation(call, response, provider, start, streaming)
         if streaming:
             return _proxy_stream(call, response, provider, start)
@@ -455,6 +497,22 @@ async def _async_continuation(
         return _aproxy_stream(call, response, provider, start)
     _post(call, response, provider, start)
     return response
+
+
+async def _async_replay(
+    call: LLMCall, recorded: Any, provider: str, start: float, streaming: bool
+) -> Any:
+    """F-1: hand a short-circuited (replayed) response back on the **async** contract.
+
+    The sync wrapper is what an async openai/anthropic client gets (see :func:`_returns_awaitable`),
+    so a replay has to be awaitable there: this coroutine is the return value, and awaiting it
+    yields the recorded response — or, for a streamed call, the ``async for``-able replay proxy.
+    Nothing is awaited here; the recorded value is data, not a call.
+    """
+    if streaming:
+        return _areplay_stream(call, recorded, provider, start)
+    _post(call, recorded, provider, start)
+    return recorded
 
 
 #: Per-provider kwarg carrying the request messages, so ``Reroute(messages=…)`` rewrites the right
@@ -558,10 +616,48 @@ def _extract_request(
 def _post(call: LLMCall, response: Any, provider: str, start: float) -> None:
     call.latency_ms = (time.perf_counter() - start) * 1000.0
     usage = _extract_usage(response, provider)
+    reported = _extract_reported_cost(response)
+    if usage is None:
+        # The value may be a *raw-response envelope* rather than a model — headers plus an
+        # un-parsed body, with no `usage` of its own. Recover usage from the body so the call is
+        # still priced (see _raw_response_body). Additive: this branch runs only when direct
+        # extraction found nothing, so it turns None into a number, never a number into another.
+        body = _raw_response_body(response)
+        if body is not None:
+            usage = _extract_usage(body, provider)
+            if reported is None:
+                reported = _extract_reported_cost(body)
+            if usage is not None or reported is not None:
+                call.metadata["raw_response_envelope"] = True
     call.usage = usage
-    _set_cost(call, usage, _extract_reported_cost(response))
+    _set_cost(call, usage, reported)
     call.metadata["response"] = response  # for recorders (cassette); a reference, not a copy
     bus.emit(call)
+
+
+def _raw_response_body(response: Any) -> Any | None:
+    """The JSON body behind a provider SDK's **raw-response envelope**, or ``None``.
+
+    ``client.responses.with_raw_response.create(...)`` — the shape Microsoft Agent Framework drives
+    OpenAI through, and the standard way to read response headers — hands back an envelope
+    (openai's ``LegacyAPIResponse``) carrying the headers and the un-parsed body. It exposes no
+    ``usage``, so usage and cost were silently lost even though the call itself was captured.
+
+    Duck-typed (no SDK import) and best-effort: the buffered body is repeatable, but a
+    ``with_streaming_response`` envelope has never read its body and raises — which returns ``None``
+    here and leaves the previous behaviour untouched.
+    """
+    http = _get(response, "http_response")
+    if http is None:
+        return None
+    reader = getattr(http, "json", None)
+    if not callable(reader):
+        return None
+    try:
+        body = reader()
+    except Exception:  # noqa: BLE001 - an unread/streaming body must never break the call
+        return None
+    return body if isinstance(body, dict) else None
 
 
 def _set_cost(call: LLMCall, usage: Usage | None, reported: Money | None) -> None:
@@ -1157,20 +1253,41 @@ def _wrap_tool(fn: Callable, tool_name: str) -> Callable:
         setattr(awrapper, _WRAPPED, True)
         return awrapper
 
+    # N-2: the same async-detect repair the model path got in L5. Without it a tool that is an
+    # ``async def`` behind a decorator (retry, cache, tracing — the common case) recorded
+    # ``ToolCall.result = <coroutine object …>``, which a recorder then persists *as that string*:
+    # a silently poisoned cassette. Inferred at wrap time, then confirmed by observation below.
+    awaitable_target = [_returns_awaitable(fn)]
+
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         tc, start = _pre_tool(tool_name, args, kwargs)
         replayed = _intercept(tc)
         if replayed is not MISS:
             tc.metadata["replayed"] = True
-            result = replayed
-        else:
-            result = fn(*args, **kwargs)
+            if awaitable_target[0]:  # stand in for an async tool ⇒ the caller will await
+                return _async_tool_post(tc, replayed, start)
+            _post_tool(tc, replayed, start)
+            return replayed
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            awaitable_target[0] = True  # observed
+            return _async_tool_post(tc, result, start)
         _post_tool(tc, result, start)
         return result
 
     setattr(wrapper, _WRAPPED, True)
     return wrapper
+
+
+async def _async_tool_post(tc: ToolCall, result: Any, start: float) -> Any:
+    """Finish a tool call on the async contract: await a misdetected async tool's real result (so
+    the recorded ``ToolCall.result`` is the value, never the coroutine) and hand a replayed result
+    back as an awaitable. A replayed value is data and is not awaited."""
+    if inspect.isawaitable(result):
+        result = await result
+    _post_tool(tc, result, start)
+    return result
 
 
 def _pre_tool(name: str, args: tuple, kwargs: dict) -> tuple[ToolCall, float]:

@@ -2,6 +2,30 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.13.1] — 2026-07-27
+**Two live `AuditLog`s on one chain file are refused instead of silently corrupting it.**
+
+Reopening a chain path has been supported since 1.2.2: a process restarts, constructs an `AuditLog`
+over the same path, and the chain resumes from the last on-disk entry — measured green. What was never
+guarded is two logs alive **at the same time** on one path. Both subscribe to the process-global bus,
+so one `LLMCall` is auto-captured twice, and each appends at its own `seq`/`prev_hash` — identical
+right after the reopen. The file ends up holding two interleaved chains, and `verify()` reports
+`broken link at seq N: prev_hash mismatch`. Nothing warned at the time; the evidence was only
+discovered to be broken when someone audited it — the worst possible moment for a governance artifact.
+
+### Fixed
+- **`AuditLog(path=…)` now raises if another live `AuditLog` in this process is already writing that
+  path**, naming the way out: `detach()` the first log (a process restart does exactly that, and
+  resumes the chain), give this log its own file — one per process lifetime, dated or rotated — or
+  reuse the log you have. A **sequential** reopen is unchanged, so the restart case and every existing
+  reopen test are untouched. This is the same posture as the corrupt-file refusal already in the resume
+  path: fail at the line that caused it rather than hand back evidence that will not verify.
+
+Claims are held weakly, so a log dropped without `detach()` cannot strand its path (and it can only be
+collected once it has unsubscribed from the bus, which is exactly when the slot should free).
+Path-less, in-memory logs are never registered. **Honest limit:** two *processes* appending to one
+chain file cannot be detected from inside one of them — one writer per chain file.
+
 ## [1.13.0] — 2026-07-26
 **Every mirrored entry names the agent that produced it.**
 

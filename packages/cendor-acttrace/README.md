@@ -30,6 +30,18 @@ acttrace verify evidence_q3.jsonl --key "…"   # re-walks the chain + checks si
 ```
 
 
+## One live `AuditLog` per chain file (1.13.1)
+
+Reopening a chain path is supported and always has been: a process restarts, you point a new
+`AuditLog` at the same `path=`, and the chain **resumes** from the last on-disk entry — no second
+`audit_open`, and `verify()` spans the whole file. What silently broke the evidence was two logs
+writing one file *at the same time*: each keeps its own head and sequence, both auto-capture the same
+bus event, and the two chains interleave until `verify()` reports `broken link at seq N: prev_hash
+mismatch` — discovered whenever someone finally audits. Since **1.13.1** the second one raises at
+construction and tells you what to do: `detach()` the log whose life ended, or give the new one its own
+(dated) file. Two separate *processes* on one file can't be detected from inside either — one writer
+per file.
+
 ## Every mirrored entry names its agent (1.13.0)
 
 `OTelMirror` used to stamp `cendor.audit.agent` only on a `guardrail_decision` — the one entry type whose
