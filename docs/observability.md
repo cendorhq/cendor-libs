@@ -321,10 +321,6 @@ with openai_assistant_scope(assistant_id="asst_abc", thread_id="thread_xyz"):
     ...
 ```
 <!-- tab: TypeScript -->
-<!-- The `@cendor/core/agent-ids` subpath ships in 0.16.0; `check:docs` typechecks against the
-     INSTALLED @cendor/core, so this block is skipped until that version is on the shelf. Remove the
-     skip in the same commit that bumps the consumer pins — a permanently-skipped block rots. -->
-<!-- ts-check: skip -->
 ```ts
 import { bedrockAgentScope, openaiAssistantScope } from '@cendor/core/agent-ids';
 
