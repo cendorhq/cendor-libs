@@ -19,7 +19,7 @@ default), and the monitor. Run it, point your app's OpenTelemetry at it, and ope
 
 ```bash
 # 1. run the monitor (one image; SQLite by default — nothing else to install)
-docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.14.1
+docker run --rm --name cendor-monitor -p 3000:3000 -p 4317:4317 -p 4318:4318 ghcr.io/cendorhq/cendor-monitor:0.14.2
 
 # 2. point your app's OpenTelemetry pipeline at it
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -42,13 +42,13 @@ sending, with no code change.
 ## The monitor tour
 
 The monitor is a self-contained view over the same standard wire — no query language, no dashboard to
-assemble. Screenshots are of the real monitor rendering a seeded workload (synthetic runs, content
-capture opted in for the capture) — the image itself **ships no sample app and fabricates nothing**:
-every screen you see is fed by your own runs, and an empty store just means nothing has been sent
-yet. _(The shots below are from v0.4.0; the `docker run` above pulls the
-current v0.12.0 — the two-doors-split UX (two stores, path-routed Libraries | SDK modes, the SDK
-structure pages, the status footer, and the SSE live channel) and the earlier operate-wave (v0.5) are
-described in the text and land beyond these panels.)_
+assemble. Screenshots are of the real monitor rendering **one real governed run** (a keyless,
+reproducible refunds-triage workload with content capture opted in for it) — the image itself
+**ships no sample app and fabricates nothing**: every screen you see is fed by your own runs, and an
+empty store just means nothing has been sent yet, not that something is broken. _(The shots are of
+the current `v0.14.2` console — the same tag the `docker run` above pulls — so the two doors, the
+Container page, the agent dimension and the verdicts-first governance stream are all visible in
+them.)_
 
 ### Overview
 
