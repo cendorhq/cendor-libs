@@ -496,8 +496,14 @@ def _response_text(call: LLMCall) -> str | None:
     streamed responses (the banned text is delivered). Returns ``None`` when nothing is extractable,
     so output guardrails simply skip rather than misfire. The SDK's in-loop output stage has the
     parsed text directly and does not rely on this.
+
+    Same reasoning for a **raw-response envelope** (``client.responses.with_raw_response.create(…)``
+    — Microsoft Agent Framework's shape, and ``langchain-openai``'s): the envelope carries headers
+    and an un-parsed body, so it has no assistant text and the output stage skipped it entirely.
+    ``cendor-core`` ≥ 1.14.2 publishes the decoded payload at ``metadata["response_body"]``; prefer
+    it, so those integrations are gated like any other call.
     """
-    response = call.metadata.get("response")
+    response = call.metadata.get("response_body") or call.metadata.get("response")
     if response is None:
         return None
     try:

@@ -1004,7 +1004,10 @@ published, `prompt_guard` is described only as a *prompt-injection classifier ad
   `redact` at the *standalone* `output` stage **records the decision but cannot clean the response
   the caller already holds** — only the SDK's in-loop output stage can rewrite the returned text; use
   `block` (or the SDK) when you must withhold the content. The SDK's in-loop output stage evaluates
-  before the terminal event, but the same already-streamed caveat applies.
+  before the terminal event, but the same already-streamed caveat applies. A **raw-response** call
+  (`with_raw_response.create(…)` — Microsoft Agent Framework's shape and `langchain-openai`'s) is
+  gated too from `cendor-guardrails` 1.6.1 with `cendor-core` ≥ 1.14.2; below those versions the
+  extractor saw only the envelope and the stage silently skipped, so banned text was delivered.
 - **PII/secret detection isn't a built-in here** — one detection engine, kept in `acttrace`. Bridge
   it with `rules.custom` + `acttrace.scan`/`redact`, or use the SDK's ready-made `rules.pii()` /
   `secrets()` / `entropy()`. Coverage is exactly acttrace's catalogue (measured per-category on a

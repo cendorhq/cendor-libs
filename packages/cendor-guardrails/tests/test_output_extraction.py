@@ -52,3 +52,37 @@ def test_no_response_metadata_returns_none():
 
 def test_unrecognized_shape_returns_none():
     assert _response_text(_call(SimpleNamespace(mystery=1))) is None
+
+
+# --- a raw-response envelope (MAF / langchain-openai) ------------------------------------------
+
+
+class _Envelope:
+    """openai's raw-response envelope: headers + an un-parsed body, and no assistant text of its
+    own. `client.responses.with_raw_response.create(...)` returns one, so the output stage saw
+    nothing and silently skipped — the banned text was delivered."""
+
+    def __init__(self, body: dict) -> None:
+        self.headers = {"x-request-id": "req_1"}
+        self.http_response = SimpleNamespace(json=lambda: body)
+
+
+BODY = {"choices": [{"message": {"role": "assistant", "content": "banned text"}}]}
+
+
+def test_a_raw_response_envelope_alone_yields_nothing():
+    # the envelope carries no assistant text; without the decoded body there is nothing to gate on
+    assert _response_text(_call(_Envelope(BODY))) is None
+
+
+def test_the_decoded_body_published_by_core_is_used():
+    # cendor-core >= 1.14.2 publishes metadata["response_body"] for exactly this reason
+    call = _call(_Envelope(BODY))
+    call.metadata["response_body"] = BODY
+    assert _response_text(call) == "banned text"
+
+
+def test_the_envelope_wins_nothing_over_a_normal_response():
+    # a normal call has no response_body, so the existing path is untouched
+    resp = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="fine"))])
+    assert _response_text(_call(resp)) == "fine"

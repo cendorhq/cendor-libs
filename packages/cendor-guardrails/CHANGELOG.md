@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.6.1] — 2026-07-27
+**The standalone output stage no longer skips a raw-response call.**
+
+### Fixed
+- **A `with_raw_response` call was never gated.** `_response_text` reads the provider response off
+  `call.metadata["response"]`; for `client.responses.with_raw_response.create(...)` (Microsoft Agent
+  Framework) or `client.chat.completions.with_raw_response.create(...)` (`langchain-openai`) that
+  value is an *envelope* — headers plus an un-parsed body, no assistant text — so extraction
+  returned `None` and the output stage silently no-opped. Banned text was delivered. It now prefers
+  the decoded payload `cendor-core` >= 1.14.2 publishes at `metadata["response_body"]`, so those
+  integrations are gated like any other call. Same class as the streamed-chunks case already
+  handled here: a shape the extractor could not read is a silent governance hole, not a no-op.
+
 ## [1.6.0] — 2026-07-20
 A native governance counter, so guardrail-decision rates are chartable without post-processing traces. Backward-compatible — no change to `GuardrailDecision` or the bus shape.
 
