@@ -2,6 +2,29 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.1] — 2026-07-27
+**Recording a raw-response call no longer crashes the app it is recording.**
+
+### Fixed
+- **`RecursionError` when recording a `with_raw_response` call.** Recording
+  `client.responses.with_raw_response.create(...)` (Microsoft Agent Framework) or
+  `client.chat.completions.with_raw_response.create(...)` (`langchain-openai`) walked `vars()` of
+  the SDK's envelope — which owns the httpx response, which owns the client, which owns the
+  response — and recursed to the stack limit. The error propagated **out of the caller's own
+  `create()`**, and left a valid but empty cassette on disk. `_to_jsonable` is now total by
+  construction: a depth cap plus a cycle check, with a `str()` fallback that cannot itself recurse.
+  (Pre-existing, not new in 1.1.0 — but `cendor-core` 1.14.1 made `with_raw_response` a supported,
+  priced path, so it became reachable by exactly the integrations the docs now recommend.)
+
+### Added
+- **A raw-response call records its payload and replays as an envelope.** When `cendor-core`
+  (≥ 1.14.2) publishes `metadata["response_body"]`, that decoded payload is what gets recorded —
+  not the envelope — and the entry is marked `response_type: "envelope"`. A replay returns a
+  `ReplayedEnvelope`, so the caller's next line (`raw.parse()`) keeps working offline. `headers` is
+  empty and `http_response` is `None`: there is no HTTP round trip behind a replay, and the type
+  says so rather than pretending. An older reader that does not know the marker falls back to
+  `"object"`, which is the format's documented default.
+
 ## [1.1.0] — 2026-07-22
 Record/replay key off a session id stamped at call initiation, so an out-of-scope streamed call is captured correctly.
 

@@ -22,6 +22,7 @@ even though the real SDK methods are not ``iscoroutinefunction`` (see :func:`_re
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
 import threading
@@ -281,7 +282,38 @@ def instrument(client: T) -> T:
                 name = getattr(client, "model_name", None) or getattr(client, "_model_name", "")
                 model_default = str(name).removeprefix("models/")
             setattr(owner, attr, _wrap(fn, provider, model_default))
+        _evict_raw_accessors(client)
+        for owner, _attr, _provider in targets:
+            _evict_raw_accessors(owner)
     return client
+
+
+#: The accessors provider SDKs build as ``cached_property`` — resolving one *before*
+#: ``instrument()`` snapshots the un-wrapped method behind it (see :func:`_evict_raw_accessors`).
+_CACHED_ACCESSORS = ("with_raw_response", "with_streaming_response")
+
+
+def _evict_raw_accessors(obj: Any) -> None:
+    """Drop a stale ``with_raw_response`` / ``with_streaming_response`` from the instance dict.
+
+    openai builds those as ``cached_property``, so an app that reaches for one *before*
+    ``instrument()`` freezes a wrapper around the **un-instrumented** method — and every call
+    through it is then invisible, with no error and no event (measured: zero ``LLMCall``s). Since
+    the cached value lives in the instance ``__dict__``, evicting it makes the next access rebuild
+    the accessor around the wrapped method. Duck-typed by name; no provider SDK is imported, and a
+    client that has no such attribute is untouched.
+
+    **Honest limit:** this fixes the next *access*. A reference the caller already stored in a local
+    is beyond reach and stays uninstrumented — wrap the client at construction.
+    """
+    try:
+        cache = vars(obj)
+    except TypeError:  # __slots__ / a C extension type with no instance dict
+        return
+    for name in _CACHED_ACCESSORS:
+        if name in cache:
+            with contextlib.suppress(Exception):
+                del cache[name]
 
 
 def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
@@ -303,6 +335,15 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
     completions = getattr(chat, "completions", None) if chat is not None else None
     if completions is not None and callable(getattr(completions, "create", None)):
         targets.append((completions, "create", "openai"))
+    # `chat.completions.parse(...)` — the Chat Completions structured-output entrypoint, and the
+    # twin of the `responses.parse` gap closed in 1.14.1. `langchain_openai` takes it on **every**
+    # `with_structured_output()` call over Chat Completions (`chat_models/base.py`, the
+    # `if "response_format" in payload` branch), so that whole branch reached nothing — no budget,
+    # no guard, no audit, no cassette. Like `responses.parse` it issues its own request rather than
+    # delegating to `create`, so wrapping both cannot double-count. `callable()`-gated for older
+    # SDKs.
+    if completions is not None and callable(getattr(completions, "parse", None)):
+        targets.append((completions, "parse", "openai"))
     responses = getattr(client, "responses", None)  # OpenAI Responses API
     if responses is not None and callable(getattr(responses, "create", None)):
         targets.append((responses, "create", "openai_responses"))
@@ -624,6 +665,12 @@ def _post(call: LLMCall, response: Any, provider: str, start: float) -> None:
         # extraction found nothing, so it turns None into a number, never a number into another.
         body = _raw_response_body(response)
         if body is not None:
+            # Publish the decoded payload for recorders. `metadata["response"]` below stays the
+            # object the SDK returned (the caller's contract), but an envelope owns the whole
+            # httpx response/client graph — walking it sent `cendor-cassette`'s serializer to the
+            # recursion limit and took the caller's own `create()` down with it. A recorder that
+            # sees this key should persist it instead.
+            call.metadata["response_body"] = body
             usage = _extract_usage(body, provider)
             if reported is None:
                 reported = _extract_reported_cost(body)
@@ -955,6 +1002,9 @@ def _proxy_stream(call: LLMCall, stream: Any, provider: str, start: float) -> An
     if provider == "bedrock_stream":
         proxy = _ProxyStream(call, _get(stream, "stream"), sp, start)
         return {**stream, "stream": proxy} if isinstance(stream, dict) else proxy
+    envelope = _stream_behind_envelope(stream, lambda s: _ProxyStream(call, s, sp, start))
+    if envelope is not None:
+        return envelope
     return _ProxyStream(call, stream, sp, start)
 
 
@@ -964,7 +1014,44 @@ def _aproxy_stream(call: LLMCall, stream: Any, provider: str, start: float) -> A
     if provider == "bedrock_stream":
         proxy = _AProxyStream(call, _get(stream, "stream"), sp, start)
         return {**stream, "stream": proxy} if isinstance(stream, dict) else proxy
+    envelope = _stream_behind_envelope(stream, lambda s: _AProxyStream(call, s, sp, start))
+    if envelope is not None:
+        return envelope
     return _AProxyStream(call, stream, sp, start)
+
+
+def _stream_behind_envelope(value: Any, make_proxy: Callable[[Any], Any]) -> Any | None:
+    """Handle a streamed call whose value is a **raw-response envelope**, not a stream.
+
+    ``client.chat.completions.with_raw_response.create(..., stream=True)`` — what
+    ``langchain_openai`` does when it streams — hands back an envelope; the stream itself is behind
+    ``envelope.parse()``. Wrapping the envelope as if it were the stream was wrong twice: iterating
+    it raised ``AttributeError: … has no attribute '__aiter__'`` **from inside cendor**, and the
+    working path (``parse()``) returned the SDK's own stream, so nothing was ever counted.
+
+    Instead the envelope is handed back untouched — the caller's contract — with ``parse()``
+    memoized and wrapped, so consuming the stream still emits exactly one ``LLMCall``. Returns
+    ``None`` (leaving the previous behaviour) for anything that is already iterable, is not an
+    envelope, or refuses the patch.
+    """
+    if hasattr(value, "__aiter__") or hasattr(value, "__iter__"):
+        return None  # an ordinary stream
+    original = getattr(value, "parse", None)
+    if _get(value, "http_response") is None or not callable(original):
+        return None  # not a raw-response envelope
+    proxy: list[Any] = []
+
+    @functools.wraps(original)
+    def parse(*args: Any, **kwargs: Any) -> Any:
+        if not proxy:  # memoized: parse() twice must not account the call twice
+            proxy.append(make_proxy(original(*args, **kwargs)))
+        return proxy[0]
+
+    try:
+        value.parse = parse  # type: ignore[method-assign]
+    except (AttributeError, TypeError):  # pragma: no cover - a frozen/slotted envelope
+        return None
+    return value
 
 
 def _replay_stream(call: LLMCall, recorded: Any, provider: str, start: float) -> Any:

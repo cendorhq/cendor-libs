@@ -2,6 +2,39 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.14.2] — 2026-07-27
+**The raw-response family, part two — the edges 1.14.1 left open.** Every case below was measured
+against the real `openai` SDK before it was fixed; the follow-up evidence pack is
+`plan/evidence-ripple-followup-2026-07-27/` in the workspace. No public API is added.
+
+### Fixed
+- **`chat.completions.parse` is captured.** The Chat Completions structured-output entrypoint was
+  not an instrumented target, so it emitted nothing at all — no budget, no guard, no audit, no
+  cassette. This is not a symmetry nicety: `langchain-openai` takes that exact branch on **every**
+  `with_structured_output()` call over Chat Completions (`chat_models/base.py`, the
+  `if "response_format" in payload` branch), so the most common structured-output idiom in the most
+  popular Python framework was invisible. Like `responses.parse` it POSTs its own request rather
+  than delegating to `create`, so wrapping both cannot double-count. `callable()`-gated for older SDKs.
+- **A raw-response call with `stream=True` no longer hands back a broken stream.**
+  `client.chat.completions.with_raw_response.create(..., stream=True)` — what `langchain-openai`
+  does when it streams — returns an *envelope*, not a stream. Core wrapped it as a stream anyway:
+  iterating raised `AttributeError: 'LegacyAPIResponse' object has no attribute '__aiter__'` **from
+  inside cendor**, and the working path (`envelope.parse()`) bypassed the proxy, so nothing was
+  counted. The envelope is now handed back untouched, with `parse()` memoized and wrapped, so
+  consuming the stream emits exactly one `LLMCall` with usage.
+- **A raw-response accessor resolved before `instrument()` no longer silences the call.** openai
+  builds `with_raw_response` / `with_streaming_response` as `cached_property`; an app that reached
+  for one first froze a wrapper around the **un-instrumented** method, and every call through it was
+  invisible — zero events, no error. `instrument()` now evicts those cached entries so the next
+  access rebuilds them around the wrapped method. **Honest limit:** a reference the caller already
+  stored in a local is beyond reach; wrap the client at construction.
+
+### Changed
+- `LLMCall.metadata["response_body"]` now carries the decoded payload whenever the captured value
+  was a raw-response envelope. `metadata["response"]` still holds exactly what the SDK returned;
+  recorders should prefer the body, because walking an envelope's object graph sent
+  `cendor-cassette`'s serializer to the recursion limit (fixed in `cendor-cassette` 1.1.1).
+
 ## [1.14.1] — 2026-07-27
 **A replayed call keeps its `await`, and a raw-response envelope keeps its cost.**
 

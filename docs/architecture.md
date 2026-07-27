@@ -233,7 +233,8 @@ and on the instrumented call, not on a vendor SDK.
   events join the stream too. Group a run with `core.trace("run-id")` for correlation.
 - **A framework owns the loop** (LangChain / LangGraph): the SDK-aligned integration point is the
   framework's **callback system**, not the inner client (which LangChain reaches via
-  `with_raw_response`, losing usage). Attach
+  `with_raw_response` — captured and priced since core 1.14.1/1.14.2, but its *streaming* branch
+  still bypasses `instrument()`). Attach
   [`cendor.core.langchain.CendorCallbackHandler`](providers.md#frameworks-langchain--langgraph) — it
   records usage/reasoning/tools and a root-run `trace_id` onto the same bus.
 - **A managed runtime owns the loop** (Foundry Agent Service, OpenAI Assistants/Agents): the provider

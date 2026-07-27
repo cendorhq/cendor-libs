@@ -32,7 +32,7 @@ Every entry — LLM or tool — has the same six fields, in this order:
 | 3 | `request_hash` | string | 64-char lowercase hex SHA-256 of the canonicalized **un-redacted** normalized request (see [Matching](#request-matching--hashing)). |
 | 4 | `request` | object | the **redacted** normalized request (only the normalized fields — never the full call kwargs). |
 | 5 | `response` | any | the **redacted**, JSON-coerced response. A single object normally; an **array of chunk objects** for a streamed response; a dict for mapping-style providers. |
-| 6 | `response_type` | string | `"object"` (SDK-like → replayed as an attribute namespace) or `"mapping"` (dict-like → replayed as a dict). **v2 only**; absent in v1, where readers default to `"object"`. |
+| 6 | `response_type` | string | `"object"` (SDK-like → replayed as an attribute namespace), `"mapping"` (dict-like → replayed as a dict), or `"envelope"` (a raw-response call → replayed as a value whose `parse()` returns the payload). **v2 only**; absent in v1, where readers default to `"object"`. A reader that does not know a marker **must** fall back to `"object"` — which is what makes `"envelope"` an additive change rather than a format version. |
 
 **The stored `request` is a normalized subset, not the raw call.** For an LLM call:
 

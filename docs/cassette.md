@@ -293,7 +293,12 @@ Cendor's optional self-hosted monitor, marks which calls ran offline for $0 from
   than fixed: a client whose method is a plain `def` that merely *returns* a coroutine is invisible to
   detection, so in a **pure-replay** process (no live call first) its replay still comes back
   synchronously. Real SDK clients and any `async def` are covered.
-- **A raw-response envelope records the envelope, not the payload.** If your code calls
-  `client.responses.with_raw_response.create(...)`, the value cendor sees — and therefore records — is
-  the envelope. Usage and cost are recovered from it (core ≥ 1.14.1), but a cassette of such a call is
-  not a faithful recording of the model's response; record through the normal entrypoint.
+- **A raw-response call records its payload and replays as an envelope** (cassette ≥ 1.1.1 with
+  core ≥ 1.14.2). If your code calls `client.responses.with_raw_response.create(...)` — Microsoft
+  Agent Framework's shape — or `client.chat.completions.with_raw_response.create(...)` —
+  `langchain-openai`'s — the recording holds the decoded payload, and the replay hands back a
+  `ReplayedEnvelope` so your next line, `raw.parse()`, still works offline. Below those versions,
+  recording such a call raised `RecursionError` **out of your own `create()`** and left an empty
+  cassette. **Honest limits:** a replay has no HTTP round trip, so `headers` is empty and
+  `http_response` is `None`; and a `with_streaming_response` envelope, whose body is never read, is
+  still not something cassette can record.

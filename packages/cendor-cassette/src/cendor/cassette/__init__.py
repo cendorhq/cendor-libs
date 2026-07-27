@@ -168,23 +168,48 @@ def _redactor(redact: bool | Callable[[Any], Any]) -> Callable[[Any], Any]:
 # --------------------------------------------------------------------------- serialization
 
 
-def _to_jsonable(obj: Any) -> Any:
+#: Depth cap for :func:`_to_jsonable`. Far deeper than any provider payload, far shallower than
+#: Python's recursion limit — so a hostile object graph is truncated rather than fatal.
+_MAX_JSON_DEPTH = 60
+
+
+def _safe_str(obj: Any) -> str:
+    """``str(obj)``, but a value whose own ``__repr__`` recurses cannot take the recorder with it —
+    which is the whole point of the depth cap it backs."""
+    try:
+        return str(obj)
+    except Exception:  # noqa: BLE001 - a hostile __repr__/__str__ is not the app's problem
+        return f"<{type(obj).__name__}>"
+
+
+def _to_jsonable(obj: Any, _depth: int = 0, _path: frozenset[int] = frozenset()) -> Any:
+    """Best-effort JSON projection of a provider value. **Total by construction.**
+
+    A recorder must never be able to crash the app it is recording. It could: walking ``vars()`` of
+    a provider SDK's *raw-response envelope* (openai's ``LegacyAPIResponse``, which holds the httpx
+    response, which holds the client, which holds the response) recursed to the stack limit and the
+    ``RecursionError`` propagated out of the caller's own ``create()``. The depth cap and the
+    cycle check below make that structurally impossible; a truncated node degrades to ``str(obj)``.
+    """
     if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
+    if _depth >= _MAX_JSON_DEPTH or id(obj) in _path:
+        return _safe_str(obj)  # too deep, or a reference cycle back onto this branch
+    path = _path | {id(obj)}
     if isinstance(obj, dict):
-        return {str(k): _to_jsonable(v) for k, v in obj.items()}
+        return {str(k): _to_jsonable(v, _depth + 1, path) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
-        return [_to_jsonable(v) for v in obj]
+        return [_to_jsonable(v, _depth + 1, path) for v in obj]
     for attr in ("model_dump", "dict", "to_dict"):
         method = getattr(obj, attr, None)
         if callable(method):
             try:
-                return _to_jsonable(method())
+                return _to_jsonable(method(), _depth + 1, path)
             except Exception:  # noqa: BLE001 - best-effort serialization
                 pass
     if hasattr(obj, "__dict__"):
-        return _to_jsonable(vars(obj))
-    return str(obj)
+        return _to_jsonable(vars(obj), _depth + 1, path)
+    return _safe_str(obj)
 
 
 def _reconstruct(obj: Any) -> Any:
@@ -196,20 +221,67 @@ def _reconstruct(obj: Any) -> Any:
     return obj
 
 
+class ReplayedEnvelope:
+    """A replayed **raw-response** call: the payload, reachable the way the SDK hands it over.
+
+    ``client.responses.with_raw_response.create(...)`` (Microsoft Agent Framework) and
+    ``client.chat.completions.with_raw_response.create(...)`` (``langchain_openai``) return an
+    envelope whose payload the caller reaches with ``.parse()``. A replay has to keep that shape,
+    or every offline run of those apps breaks on the line after the call.
+
+    There is no HTTP round trip behind a replay, so ``headers`` is empty and ``http_response`` is
+    ``None`` — an honest limit, not a stub pretending otherwise.
+    """
+
+    __slots__ = ("_payload", "headers", "http_response", "status_code")
+
+    def __init__(self, payload: Any) -> None:
+        self._payload = payload
+        self.headers: dict[str, str] = {}
+        self.http_response = None
+        self.status_code = 200
+
+    def parse(self) -> Any:
+        """The recorded payload, in the caller's original access style."""
+        return self._payload
+
+    def __repr__(self) -> str:
+        return f"ReplayedEnvelope({self._payload!r})"
+
+
 def _reconstruct_response(response: Any, response_type: str) -> Any:
     """Rebuild a recorded LLM response in the caller's original access style.
 
     ``"mapping"`` returns the stored dict unchanged (dict-access providers like Ollama/Bedrock);
-    ``"object"`` (the default, and what older v1 cassettes fall back to) rebuilds an
-    attribute-accessible namespace (OpenAI/Anthropic SDK objects)."""
+    ``"envelope"`` wraps the payload in a :class:`ReplayedEnvelope` (raw-response calls, where the
+    caller's next move is ``.parse()``); ``"object"`` (the default, and what an older reader or a v1
+    cassette falls back to) rebuilds an attribute-accessible namespace (OpenAI/Anthropic SDK
+    objects)."""
     if response_type == "mapping":
         return response
+    if response_type == "envelope":
+        return ReplayedEnvelope(_reconstruct(response))
     return _reconstruct(response)
 
 
 def _response_marker(raw: Any) -> str:
     """Whether a raw provider response is a mapping (dict access) or an SDK-like object."""
     return "mapping" if isinstance(raw, Mapping) else "object"
+
+
+def _llm_response_of(event: Any) -> tuple[Any, str]:
+    """What to persist for an ``LLMCall``, and how a replay must hand it back.
+
+    ``cendor-core`` publishes ``metadata["response_body"]`` when the value it captured was a
+    raw-response *envelope* — the decoded payload, instead of the envelope's own object graph.
+    Preferring it is what makes a MAF / LangChain call recordable at all (see
+    :func:`_to_jsonable`), and what lets the replay be an envelope rather than a bare namespace.
+    """
+    body = event.metadata.get("response_body")
+    if body is not None:
+        return body, "envelope"
+    raw = event.metadata.get("response")
+    return raw, _response_marker(raw)
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -315,9 +387,8 @@ def _recording(
         if _session_of(event) != session:
             return  # a concurrent using() block on the shared bus — not ours
         if isinstance(event, LLMCall):
-            raw = event.metadata.get("response")
+            raw, marker = _llm_response_of(event)
             response = redactor(_to_jsonable(raw))
-            marker = _response_marker(raw)
             kind = "llm"
         elif isinstance(event, ToolCall):
             response = redactor(_to_jsonable(event.result))
@@ -400,7 +471,7 @@ def _rerecording(
         if _session_of(event) != session:
             return  # a concurrent context's event — not ours
         if isinstance(event, LLMCall):
-            live = redactor(_to_jsonable(event.metadata.get("response")))
+            live = redactor(_to_jsonable(_llm_response_of(event)[0]))
             kind = "llm"
         elif isinstance(event, ToolCall):
             live = redactor(_to_jsonable(event.result))

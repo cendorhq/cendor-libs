@@ -586,24 +586,38 @@ default).
   an offline estimate (flagged `usage_estimated`). Bedrock's `converse_stream` entrypoint **is**
   captured — it is detected as an always-stream target and its usage rides the trailing `metadata`
   event (Python since core 1.10; TypeScript since `@cendor/core` 0.12.2).
-- **Some provider entrypoints bypass `instrument()` entirely (silent — no bus event):** OpenAI's
-  `chat.completions.parse`, Anthropic's `messages.stream()` helper and `tool_runner`, and the Batch
-  APIs are **not wrapped** — calls through them never reach the bus, so budgets/audit/tests don't see
-  them. Call the wrapped entrypoints (`chat.completions.create`, `responses.create`,
-  `messages.create`, or Anthropic `messages.create(stream=True)`) when you need governed calls.
+- **Some provider entrypoints bypass `instrument()` entirely (silent — no bus event):** Anthropic's
+  `messages.stream()` helper and `tool_runner`, and the Batch APIs, are **not wrapped** — calls
+  through them never reach the bus, so budgets/audit/tests don't see them. Call the wrapped
+  entrypoints (`chat.completions.create`, `responses.create`, `messages.create`, or Anthropic
+  `messages.create(stream=True)`) when you need governed calls. Reachability, measured: Semantic
+  Kernel's **Anthropic** connector streams through `messages.stream()`; nothing in Microsoft Agent
+  Framework, Semantic Kernel's OpenAI path, LangChain or the OpenAI Agents SDK touches `tool_runner`
+  or the Batch APIs.
   (Since 1.6.0 / 0.6.0, openai-shaped `embeddings.create` **is** wrapped — embedding calls emit an
   `LLMCall` with `metadata["embedding"] = True`, pre-flight budgets/guards apply, and the snapshot
-  prices the `text-embedding-*` ids; embeddings on non-openai-shaped clients remain uncaptured. Since
-  1.14.1 / 0.16.1, **`responses.parse` is wrapped too** — it issues its own request rather than
-  delegating to `create`, so a Responses structured-output call used to emit nothing at all.)
-- **A raw-response call is captured and priced, but records the envelope.**
+  prices the `text-embedding-*` ids; embeddings on non-openai-shaped clients remain uncaptured.)
+- **Structured output is captured in both languages — by different mechanisms.** In **Python**,
+  `responses.parse` (since 1.14.1) and `chat.completions.parse` (since 1.14.2) POST their own
+  requests, so each is its own instrumented target; before that a structured-output call emitted
+  nothing at all, which is how `langchain-openai`'s `with_structured_output()` went unseen. In
+  **TypeScript** those same names are *helpers built on* `create`
+  (`create(...)._thenUnwrap(...)`), so the wrapped `create` already captures them exactly once and
+  making them targets would double-count — they are deliberately not targets there.
+- **A raw-response call is captured and priced.**
   `client.responses.with_raw_response.create(...)` — the documented way to read response headers, and
   what Microsoft Agent Framework drives OpenAI through — hands back an envelope carrying the headers
   and the un-parsed body rather than a model. Usage and cost are recovered from that body since 1.14.1
-  (the entry is marked `metadata["raw_response_envelope"]`), but two limits remain: a
-  `with_streaming_response` envelope has never read its body, so it stays uncosted; and resolving
-  `with_raw_response` **before** `instrument()` snapshots the un-wrapped method, so the call is never
-  captured at all — wrap the client at construction, before anything reaches into it.
+  (the entry is marked `metadata["raw_response_envelope"]`), and since 1.14.2 the decoded payload is
+  published as `metadata["response_body"]` so recorders persist the payload rather than the envelope's
+  object graph. A **streamed** raw-response call (`with_raw_response.create(..., stream=True)`) hands
+  the envelope back untouched and counts the stream behind its `parse()`. One limit remains: a
+  `with_streaming_response` envelope has never read its body, so it stays **uncosted**.
+- **Wrap the client at construction, before anything reaches into it.** Resolving
+  `with_raw_response` / `with_streaming_response` *before* `instrument()` froze a wrapper around the
+  un-instrumented method and the call was never captured — silently. Since 1.14.2 `instrument()`
+  evicts those cached accessors so the next access rebuilds them correctly; a reference the caller
+  already stored in a local is still beyond reach, which is why the ordering advice stands.
 - **In TypeScript, `asResponse()` / `withResponse()` work on non-streamed live calls.** An instrumented
   client preserves the SDK's own promise accessors (since `@cendor/core` 0.16.1), so response headers
   stay reachable. A **streamed** call resolves to cendor's wrapped stream — it has to, to count chunks

@@ -97,9 +97,11 @@ snapshot (and it falls back to the bundled one offline).
 No — it's framework-agnostic. It wraps *around and inside* whatever loop you already have.
 
 ### Does Cendor work with LangChain / LangGraph?
-Yes — via the framework's **callback system**, which is the SDK-aligned integration point (not
-inner-client wrapping: LangChain calls the client through `with_raw_response`, so instrumenting it
-loses usage). Install `cendor-core[langchain]` and attach `CendorCallbackHandler`:
+Yes — via the framework's **callback system**, which is the SDK-aligned integration point. (An
+instrumented inner client now covers most of it: LangChain calls through `with_raw_response`, which
+core captures and prices from 1.14.1, and its structured-output branch from 1.14.2 — but its
+*streaming* branch still bypasses `instrument()`, so the handler is the complete answer.) Install
+`cendor-core[langchain]` and attach `CendorCallbackHandler`:
 
 <!-- tabs: lang -->
 <!-- tab: Python -->

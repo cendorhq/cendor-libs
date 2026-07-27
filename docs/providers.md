@@ -278,11 +278,15 @@ context internally, those two have nothing to shape while the other three still 
 
 ## Frameworks (LangChain / LangGraph)
 
-For a framework, the SDK-aligned integration point is its **callback system**, not client
-wrapping. `langchain_openai` calls `client.with_raw_response.create().parse()` (so an inner-client
-`instrument()` sees a usage-less `LegacyAPIResponse`) and consumes streams via a context manager —
-so **instrumenting LangChain's inner client is unsupported** (usage is lost; older builds even
-crashed on streaming). Use the callback handler instead:
+For a framework, the SDK-aligned integration point is its **callback system**, not client wrapping —
+and that recommendation is unchanged, though the reason has narrowed. `langchain_openai` reaches the
+client through `with_raw_response`: a plain call
+(`client.chat.completions.with_raw_response.create(...).parse()`) **is** captured and priced from
+`cendor-core` 1.14.1, and its structured-output branch
+(`chat.completions.with_raw_response.parse(...)`, taken whenever `response_format` is set) from
+1.14.2. What inner-client wrapping still does **not** see is the **streaming** branch, which reads
+the body through the envelope's own context manager. So use the callback handler: it is the only
+integration that covers every branch, and it carries the framework's `run_id` for correlation.
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
