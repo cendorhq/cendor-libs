@@ -46,3 +46,37 @@ def test_tampering_a_js_entry_is_detected(tmp_path: Path) -> None:
     bad.write_text("\n".join(lines) + "\n", encoding="utf-8")
     ok, _ = verify(str(bad), key=KEY)
     assert not ok
+
+
+# --------------------------------------------------------------------------------- D8 provenance
+#: A JS-written chain from BEFORE `format`/`producer` existed, kept verbatim and forever.
+#:
+#: This is the strongest backward-compatibility evidence available: a real file, produced by a real
+#: older writer, that must keep verifying unchanged. Synthetic "strip the fields back out" fixtures
+#: prove the arithmetic; this proves the actual bytes an older release put on disk. It is a GOLDEN
+#: file — never regenerate it. If it ever needs to change, the wire format broke.
+PRE_PROVENANCE_VECTOR = Path(__file__).parent / "vectors" / "js_written_chain_pre_provenance.jsonl"
+
+
+def test_pre_provenance_js_chain_still_verifies() -> None:
+    ok, detail = verify(str(PRE_PROVENANCE_VECTOR), key=KEY)
+    assert ok, f"a chain written before provenance existed must still verify: {detail}"
+    assert "7 entries" in detail
+
+
+def test_current_vector_carries_provenance_with_the_JS_producer() -> None:
+    """The live vector proves the two ports interoperate *while disagreeing about `producer`*.
+
+    `format` is identical across languages; `producer` is not, and must not be — they are separate
+    packages on independent version lines. Verification is unaffected because each side hashes the
+    bytes actually in the file, which is exactly what makes the differing field safe.
+    """
+    rows = [
+        json.loads(line)
+        for line in VECTOR.read_text(encoding="utf-8").splitlines()
+        if line.strip() and "_meta" not in line
+    ]
+    payload = rows[0]["payload"]
+    assert rows[0]["type"] == "audit_open"
+    assert payload["format"] == "acttrace-chain/1"  # the shared half
+    assert payload["producer"].startswith("@cendor/acttrace/")  # the JS half — NOT cendor-acttrace/

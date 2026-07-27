@@ -2,6 +2,34 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.14.0] - 2026-07-27
+
+### Added
+
+- **A chain names the format it implements and the library that opened it.** A new chain's
+  `audit_open` entry carries `format` (`acttrace-chain/1`) and `producer`
+  (`cendor-acttrace/<version>`), both **inside** the hashed payload — so they are part of the
+  tamper-evident chain and cannot be edited afterwards.
+
+  **Verification is unchanged.** The hashed body is still exactly `{seq, ts, type, payload}`, so
+  chains written before this release verify untouched and a file mixing old and new entries verifies
+  end to end. No new format version, no migration. (Promoting the version to a *top-level* entry
+  field would have changed the hashed body for every entry and invalidated every existing chain —
+  the spec's §8.8 has been rewritten to say so.)
+
+  Cendor never upgrades you automatically, partly so your evidence stays reproducible; evidence that
+  could not name what produced it undercut that argument.
+
+  Honest limits, documented in `docs/acttrace.md` and the spec: it is self-reported provenance inside
+  a tamper-evident chain, **not proof of origin** — a forged file can claim anything from the outset.
+  A *resume* writes no second `audit_open`, so a file names the version that **opened** it. And if
+  the version cannot be read, `producer` is **omitted rather than guessed**.
+
+  `producer` deliberately differs from the TypeScript port's (`@cendor/acttrace/<version>`) —
+  separate packages on independent version lines. Only `format` is identical across ports;
+  cross-language verification is unaffected because each side verifies the bytes in the file. A
+  **pre-provenance** conformance vector is now kept permanently as a backward-compatibility guard.
+
 ## [1.13.1] — 2026-07-27
 **Two live `AuditLog`s on one chain file are refused instead of silently corrupting it.**
 

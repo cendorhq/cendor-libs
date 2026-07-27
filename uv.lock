@@ -251,7 +251,7 @@ requires-dist = [{ name = "cendor-libs", editable = "packages/cendor-libs" }]
 
 [[package]]
 name = "cendor-acttrace"
-version = "1.13.1"
+version = "1.14.0"
 source = { editable = "packages/cendor-acttrace" }
 dependencies = [
     { name = "cendor-core" },

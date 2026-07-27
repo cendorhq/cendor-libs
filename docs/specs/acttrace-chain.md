@@ -125,6 +125,29 @@ is byte-identical across languages. A port must stamp them under the same condit
 6. **`NaN`/`Infinity`**: Python emits the literal tokens (invalid JSON); avoid non-finite floats in
    payloads or define explicit handling.
 7. **Unsigned = `""`, not `null`.** `_meta.sig` covers only four fields (§export header).
-8. **No in-band format version.** The wire format carries no `version` field today; consumers pin the
-   spec version (`acttrace-chain/1`) out of band. A future revision that adds an in-band version is a
-   breaking change and will bump this spec.
+8. **Provenance is in the `audit_open` payload, NOT at the top level of an entry.** A new chain's
+   opener carries `format` (the spec this writer implements, e.g. `"acttrace-chain/1"`) and
+   `producer` (`"<package>/<version>"`, e.g. `"cendor-acttrace/1.14.0"` or
+   `"@cendor/acttrace/3.1.0"`). Both are ordinary payload data, so the hashed body is still exactly
+   `{seq, ts, type, payload}` — **the hash formula did not change**, chains written before these
+   fields existed verify unchanged, and a file mixing old and new entries verifies end to end.
+
+   ⚠️ **Do not "improve" this by promoting the version to a top-level entry field.** That would put it
+   inside the hashed body for *every* entry, so `verify()` would recompute old entries with a formula
+   they were never written under, and **every chain in existence would fail**. An earlier draft of
+   this spec warned that an in-band version was necessarily a breaking change; that was true of the
+   top-level design, and is why the shipped one is payload-scoped.
+
+   Two consequences a reimplementation must match:
+   - `producer` **legitimately differs between languages** — the ports are separate packages on
+     independent version lines. Interoperability is unaffected because each side verifies the bytes
+     actually present in the file. Only `format` is required to be identical.
+   - `producer` is **omitted, never guessed**, when the version cannot be read (running from a source
+     tree with no installed distribution metadata, or a bundler that cannot resolve the manifest) —
+     the same "omitted when absent" rule as the correlation fields above. A version you are not sure
+     of does not belong inside signed evidence.
+
+   **Honest limit:** this is self-reported provenance inside a tamper-evident chain, not proof of
+   origin. It cannot be edited after the fact without breaking the chain, but a forged file can claim
+   anything from the start. And because a *resume* writes no second `audit_open`, a file names the
+   version that **opened** it, not every version that has appended to it.

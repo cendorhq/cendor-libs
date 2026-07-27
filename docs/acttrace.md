@@ -785,6 +785,15 @@ is an operational copy: `verify()` still runs on the hash-chained **file**, neve
   APM/SIEM for monitoring and alerting, but `verify()` only ever checks the hash-chained file. For a
   compliance record, retain the file (or a signed `export()` pack) — the mirror can lag or drop
   without weakening the chain. See [Observability](observability.md).
+- **The chain says what wrote it — self-reported, not proof of origin.** A new chain's `audit_open`
+  entry records `format` (the wire spec, `acttrace-chain/1`) and `producer` (the package and version
+  that opened it, e.g. `cendor-acttrace/1.14.0` — the TypeScript port writes `@cendor/acttrace/…`,
+  because they are separate packages on independent version lines). Both sit **inside** the hashed
+  payload, so they cannot be edited afterwards without breaking verification. Two honest limits: a
+  forged file can claim anything from the outset, and because a resume writes no second `audit_open`,
+  a file names the version that **opened** it, not every version that appended to it. If the version
+  cannot be read at all, `producer` is **omitted rather than guessed** — a version we are not sure of
+  does not belong in evidence. Chains written before these fields existed verify unchanged.
 - **One live writer per chain file.** A restart is fine: point a new `AuditLog` at the same path and it
   resumes the chain from the last on-disk entry — no new `audit_open`, and `verify()` spans the whole
   file. What does not work is **two logs writing one file at the same time**: each keeps its own head

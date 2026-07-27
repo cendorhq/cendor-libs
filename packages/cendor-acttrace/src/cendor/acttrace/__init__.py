@@ -88,6 +88,32 @@ __all__ = [
 
 GENESIS = "0" * 64
 
+#: The wire format this implementation writes, stamped into every new chain's ``audit_open`` payload
+#: so a file can name the spec it follows. Identical in the TypeScript port — the format is one
+#: contract, whatever the language. See ``docs/specs/acttrace-chain.md``.
+CHAIN_FORMAT = "acttrace-chain/1"
+
+#: The distribution whose version identifies the writer. Kept as a constant so the producer string
+#: cannot drift from the package that actually ships this code.
+_DIST = "cendor-acttrace"
+
+
+def _producer() -> str | None:
+    """``"<distribution>/<version>"`` for the running acttrace, or ``None`` if it cannot be read.
+
+    Returns None rather than guessing. This string goes inside signed, hash-chained evidence, and a
+    version we are not certain of is worse than no version at all — so an unknown producer is simply
+    OMITTED, following the format's existing rule for optional payload fields. Not knowable when
+    acttrace is run from a source tree with no installed distribution metadata.
+    """
+    try:
+        from importlib import metadata
+
+        return f"{_DIST}/{metadata.version(_DIST)}"
+    except Exception:  # pragma: no cover - defensive: metadata absent or unreadable
+        return None
+
+
 #: Chain files with a **live** :class:`AuditLog` writing to them in this process, keyed by resolved
 #: path. Two live logs on one path each hold their own head/seq and both auto-capture the same
 #: process-global bus event, so they interleave two chains into one file and ``verify()`` fails at
@@ -579,7 +605,17 @@ class AuditLog:
             # full file (the file is the source of truth for the complete chain).
             self._evicted_from_memory = len(prior) - len(self.entries)
         else:
-            self._append("audit_open", {"system": system, "risk_tier": risk_tier})
+            # Provenance rides INSIDE the payload, so it is hashed into the chain and cannot be
+            # edited after the fact. Payload data only — the hashed body is still exactly
+            # {seq, ts, type, payload}, which is why chains written before this release keep
+            # verifying and a mixed old/new file verifies end to end. `producer` is omitted when the
+            # version cannot be read (never invented). Only a NEW chain gets this: a
+            # resume writes no second audit_open, so a file names the version that OPENED it.
+            opened = {"system": system, "risk_tier": risk_tier, "format": CHAIN_FORMAT}
+            producer = _producer()
+            if producer:
+                opened["producer"] = producer
+            self._append("audit_open", opened)
         bus.subscribe(self._on_event)
         add_ambient_provider(_acttrace_ambient)  # GLR-6: capture the decision id pre-emit (F5)
 
