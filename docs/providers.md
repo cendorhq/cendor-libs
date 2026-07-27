@@ -4,7 +4,9 @@
 provider work the day they ship. It supports six providers directly — **OpenAI, Anthropic, Hugging
 Face, Google Gemini, AWS Bedrock, and Ollama** — an OpenTelemetry ingestion path for managed
 runtimes, and a callback handler for **LangChain / LangGraph** (see
-[Frameworks](#frameworks-langchain--langgraph)).
+[Frameworks](#frameworks-langchain--langgraph)). Per-provider setup ends with the case where your
+agent runs inside somebody else's **host process** — a [Microsoft 365 Agents SDK custom engine
+agent](#microsoft-365-agents-sdk-custom-engine-agent).
 
 ## How detection works
 
@@ -239,6 +241,287 @@ await client.chatCompletion({
 ```
 
 <!-- /tabs -->
+
+### Microsoft 365 Agents SDK (custom engine agent)
+
+Your agent runs inside **somebody else's host process** — and in this topology *you* still hold the
+model client, so it is ordinary library use. The toolkit tile says so itself: *"you manage
+orchestration and provide your own LLM."* That is exactly the boundary. Your process hosts
+`AgentApplication` behind `POST /api/messages`, and the model call inside your message handler is an
+ordinary provider-SDK call. Your call, your tokens, your bill, so `instrument()` and the six libraries
+govern it like any other call. There is nothing extra to install, and no `cendor-sdk` involved — the
+agent connects to Copilot, Teams and M365 Copilot as usual.
+
+> **Not to be confused with `FoundryAdapter`.** If you want cendor to *be* the endpoint — to own the
+> Activity request/reply shape — that is the SDK's `FoundryAdapter` integration
+> ([`/docs/sdk/interop`](/docs/sdk/interop#microsoft-365--foundry--publish-as-a-custom-engine-agent)). Here
+> the host already owns that plumbing, so you attach the governance envelope in your own handler and
+> `FoundryAdapter` is not used at all. Two separate integrations; pick by who owns the HTTP surface.
+
+Pick **Custom Engine Agent** in the toolkit's *New Project* menu (the **Teams Agents and Apps**
+bot/agent flavour is equivalent). A **Declarative Agent** is the opposite topology — Microsoft holds
+the model and bills you in Copilot Credits — so there is nothing for a token library to govern there.
+
+| Where | Library | What it does in the handler |
+|---|---|---|
+| on the client, once at startup | [core](core.md) `instrument()` | exact tokens, `Decimal` cost, provider + model, TTFT |
+| around the whole handler body | [tokenguard](tokenguard.md) budget scope | one fuse per turn, so a tool loop's N calls share it |
+| across turns, in the host's `TurnState` | tokenguard + your state | a cumulative session cap that survives turns |
+| before any spend | tokenguard `prices.estimate` | refuse a turn the remaining budget can't cover — zero provider calls |
+| mid-stream | budget `on_exceed="break"` | stop a streamed answer at the chunk where the allowance dies |
+| on `activity.text`, and on the reply | [guardrails](guardrails.md) | injection block + PII redaction in, disclosure gate out |
+| per turn | [acttrace](acttrace.md) `guard()` + `AuditLog` | hash-chained, `verify()`-able evidence + a data-policy gate |
+| the prompt | [contextkit](contextkit.md) + [squeeze](squeeze.md) | Teams history assembled *inside* a token budget |
+| the reply | your handler, ~3 lines | `channelData.cendor` = `trace_id` · `cost_usd` · usage · decisions |
+
+#### The handler
+
+One `activity("message")` handler, the governance inline. `client` is the instrumented provider
+client you built once at startup (`instrument(AsyncOpenAI())` / `instrument(new OpenAI())`).
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from decimal import Decimal
+from cendor.core import trace
+from cendor.guardrails import GuardrailTripped, evaluate_async
+from cendor.tokenguard import BudgetExceeded, budget, track
+
+SPEND = "ConversationState.cendor_spent_usd"   # scoped by the state CLASS name, not "conversation."
+CAP = Decimal("5.00")
+
+@AGENT_APP.activity("message")
+async def on_message(context, state):
+    conversation = context.activity.conversation.id
+    spent = Decimal(str(state.get_value(SPEND, lambda: None) or "0"))
+    if spent >= CAP:                                     # zero-spend refusal: no model call at all
+        await context.send_activity("This conversation has used its budget.")
+        return
+
+    # `evaluate_async` RAISES on a block — catching it is what turns a policy hit into YOUR wording
+    try:
+        text, decisions = await evaluate_async(INPUT_GATE, "input", context.activity.text)
+    except GuardrailTripped as tripped:
+        await context.send_activity("I can't process that message.")
+        return
+
+    # one trace id for the whole turn + one fuse around the whole body (tool loops share it)
+    with trace(f"{conversation}:{context.activity.id}"), track(conversation=conversation):
+        try:
+            with budget(usd=min(Decimal("0.05"), CAP - spent), on_exceed="block"):
+                resp = await client.chat.completions.create(model=MODEL, messages=messages)
+        except BudgetExceeded:
+            await context.send_activity("That would exceed what's left of this conversation's budget.")
+            return
+
+    state.set_value(SPEND, str(spent + turn_cost))        # Decimal as a string, never a float
+    await context.send_activity(resp.choices[0].message.content)
+```
+
+<!-- tab: TypeScript -->
+
+<!-- ts-check: skip -->
+
+```ts
+// Not typechecked by `check:docs`: it imports the Microsoft host SDK, which is deliberately not a
+// dependency of any cendor package. The cendor call shapes below are executed instead — the
+// cookbook's `m365-custom-engine-js` recipe runs this handler end-to-end in CI on Node 20 and 22.
+import { Decimal, trace } from '@cendor/core';   // core re-exports decimal.js's Decimal
+import { GuardrailTripped, evaluateAsync } from '@cendor/guardrails';
+import { BudgetExceeded, track, withBudget } from '@cendor/tokenguard';
+import { ActivityTypes } from '@microsoft/agents-activity';
+
+const CAP = new Decimal('5.00');
+
+app.onActivity(ActivityTypes.Message, async (context, state) => {
+  const conversation = context.activity.conversation.id;
+  const spent = new Decimal(String(state.conversation.cendorSpentUsd ?? '0'));
+  if (spent.gte(CAP)) {                             // zero-spend refusal: no model call at all
+    await context.sendActivity('This conversation has used its budget.');
+    return;
+  }
+
+  // `evaluateAsync` THROWS on a block — catching it is what turns a policy hit into YOUR wording
+  let text: unknown;
+  try {
+    ({ payload: text } = await evaluateAsync(INPUT_GATE, 'input', context.activity.text));
+  } catch (err) {
+    if (!(err instanceof GuardrailTripped)) throw err;
+    await context.sendActivity("I can't process that message.");
+    return;
+  }
+
+  // one trace id for the whole turn + one fuse around the whole body (tool loops share it)
+  await trace(`${conversation}:${context.activity.id}`, () =>
+    track({ conversation }, async () => {
+      try {
+        const resp = await withBudget(
+          { usd: Decimal.min(new Decimal('0.05'), CAP.minus(spent)).toString(), onExceed: 'block' },
+          () => client.chat.completions.create({ model: MODEL, messages }),
+        );
+        state.conversation.cendorSpentUsd = spent.plus(turnCost).toString();  // string, never a number
+        await context.sendActivity(resp.choices[0].message.content);
+      } catch (err) {
+        if (!(err instanceof BudgetExceeded)) throw err;
+        await context.sendActivity("That would exceed what's left of this conversation's budget.");
+      }
+    }),
+  );
+});
+
+// ⚠️ REQUIRED on this port, and its absence looks exactly like working code:
+app.onTurn('afterTurn', async () => true);
+```
+
+<!-- /tabs -->
+
+#### The five call shapes that bite
+
+Every one of these was measured against a real agent, and every one of them *looks* like working code.
+
+1. **`evaluate_async` / `evaluateAsync` RAISE on a block** — in **both** languages. They do not return
+   a decision list with `action="block"` in it. A handler that only reads the return value never sees
+   the block: it escapes as an unhandled turn error and the channel shows *"the agent hit an error"*
+   instead of your policy's refusal, which is indistinguishable from a broken agent.
+2. **A third exception type.** An `acttrace` `guard()` installed at startup raises `PolicyViolation`
+   from *inside* the provider call, at core's interceptor seam. With `BudgetExceeded` and
+   `GuardrailTripped` that makes three things a governed handler must expect. Report the finding's
+   **categories**, never the matched value.
+3. **`TurnState` paths differ between the ports.** Python scopes by the state **class name** —
+   `state.get_value("ConversationState.cendor_spent_usd")`; a lowercase `"conversation."` raises
+   `ValueError: Scope 'conversation' not found`. TypeScript is a property proxy:
+   `state.conversation.cendorSpentUsd`.
+4. **On TypeScript, `app.onTurn('afterTurn', async () => true)` is required.**
+   `AgentApplication.run()` calls `state.save()` only when an after-turn handler is registered and the
+   official nodejs quickstart registers none — so `TurnState` is never persisted, every turn reads a
+   `$0` ledger, and the cumulative cap silently never binds. Python's `run()` saves unconditionally, so
+   the Python handler needs nothing.
+5. **Pre-flight and mid-stream break are mutually exclusive on a streamed turn.** The estimate reserves
+   the *full* `max_output_tokens`, so any allowance small enough for the breaker to fire is already
+   smaller than the estimate — the turn would be refused before a chunk existed. A streamed turn's fuse
+   **is** the breaker; skip the pre-flight check there on purpose.
+
+The pure-cendor half of the ledger, with no host SDK in sight — this is the shape the estimate and the
+derived per-turn allowance take:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from decimal import Decimal
+from cendor.core import prices, tokens
+
+CAP, TURN_CAP = Decimal("5.00"), Decimal("0.05")
+spent = Decimal("4.97")                                  # read out of TurnState
+
+allowance = min(TURN_CAP, CAP - spent)                   # the derived remainder: $0.03 left
+estimate = prices.estimate("gpt-4o-mini", tokens.count("…the assembled prompt…", "gpt-4o-mini"), 48)
+affordable = estimate is None or estimate.amount <= allowance
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { Decimal, prices, tokens } from '@cendor/core';   // core re-exports decimal.js's Decimal
+
+const CAP = new Decimal('5.00');
+const TURN_CAP = new Decimal('0.05');
+const spent = new Decimal('4.97');                       // read out of TurnState
+
+const allowance = Decimal.min(TURN_CAP, CAP.minus(spent));   // the derived remainder: $0.03 left
+const estimate = prices.estimate('gpt-4o-mini', tokens.count('…the assembled prompt…', 'gpt-4o-mini'), {
+  outputTokens: 48,
+});
+const affordable = !estimate || new Decimal(estimate.amount.toString()).lte(allowance);
+```
+
+<!-- /tabs -->
+
+#### `$0` whole-agent CI
+
+Record the handler's model calls once, then replay **the entire agent** — HTTP → middleware → adapter
+→ your handler → the channel — with no key and no network. The scope goes around the **listener
+start**, not around whatever drives the turns: replay matches calls by a session id stamped from
+context-local storage, and a request-handler task inherits the context that was active when the server
+began listening. A scope around your driver never reaches the handler, and every call goes to the
+network instead.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor import cassette
+
+async def replay_the_whole_agent(start_listening, drive_turn, turns):
+    with cassette.using("agent.json", mode="replay"):     # around the LISTENER, not the driver
+        await start_listening()                           # aiohttp TCPSite.start() / your server's
+        for turn in turns:
+            await drive_turn(turn)
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { using } from '@cendor/cassette';
+
+export async function replayTheWholeAgent(
+  startListening: () => Promise<void>,
+  driveTurn: (text: string) => Promise<void>,
+  turns: string[],
+) {
+  await using('agent.json', { mode: 'replay' }, async () => {  // around the LISTENER, not the driver
+    await startListening();
+    for (const turn of turns) await driveTurn(turn);
+  });
+}
+```
+
+<!-- /tabs -->
+
+One scope per server lifetime also matters because the recorder writes the file on scope **exit** — a
+per-turn scope would leave only the last turn in it. Copy-paste versions of all of this, runnable
+offline: the cookbook's `agents/m365-custom-engine-py` and `agents/m365-custom-engine-js` recipes.
+
+#### Honest limits for this topology
+
+- **The meter cendor governs is the model meter** — which in this topology is the agent's entire AI
+  bill. Azure Bot Service messages, Copilot Credits and your hosting bill are Microsoft's or your
+  cloud's meters, and out of scope for any token library. (A self-hosted-RAG custom engine agent never
+  triggers the Copilot Credits meter.)
+- **Break stops spend at the chunk boundary; the channel keeps whatever it was already sent.** Queued
+  chunks cannot be unsent. Whether anything was visible depends on the channel and on how long the
+  answer ran — on a non-streaming channel the user simply sees the truncated answer plus the notice.
+  Never claim the visible text is cut at the exact budget token.
+- **The two ports disagree about which channels stream.** TypeScript's `StreamingResponse` treats
+  `emulator` as a streaming channel; Python's lists only `msteams`, webchat/directline and
+  `deliveryMode='stream'`. So validate a streamed break with `agentsplayground -c msteams` on Python.
+  Python's `end_stream()` and `wait_for_queue()` are also **coroutines** — un-awaited, the last chunk
+  never reaches the channel; on TypeScript `endStream()` drains the queue itself.
+- **A pre-flight refusal is not "you reached your cap."** The estimate over-reserves (measured 3.04×
+  on one real turn), so it can refuse while the ledger still shows headroom. Both refusals are correct
+  and zero-spend; word them differently.
+- **`channelData.cendor` is for the channel or your back end.** Whether a *client* surfaces it is
+  client-specific, and the M365 Agents Playground projects `channelData` away in its UI — it is still
+  on the wire, but don't tell people to look for it there. Assert it in a test, or log it.
+- **Evidence in a long-lived server.** Reopening one chain file after a restart **resumes** the chain
+  and `verify()` stays green. What acttrace refuses is two *live* `AuditLog`s on one file at once — the
+  second raises at construction. Rotate per process only if you have concurrent writers.
+- **Orchestration layers:** plain provider SDK ✅ · Semantic Kernel ✅ · LangChain ✅ (shipped adapter) ·
+  **Microsoft Agent Framework ✅ from `cendor-core` 1.14.1** — MAF 1.12.1 drives OpenAI through a
+  raw-response envelope, which 1.14.1 taught core to read, on both the plain and structured-output
+  branches; below that version usage and cost are `None`, so pin both versions in any claim. The Teams
+  SDK's **own** AI libraries are **deprecated by Microsoft** — use the provider-SDK pattern above.
+- **.NET / C# is an explicit non-goal.** There is no cendor .NET port, so the Visual Studio flavour of
+  the toolkit is not covered. Never assume otherwise.
+- **A governed agent emits two OpenTelemetry span families** — the hosting SDK's own `microsoft_agents`
+  spans alongside cendor's — and three with MAF. That is additive, not a conflict.
+- **A second, un-instrumented client is invisible.** Budgets, gates and evidence only see calls through
+  the client you wrapped; `cendor-init doctor` static-checks that. And the local posture the Playground
+  relies on — `/api/messages` with no configured credentials — is an **open relay** in production:
+  configure a real service connection before you deploy.
+- **Publishing through the Agents Toolkit is not supported in Microsoft 365 *Government* tenants.**
+  GCC / sovereign customers use the manual Azure Bot Service deploy path.
 
 ## Managed runtimes (OpenTelemetry ingestion)
 
