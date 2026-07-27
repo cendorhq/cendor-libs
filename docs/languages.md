@@ -59,6 +59,54 @@ These are tested by committed conformance vectors, not promised:
   parity, decimal-exact math.
 - **Bus events** (`LLMCall` / `ToolCall` / `Usage` / `Money`) share one schema across languages.
 
+## Versioning and support
+
+**SemVer, per package, independent per language.** Each library versions on its own cadence — a
+`cendor-core` release does not force a `cendor-squeeze` release — and the Python and TypeScript
+numbers are deliberately *not* coupled. `cendor-core 1.14` and `@cendor/core 1.0` can be the same
+capability. **The parity matrix below is the contract, not matching version numbers.**
+
+### What a version number promises
+
+| Change | You get | What we do |
+|---|---|---|
+| **Patch** (`1.2.3` → `1.2.4`) | a fix; nothing you call changes shape | released whenever it's ready |
+| **Minor** (`1.2` → `1.3`) | new capability, additive; existing calls keep working | batched into a release window, roughly every two weeks |
+| **Major** (`1.x` → `2.x`) | something was removed or changed shape | **announced at least 30 days ahead**, with a migration note |
+
+### Deprecation
+
+A public symbol **warns in-band for at least two minors** before it can be removed, and removal
+happens **only in a major**. In practice you see it before it can break you: a deprecated symbol is a
+compile error or an editor warning that names its replacement, not a silent behaviour change. This is
+the mechanism the [trap sheet](for-ai-assistants.md) documents — a decoy overload, a `@deprecated`
+redirect alias, or a module `__getattr__` that raises with the right shape in the message.
+
+### Support window
+
+- Fixes land on the **latest minor of the current major**.
+- When a new major ships, the previous major keeps getting **security fixes for 6 months**.
+- Older majors are not patched. `/releases` and
+  [`/releases.json`](https://cendor.ai/releases.json) always state what is current.
+
+### We never move you
+
+Cendor does not auto-upgrade, does not check for updates at runtime, and opens no socket you did not
+ask for. Your package manager owns your versions — see
+[Staying up to date](getting-started.md#staying-up-to-date). A governance library that quietly changed
+what it blocks under a running system would be the opposite of useful, and an audit trail you cannot
+tie to a known version is worth less as evidence.
+
+> **Why `@cendor/*` went to 1.0** — and why one package is `3.x`. The TypeScript port spent its
+> pre-1.0 life on `0.x`, where **a caret never crosses a minor**: `^0.15.0` will not accept `0.16.0`.
+> That made every `@cendor/core` minor fragment the family until each sibling was republished, and two
+> resolved copies of `@cendor/core` means two event buses — cross-library cooperation stops with no
+> error at all. At `1.x` a caret spans the whole major, exactly like Python's `>=1,<2`, and that entire
+> class of failure disappears. **1.0.0 is a stability declaration, not a breaking change** — no API
+> moved, so there is no migration. `@cendor/contextkit` was already past 1.0 (it took an accidental
+> major years earlier when a peer range widened), so it continues from where it was rather than
+> counting backwards.
+
 ## Parity matrix — libraries
 
 Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported.
