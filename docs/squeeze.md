@@ -9,6 +9,7 @@ content-aware: each type is routed to a purpose-built, deterministic compressor.
 
 ```bash
 pip install cendor-squeeze
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 <!-- tab: TypeScript -->

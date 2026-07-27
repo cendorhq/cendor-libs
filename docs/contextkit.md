@@ -11,6 +11,7 @@ dropped.
 ```bash
 pip install cendor-contextkit
 pip install "cendor-contextkit[squeeze]"   # enable evict="compress"
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 <!-- tab: TypeScript -->

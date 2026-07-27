@@ -9,6 +9,7 @@ fixture layer beneath your eval platform.
 
 ```bash
 pip install cendor-cassette
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 <!-- tab: TypeScript -->

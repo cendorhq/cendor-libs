@@ -9,6 +9,7 @@ no infrastructure.
 
 ```bash
 pip install cendor-tokenguard
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 <!-- tab: TypeScript -->

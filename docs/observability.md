@@ -48,6 +48,7 @@ already pointed a pipeline.
 
 ```bash
 pip install "cendor-core[otel]"        # opentelemetry-api + opentelemetry-sdk
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 # + your backend's distro/exporter, e.g.:
 pip install azure-monitor-opentelemetry
 ```

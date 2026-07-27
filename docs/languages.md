@@ -13,6 +13,7 @@ fixtures; the Python CI verifies a JS-written audit chain).
 
 ```bash
 pip install cendor-libs        # the whole stack; `cendor` is an alias
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 ```python

@@ -145,6 +145,33 @@ I/O). See [acttrace → Long-running logs](acttrace.md#long-running-logs-max_ent
 Yes. Each tool works standalone and pulls `cendor-core` transitively. Use `pip install cendor-libs`
 (or its `cendor` alias) only if you want the whole stack.
 
+### Does Cendor auto-upgrade, or tell me when a new version is out?
+**No, and deliberately.** No Cendor library checks for updates, phones home, or opens a socket you did
+not ask for. Your package manager owns your versions.
+
+That is a product decision, not a missing feature. An upgrade changes what your budget refuses, what
+your guardrail blocks, and what your audit chain records — silently changing that under a running
+system would be the opposite of useful. And evidence you cannot tie to a known version is worth less
+as evidence.
+
+What we do instead:
+
+- **SemVer + a changelog per package**, so a version number tells you what you are getting.
+- **A machine-readable feed** at [`cendor.ai/releases.json`](https://cendor.ai/releases.json) (the
+  human page is [/releases](https://cendor.ai/releases)). Fields are only ever added.
+- **`doctor`**, which tells you what is behind when you ask —
+  `uvx cendor-init doctor` offline, or `--online` against the live feed.
+- **Deprecations warn in-band for at least two minors** before anything is removed, and removals only
+  happen in a major. You will see it in your editor and your logs before it can break you.
+
+For teams, the normal tools are the right answer: `pip list --outdated`, `uv lock --upgrade`,
+`npm outdated`, or a grouped Renovate/Dependabot rule — there is a copy-paste config in
+[Assistant + tooling setup](assistant-init.md#keeping-cendor-up-to-date).
+
+> **Watch the lockfile.** A wide range (`cendor-core>=1.0,<2.0`) looks healthy while a `uv.lock` or
+> `package-lock.json` beside it pins something years old, and the build stays green the whole time.
+> `doctor` names the lock when the lock is the constraint.
+
 ### Does it secure my secrets?
 `cassette` and `acttrace` redact emails, `sk-` keys (including the hyphenated `sk-ant-`/`sk-proj-`
 forms), AWS and Google API keys, JWTs, and bearer tokens by default before writing (cassettes and

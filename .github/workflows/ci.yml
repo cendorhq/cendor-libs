@@ -26,6 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      # GATE — the lockfile must already match pyproject. `uv sync` alone SILENTLY UPDATES the lock,
+      # so a version bump committed without re-locking never fails anything: measured 2026-07-27, the
+      # committed uv.lock still said core 1.14.1 / cassette 1.1.0 / guardrails 1.6.0 while the
+      # pyprojects had been bumped to 1.14.2 / 1.1.1 / 1.6.1 two commits earlier. `--check` turns that
+      # into a red build instead of a diff someone notices later.
+      - name: lockfile is in step with pyproject
+        run: uv lock --check
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -103,3 +110,25 @@ jobs:
           python -m venv .smoke
           .smoke/bin/pip install --no-index --find-links dist cendor-libs
           .smoke/bin/python -c "import cendor.core, cendor.tokenguard, cendor.contextkit, cendor.squeeze, cendor.cassette, cendor.acttrace, cendor.guardrails; print('import ok')"
+      # GATE G6 — the same thing again, with UV'S INSTALLER.
+      #
+      # The step above proves *pip* can lay eight distributions into one PEP 420 `cendor.*` namespace.
+      # It does not prove uv can: uv ships its own installer (not a pip wrapper) and defaults to
+      # hardlink/clone install modes, so the on-disk result is produced by different code. Cardinal
+      # rule 1 — never a top-level `cendor/__init__.py` — is the blast radius for the entire stack,
+      # and uv is now a documented, first-class way to install Cendor (`uv add cendor-libs`), so the
+      # namespace has to be asserted under both installers or we are only half-checking it.
+      #
+      # Deliberately also installs the à-la-carte shape: `cendor-libs` pulls everything through one
+      # resolve, whereas two separate installs into the same environment is the case where a stray
+      # top-level __init__.py would actually shadow a sibling.
+      - name: G6 — install from local wheels with uv and import the namespace
+        run: |
+          uv venv .smoke-uv --python ${{ matrix.python }}
+          uv pip install --python .smoke-uv --no-index --find-links dist cendor-libs
+          .smoke-uv/bin/python -c "import cendor.core, cendor.tokenguard, cendor.contextkit, cendor.squeeze, cendor.cassette, cendor.acttrace, cendor.guardrails; print('uv install: import ok')"
+          # à la carte, two resolves into one env
+          uv venv .smoke-uv2 --python ${{ matrix.python }}
+          uv pip install --python .smoke-uv2 --no-index --find-links dist cendor-tokenguard
+          uv pip install --python .smoke-uv2 --no-index --find-links dist cendor-acttrace
+          .smoke-uv2/bin/python -c "import cendor.tokenguard, cendor.acttrace, cendor.core; print('uv à la carte: import ok')"

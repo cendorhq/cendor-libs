@@ -14,6 +14,7 @@ a hash chain you can verify offline, not from a server: no database, no infrastr
 
 ```bash
 pip install cendor-acttrace
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 <!-- tab: TypeScript -->

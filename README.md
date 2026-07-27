@@ -124,6 +124,7 @@ below is directional — timing rows vary by machine.
 ```bash
 pip install cendor-libs        # the whole stack  (`cendor` is a brand alias for it)
 pip install cendor-tokenguard  # or just one piece (pulls core in transitively)
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 All packages share the `cendor.*` import namespace (PEP 420).

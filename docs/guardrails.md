@@ -19,6 +19,7 @@ stack writes to.
 
 ```bash
 pip install cendor-guardrails
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 <!-- tab: TypeScript -->

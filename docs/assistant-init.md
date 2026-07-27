@@ -63,7 +63,8 @@ works in CI:
 | **Provider deps** | a provider SDK your code imports but hasn't installed/declared (Cendor never pulls one for you — they're optional extras) |
 | **`instrument()` once** | Cendor is imported but the client is never wrapped (nothing is observed) |
 | **Money** | a price/cost coerced to `float` / `number` (it should stay `Decimal` / `decimal.js`) |
-| **Versions** | an installed/pinned `cendor-*` / `@cendor/*` version trails the latest release (an offline hint from a bundled snapshot — the live truth is [/releases](https://cendor.ai/releases)) |
+| **Versions** | an installed/pinned `cendor-*` / `@cendor/*` version trails the latest release |
+| **Lockfiles** | a `uv.lock` / `package-lock.json` / `pnpm-lock.yaml` pinning Cendor below the latest — **the range is not always the constraint**, and a lock keeps a build green while it silently stays behind |
 
 ### In CI
 
@@ -75,11 +76,74 @@ npx @cendor/init doctor     # Node
 uvx cendor-init doctor      # Python
 ```
 
+## Keeping Cendor up to date
+
+**Cendor never upgrades itself, and never checks for updates at runtime.** No library opens a socket
+you did not ask for. Your package manager owns your versions — a governance library that changed what
+it blocks under a running system would be the opposite of useful, and an audit trail you cannot tie to
+a known version is worth less.
+
+So the tooling checks only when *you* ask:
+
+```bash
+uvx cendor-init doctor            # offline: compares against a snapshot bundled in the CLI
+uvx cendor-init doctor --online   # live: reads https://cendor.ai/releases.json
+```
+
+`--online` is opt-in for a reason: without it there is **no network call at all**. Use it in CI, where
+the CLI itself is usually pinned and the bundled snapshot can be arbitrarily old. If the feed is
+unreachable, `doctor` says so and falls back to the snapshot rather than failing — being offline is
+not a wiring problem.
+
+### Let your bot do it
+
+The honest answer for a team is the one you already use. `cendor-*` and `@cendor/*` are ordinary
+packages; point Renovate or Dependabot at them and group them so the whole family moves together —
+which matters more than usual on npm, because two copies of `@cendor/core` means two event buses and
+the libraries stop cooperating with no error at all.
+
+```json
+// renovate.json — group the whole Cendor family into ONE PR
+{
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "groupName": "cendor",
+      "matchPackageNames": ["/^@cendor//", "/^cendor(-|$)/"],
+      "semanticCommitType": "chore"
+    }
+  ]
+}
+```
+
+```yaml
+# .github/dependabot.yml — same idea, both ecosystems
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      cendor: { patterns: ["@cendor/*"] }
+  - package-ecosystem: pip
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      cendor: { patterns: ["cendor-*", "cendor"] }
+```
+
+Machine-readable current versions live at
+**[`cendor.ai/releases.json`](https://cendor.ai/releases.json)** (the human page is
+[/releases](https://cendor.ai/releases)). Fields are only ever added, never renamed or removed.
+
 ## Honest limits
 
 - `init` writes **rules files and config**, and can scaffold a starter — it does **not** install
   Cendor or a provider SDK for you (those stay your explicit choice). It makes no network call.
-- `doctor`'s version check is an **offline hint** from a bundled snapshot; it can lag a very recent
-  release. The live source of truth is [/releases](https://cendor.ai/releases).
+- `doctor`'s version check is an **offline hint** from a bundled snapshot unless you pass `--online`;
+  the snapshot can lag a very recent release. The live source of truth is
+  [/releases](https://cendor.ai/releases) / [/releases.json](https://cendor.ai/releases.json).
+- The lockfile check reads the lock as **text** — it reports what is pinned, it does not resolve. It
+  will not tell you *why* a resolver chose a version, only that the pin is behind.
 - The rules `init` writes are a static snapshot — for a live lookup use the [MCP
   server](assistant-mcp.md) (agent mode) or the types shipped in every package. All three stack.

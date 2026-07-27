@@ -22,6 +22,7 @@ the MCP config, and scaffolds a working `instrument()` call. Offline, no key. A 
 pip install cendor-libs         # the whole stack (umbrella; `cendor` is an alias for it)
 # — or pick à la carte; each pulls cendor-core transitively —
 pip install cendor-tokenguard cendor-contextkit
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 Exact token counting ships by default (`tiktoken` is a required dependency of `cendor-core`).
@@ -44,6 +45,44 @@ ESM-only. Provider SDKs (`openai`, `@anthropic-ai/sdk`) are peer dependencies �
 you call. Token counting uses `js-tiktoken` (bundled), so counts match Python exactly.
 
 <!-- /tabs -->
+
+### Staying up to date
+
+**Cendor never upgrades itself.** No library checks for updates, phones home, or opens a socket you
+did not ask for — your package manager owns your versions, and a governance library that changed what
+it blocks under a running system would be the opposite of useful.
+
+That means **a lockfile pins you until you move it**, which is easy to forget:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```bash
+pip list --outdated                  # what's behind
+uv lock --upgrade                    # move a uv project's lock to the current shelf
+uvx cendor-init doctor               # offline check against a bundled snapshot
+uvx cendor-init doctor --online      # check against https://cendor.ai/releases.json
+```
+
+<!-- tab: TypeScript -->
+
+```bash
+npm outdated                         # what's behind
+npm update                           # move within your declared ranges
+npx @cendor/init doctor              # offline check against a bundled snapshot
+npx @cendor/init doctor --online     # check against https://cendor.ai/releases.json
+```
+
+<!-- /tabs -->
+
+> **A caret is not enough on npm.** `@cendor/*` is pre-1.0, and a `^0.x` range never crosses a minor —
+> so `^0.15.0` will not pick up `0.16.0`, and a stale pin keeps working while quietly staying a minor
+> behind. **Bump the whole `@cendor/*` set together**: two copies of `@cendor/core` means two event
+> buses, and the libraries stop cooperating with no error at all.
+
+Machine-readable current versions: **[`cendor.ai/releases.json`](https://cendor.ai/releases.json)**
+(the human page is [/releases](https://cendor.ai/releases)). For teams, point Renovate or Dependabot
+at it — see [Assistant + tooling setup](assistant-init.md#keeping-cendor-up-to-date).
 
 ## 2. The one idea: instrument once
 

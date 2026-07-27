@@ -120,6 +120,7 @@ Python. The full feature split is in [Languages & parity](languages.md).
 ```bash
 pip install cendor-libs       # the whole stack (`cendor` is an alias)
 pip install cendor-tokenguard # or any single tool (pulls cendor-core transitively)
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 Every package imports under the `cendor.*` namespace.

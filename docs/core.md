@@ -9,6 +9,7 @@ dependency of the whole stack. You rarely install it directly; it arrives transi
 
 ```bash
 pip install cendor-core                # exact token counts by default — tiktoken ships with it
+# Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
 <!-- tab: TypeScript -->
