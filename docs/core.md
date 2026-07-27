@@ -618,10 +618,14 @@ default).
   un-instrumented method and the call was never captured — silently. Since 1.14.2 `instrument()`
   evicts those cached accessors so the next access rebuilds them correctly; a reference the caller
   already stored in a local is still beyond reach, which is why the ordering advice stands.
-- **In TypeScript, `asResponse()` / `withResponse()` work on non-streamed live calls.** An instrumented
-  client preserves the SDK's own promise accessors (since `@cendor/core` 0.16.1), so response headers
-  stay reachable. A **streamed** call resolves to cendor's wrapped stream — it has to, to count chunks
-  — and a **replayed** call has no HTTP response, so neither accessor is available there.
+- **In TypeScript, `asResponse()` / `withResponse()` work on any live call, streamed included.** An
+  instrumented client preserves the SDK's own promise accessors (since `@cendor/core` 0.16.1), so
+  response headers stay reachable. On a **streamed** call (since 0.16.2) `withResponse()` returns the
+  SDK's `response` with cendor's counting stream as `data` — the SDK's raw stream would iterate
+  uncounted. That is not cosmetic: `anthropic`'s own `messages.stream()` helper is built on
+  `create({…, stream: true}).withResponse()`, so below 0.16.2 instrumenting an Anthropic client made
+  the SDK's streaming helper **throw** `withResponse is not a function`. A **replayed** call has no
+  HTTP response, so neither accessor is available there.
 - **`refresh()` never reaches a running service or needs an account** — it fetches static JSON
   over http(s), maps it in memory, and falls back to the bundled snapshot. AWS/GCP catalogs
   need credentials/SDKs and are intentionally out of core (bring your own `mapper=`).
