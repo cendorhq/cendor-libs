@@ -1008,6 +1008,14 @@ published, `prompt_guard` is described only as a *prompt-injection classifier ad
   (`with_raw_response.create(…)` — Microsoft Agent Framework's shape and `langchain-openai`'s) is
   gated too from `cendor-guardrails` 1.6.1 with `cendor-core` ≥ 1.14.2; below those versions the
   extractor saw only the envelope and the stage silently skipped, so banned text was delivered.
+- ⚠️ **Known gap (TypeScript): a response consumed through an SDK *helper method* escapes the
+  standalone output stage.** `openai-node`'s `responses.parse` / `chat.completions.parse` are built
+  as `create(...)._thenUnwrap(...)`; measured, the same response that is **blocked** when awaited
+  directly **resolves** when reached that way — so a `withStructuredOutput()` call can deliver
+  banned text. Reproducer and status:
+  `plan/evidence-ripple-followup-2026-07-27/probe_n6_guardrail_helper.mjs`. Until it is closed, gate
+  structured-output responses with the SDK's in-loop output stage, or evaluate the parsed value
+  yourself with `apply(...)`. Python is unaffected.
 - **PII/secret detection isn't a built-in here** — one detection engine, kept in `acttrace`. Bridge
   it with `rules.custom` + `acttrace.scan`/`redact`, or use the SDK's ready-made `rules.pii()` /
   `secrets()` / `entropy()`. Coverage is exactly acttrace's catalogue (measured per-category on a
