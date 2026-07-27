@@ -65,3 +65,16 @@ Typed public API · tests that hit no network · README with a one-line killer m
 - Don't add agent-orchestration logic (loops, handoff, provider normalization) here — that's `cendor-sdk` (rule 7).
 - Don't claim regulatory compliance anywhere.
 - Don't add a `Co-Authored-By` trailer to git commits.
+
+## Versioning — the org standard (see the workspace `CLAUDE.md`)
+
+1. **A MAJOR bump needs Raghav's explicit approval. Never autonomous.** Propose it, say what breaks,
+   wait. **Minor and patch need no approval** — ship them. Enforced by
+   `node scripts/check-major-bump.mjs` (in CI and in `verify-hold`), which reads an in-band
+   `Approved-Major:` line in the changeset, or an `APPROVED-MAJOR` file listing the exact version.
+2. **All libraries in one language share ONE major** — `@cendor/*` move together, `cendor-*` move
+   together. Minors and patches stay independent per package.
+3. **Majors are NOT coupled across languages.** The parity matrix is the contract, not matching
+   numbers.
+4. **Use minors.** A new capability is a **minor**; a fix is a **patch**. Do not drift into
+   patch-patch-patch-then-a-surprise-major — the version number has to carry information.
