@@ -178,6 +178,28 @@ forms), AWS and Google API keys, JWTs, and bearer tokens by default before writi
 audit logs get committed/exported). Redaction is a best-effort regex safety net, not a guarantee —
 keep real secrets out of prompts and inputs.
 
+### Which versions are supported, and for how long?
+**Fixes land on the latest minor of the current major.** If you are on `1.4.x` and the current release
+is `1.7.x`, the fix goes into a `1.7.x` patch — upgrading within a major is designed to be
+uneventful, because a caret or `>=1,<2` range already spans it.
+
+**When a new major ships, the previous one gets security backports for six months.** Only security
+fixes, no features and no behaviour changes, and each one is a patch on that older major's latest
+minor. After six months the previous major is end-of-life: it keeps working and stays installable —
+we do not unpublish releases — but it stops receiving fixes.
+
+Two things worth saying plainly, because they are the honest shape of a project this size:
+
+- **This is a support *window*, not a response-time commitment.** There is no SLA, no paid tier, and
+  no support contract to buy. It tells you which branch a fix will appear on, not how fast.
+- **Majors are not coupled across languages.** `cendor-*` on PyPI and `@cendor/*` on npm move majors
+  independently, so each family's window is counted from its own major release. The
+  [parity matrix](languages.md) is the contract, not matching version numbers.
+
+Within a language, all the libraries share one major, so "the current major" is a single number you
+can check on [/releases](https://cendor.ai/releases) — or ask `doctor`, which will tell you what is
+behind.
+
 ### Does acttrace make me "EU AI Act compliant"?
 No. It produces **evidence to support** compliance (record-keeping, human-oversight events,
 tamper-evidence) — it is not legal advice or a guarantee, and the control mappings are starting
