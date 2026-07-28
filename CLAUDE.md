@@ -1,6 +1,6 @@
 # CLAUDE.md — cendor
 
-Project **constitution**. Always in effect. Locked decisions → `MEMORY.md` (a local-only, gitignored working file — not committed). Task playbooks → `SKILLS.md` and `.claude/skills/`. Deep design → `docs/`.
+Project **constitution**. Always in effect. Task playbooks → `SKILLS.md` and `.claude/skills/`. Deep design → `docs/`. Testing strategy → `TESTING.md`. Release runbook → `PUBLISHING.md`. Per-package history → `CHANGELOG.md` (an index over `packages/*/CHANGELOG.md`). Contributing, security reporting, and conduct → `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`. (Maintainers also keep an uncommitted local scratch file for in-flight decisions; nothing in this repo depends on it.)
 
 ## What this is
 Cendor — *"Production plumbing for LLM applications."* A monorepo publishing a family of small, composable Python libraries that sit **beneath** agent frameworks: context, cost, testing, governance. Framework-agnostic. Local-first. Apache-2.0.
@@ -19,7 +19,8 @@ Lifecycle of one governed call: `contextkit` (assemble) → `squeeze` (compress)
 ## Repo layout
 ```
 cendor-libs/                  # repo root (cendorhq/cendor-libs)
-├── CLAUDE.md  SKILLS.md  README.md  LICENSE   # MEMORY.md is a local-only, gitignored working file
+├── CLAUDE.md  SKILLS.md  README.md  TESTING.md  PUBLISHING.md  CHANGELOG.md
+├── CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  INTEGRATION.md  LICENSE  NOTICE
 ├── pyproject.toml                 # uv workspace root
 ├── .github/workflows/             # ci.yml, release.yml
 ├── .claude/skills/                # project skills (new-package, namespace-guard, ...)
@@ -66,12 +67,15 @@ Typed public API · tests that hit no network · README with a one-line killer m
 - Don't claim regulatory compliance anywhere.
 - Don't add a `Co-Authored-By` trailer to git commits.
 
-## Versioning — the org standard (see the workspace `CLAUDE.md`)
+## Versioning — the org standard
 
-1. **A MAJOR bump needs Raghav's explicit approval. Never autonomous.** Propose it, say what breaks,
-   wait. **Minor and patch need no approval** — ship them. Enforced by
-   `node scripts/check-major-bump.mjs` (in CI and in `verify-hold`), which reads an in-band
-   `Approved-Major:` line in the changeset, or an `APPROVED-MAJOR` file listing the exact version.
+The same rules apply to every Cendor repo, in both languages; this section is the copy that governs
+**this** repo.
+
+1. **A MAJOR bump needs the maintainer's explicit approval (Raghav). Never autonomous.** Propose it,
+   say what breaks, wait. **Minor and patch need no approval** — ship them. Enforced by a
+   maintainer-side pre-release gate (an internal cross-repo check, run outside this repo) that
+   refuses any version crossing a major unless an `APPROVED-MAJOR` marker names the exact version.
 2. **All libraries in one language share ONE major** — `@cendor/*` move together, `cendor-*` move
    together. Minors and patches stay independent per package.
 3. **Majors are NOT coupled across languages.** The parity matrix is the contract, not matching
