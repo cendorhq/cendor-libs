@@ -5,22 +5,49 @@
   </picture>
 </p>
 
-**Production plumbing for LLM applications.**
+<!-- The header block is centred as one unit, to line up with the banner above. That means HTML, not
+     markdown: GitHub does not process markdown inside an HTML block, so `**bold**` and `[a](b)` would
+     render literally inside a <p align="center">. Verified against the GitHub markdown API. -->
 
-Composable Python primitives for context, cost, testing, and governance — the layer beneath your LLM app.
+<p align="center">
+  <strong>Production plumbing for LLM applications.</strong>
+</p>
 
-![PyPI](https://img.shields.io/pypi/v/cendor-libs) [![CI](https://github.com/cendorhq/cendor-libs/actions/workflows/ci.yml/badge.svg)](https://github.com/cendorhq/cendor-libs/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/python-3.11+-blue) ![License](https://img.shields.io/badge/license-Apache_2.0-blue) [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) ![types: mypy](https://img.shields.io/badge/types-mypy-blue)
+<p align="center">
+  Composable Python primitives for context, cost, testing, and governance — the layer beneath your LLM app.
+</p>
+
+<p align="center">
+  <img alt="PyPI" src="https://img.shields.io/pypi/v/cendor-libs">
+  <a href="https://github.com/cendorhq/cendor-libs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/cendorhq/cendor-libs/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-blue">
+  <a href="https://github.com/astral-sh/ruff"><img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json"></a>
+  <img alt="types: mypy" src="https://img.shields.io/badge/types-mypy-blue">
+</p>
 
 <!-- cendor:downloads:start — self-hosted badges from cendor.ai (no third party in the render path).
      The numbers live inside the SVGs, regenerated daily from the committed ledger, so this file
      never goes stale. PyPI excludes index mirrors; npm publishes no mirror filter, which is why the
      two are shown separately and never summed. Method: https://cendor.ai/downloads -->
-[![PyPI · cendor-*](https://cendor.ai/badge/downloads/cendor-libs.svg)](https://cendor.ai/downloads) [![all Cendor · PyPI](https://cendor.ai/badge/downloads/pypi.svg)](https://cendor.ai/downloads) [![all Cendor · npm](https://cendor.ai/badge/downloads/npm.svg)](https://cendor.ai/downloads)
+<p align="center">
+  <a href="https://cendor.ai/downloads"><img alt="PyPI · cendor-*" src="https://cendor.ai/badge/downloads/cendor-libs.svg"></a>
+  <a href="https://cendor.ai/downloads"><img alt="all Cendor · PyPI" src="https://cendor.ai/badge/downloads/pypi.svg"></a>
+  <a href="https://cendor.ai/downloads"><img alt="all Cendor · npm" src="https://cendor.ai/badge/downloads/npm.svg"></a>
+</p>
 <!-- cendor:downloads:end -->
 
-[**Install**](#install) · [**The libraries**](#the-libraries-in-depth) · [**See it compose**](#see-it-all-compose) · [**Docs**](docs/) · [**Benchmarks**](docs/benchmarks.md)
+<p align="center">
+  <a href="#install"><strong>Install</strong></a> ·
+  <a href="#the-libraries-in-depth"><strong>The libraries</strong></a> ·
+  <a href="#see-it-all-compose"><strong>See it compose</strong></a> ·
+  <a href="docs/"><strong>Docs</strong></a> ·
+  <a href="docs/benchmarks.md"><strong>Benchmarks</strong></a>
+</p>
 
-*framework-agnostic · local-first · offline by default*
+<p align="center">
+  <em>framework-agnostic · local-first · offline by default</em>
+</p>
 
 ---
 
