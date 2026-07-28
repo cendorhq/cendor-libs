@@ -9,7 +9,7 @@ count leave it 0. Cost is unaffected — reasoning is already billed inside ``ou
 from types import SimpleNamespace
 
 import pytest
-from cendor.core import bus, instrument
+from cendor.core import bus, instrument, prices
 from cendor.core.types import Usage
 
 
@@ -42,6 +42,40 @@ def test_openai_reasoning_tokens_extracted(events):
     client = instrument(SimpleNamespace(chat=SimpleNamespace(completions=Completions())))
     client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "x"}])
     assert events[0].usage == Usage(input_tokens=200, output_tokens=1200, reasoning_tokens=1000)
+
+
+@pytest.mark.parametrize("model", ["o3-mini", "o1-mini", "o3", "o4-mini", "gpt-5.4"])
+def test_o_series_reasoning_tokens_are_captured_and_priced(events, model):
+    """Reasoning capture must not depend on the model *name* — it is read off the response shape.
+
+    Added 2026-07-28 as a **regression guard, not a fix**: an external report of "reasoning tokens
+    are not captured for o3-mini" did not reproduce — this test was green the first time it ran.
+    `_extract_usage` reads `completion_tokens_details.reasoning_tokens` for the whole OpenAI family
+    with no model-name test anywhere, and `o3-mini` is in the price snapshot. Parametrized across
+    the o-series (plus a GPT-5 reasoning id) so that if a name pattern is ever introduced here, it
+    shows up as one id failing while its siblings pass instead of as a silent special case.
+    """
+    from decimal import Decimal
+
+    class Completions:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                usage=SimpleNamespace(
+                    prompt_tokens=200,
+                    completion_tokens=1200,  # already includes the 1000 reasoning tokens
+                    completion_tokens_details=SimpleNamespace(reasoning_tokens=1000),
+                )
+            )
+
+    client = instrument(SimpleNamespace(chat=SimpleNamespace(completions=Completions())))
+    client.chat.completions.create(model=model, messages=[{"role": "user", "content": "x"}])
+    call = events[0]
+    assert call.usage == Usage(input_tokens=200, output_tokens=1200, reasoning_tokens=1000)
+    # Reasoning is billed inside output_tokens, so cost is the plain input+output estimate — the
+    # model must be in the price table for that to be a real number, not zero.
+    assert call.cost is not None
+    assert call.cost.amount > Decimal("0")
+    assert call.cost.amount == prices.estimate(model, 200, 1200).amount
 
 
 def test_openai_without_reasoning_details_stays_zero(events):
