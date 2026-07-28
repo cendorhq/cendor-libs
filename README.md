@@ -398,8 +398,13 @@ searchable site at [cendor.ai/docs](https://cendor.ai/docs):
 
 A `uv` workspace: `uv sync`, then `uv run pytest`. Lint/format with
 `uv run ruff check . && uv run ruff format .`, type-check with `uv run mypy -p cendor.core` (and
-per package). See [`CLAUDE.md`](CLAUDE.md) for conventions and the cardinal PEP 420 namespace rule
-(never add `src/cendor/__init__.py`).
+per package). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full setup, the gates CI runs, and how
+to open a PR; [`CLAUDE.md`](CLAUDE.md) for conventions and the cardinal PEP 420 namespace rule
+(never add `src/cendor/__init__.py`); [`TESTING.md`](TESTING.md) for the testing strategy.
+
+- **Changelogs** — one per package; [`CHANGELOG.md`](CHANGELOG.md) is the index.
+- **Security** — please report privately, never in a public issue: [`SECURITY.md`](SECURITY.md).
+- **Conduct** — [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## License & disclaimer
 
