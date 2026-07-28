@@ -50,8 +50,12 @@ jobs:
           uv run pytest -q
           --cov=cendor --cov-report=term-missing --cov-report=json:coverage.json
           --cov-fail-under=80
+      # Only meaningful when the tests actually produced coverage.json. Without this guard the step
+      # fails with a FileNotFoundError after ANY earlier failure, and that traceback is what shows up
+      # in the checks list -- burying the real cause. Measured on dependabot PR #5, whose actual
+      # failure was `uv lock --check`.
       - name: per-package coverage summary
-        if: ${{ always() && matrix.os == 'ubuntu-latest' }}
+        if: ${{ success() && matrix.os == 'ubuntu-latest' }}
         run: |
           python - <<'PY'
           import json, os, pathlib, sys
