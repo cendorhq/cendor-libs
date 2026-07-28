@@ -6,7 +6,7 @@ overrun). The fix captures the frames (by reference) + tags at call initiation v
 seam.
 
 The cross-call cumulative-``block`` bypass (§3b-2) needs the real SDK detached-drain runner, so
-it is verified live in cendor-testsuits, not here.
+it is verified live in the out-of-repo black-box suite (Layer D, see ``TESTING.md``), not here.
 """
 
 from types import SimpleNamespace

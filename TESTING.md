@@ -20,7 +20,7 @@ status, and how-to-run.
 | **A. Unit** | logic is correct (mocked, offline) | `packages/*/tests/` | ✅ yes | ✅ in place (780+ tests; 826 cases across 74 files) |
 | **B. Install / import smoke** | the wheels + PEP 420 namespace import for a real user | clean venv (matrix 3.11–3.13) | ✅ yes | ✅ in place (`smoke` job) |
 | **C. Cookbook integration** | documented usage runs against installed packages | `cendor-cookbook` (separate public repo) | n/a here | ⏳ in the cookbook |
-| **D. Real-provider fixtures** | `instrument()` parses *actual* OpenAI/Anthropic/Bedrock/Gemini/Ollama responses | recorded cassettes / `cendor-testsuits` | gated | ✅ fulfilled org-wide by **`cendor-testsuits`** (a private black-box suite that installs the *published* packages and drives them against live provider APIs); in-repo recorded-cassette fixtures optional |
+| **D. Real-provider fixtures** | `instrument()` parses *actual* OpenAI/Anthropic/Bedrock/Gemini/Ollama responses | recorded cassettes / an out-of-repo black-box suite | gated | ✅ fulfilled org-wide by an **internal external-black-box suite** (it installs the *published* packages and drives them against live provider APIs); in-repo recorded-cassette fixtures optional |
 | **E. Property / edge** | invariants hold for arbitrary inputs | `packages/*/tests/test_*_properties.py` (hypothesis) | ✅ yes | ✅ in place (9 tests) |
 
 Plus static gates in CI: `ruff check`, `ruff format --check`, **`mypy`** (all seven packages), and the namespace-guard.
@@ -74,14 +74,14 @@ The public `cendor-cookbook` repo's offline examples (mock client, no keys) doub
 end-to-end checks that documented usage works on the installed packages. Lives there, not here, so
 this repo stays the clean library source.
 
-### Layer D — Real-provider fixtures *(fulfilled org-wide by `cendor-testsuits`)*
+### Layer D — Real-provider fixtures *(fulfilled org-wide, out of this repo)*
 The mocks in Layer A approximate provider responses; only real calls confirm the adapters parse
-actual `usage`/shape. This is **fulfilled at the org level by the private `cendor-testsuits` repo**:
+actual `usage`/shape. This is **fulfilled at the org level by an internal external-black-box suite**:
 it installs the *published* PyPI/npm packages (never local checkouts) and drives them against **live**
 OpenAI / Anthropic / Azure / Gemini / Bedrock / Ollama APIs with real keys, recording findings into a
-merged `REPORT.md` (missing key ⇒ skip, known-issue ⇒ record + pass). That is the real-provider
-regression coverage for `instrument()`'s adapters — kept out of this repo so the libraries stay
-"no network, ever".
+merged report (missing key ⇒ skip, known-issue ⇒ record + pass). That is the real-provider
+regression coverage for `instrument()`'s adapters — kept out of this repo, because it needs provider
+secrets and this repo stays "no network, ever".
 
 An in-repo recorded-cassette variant remains optional (record a provider example once with real keys →
 `cassette` writes `fixtures/<provider>.json` → replay it offline forever), useful alongside the
@@ -106,7 +106,7 @@ cookbook's `providers/*` examples; it is a convenience, not a gap.
   import the namespace (Layer B).
 
 **Not in this repo's CI (by design):** Layer D (real-provider fixtures) needs provider secrets and
-lives out-of-repo — the private **`cendor-testsuits`** suite runs it against the published packages
+lives out-of-repo — an **internal external-black-box suite** runs it against the published packages
 and live APIs, so this repo stays "no network, ever". An optional in-repo recorded-cassette job can be
 added later; it is not a gap.
 

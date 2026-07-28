@@ -328,9 +328,8 @@ core's call spans. See each library's page for what it emits — e.g.
 ## Operate it
 
 Cendor Monitor is production-quality engineering in one self-hosted container — but it is dev/team
-tooling on **your** infrastructure, not a hosted service. The essentials (full runbook:
-[`docs/operations.md`](https://github.com/cendorhq/cendor-monitor/blob/main/docs/operations.md) in the
-image repo):
+tooling on **your** infrastructure, not a hosted service. The essentials (the full operations runbook
+ships inside the image, and is summarised at [cendor.ai/monitor](https://cendor.ai/monitor)):
 
 - **Backup/restore** — SQLite: stop → `tar` the `/data` volume (WAL is checkpointed on a clean stop);
   Postgres: `pg_dump` / `pg_restore` on the database you own.
