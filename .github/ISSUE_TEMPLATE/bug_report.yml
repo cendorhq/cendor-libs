@@ -1,0 +1,98 @@
+name: Bug report
+description: A cendor-* Python package behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two quick routing notes before you start:
+
+        - **Security vulnerability?** Do not open a public issue — report it privately through
+          [GitHub Private Vulnerability Reporting](https://github.com/cendorhq/cendor-libs/security/advisories/new)
+          (details in [`SECURITY.md`](https://github.com/cendorhq/cendor-libs/blob/main/SECURITY.md)).
+        - **Wrong repo?** This one is the **Python** monorepo. The TypeScript port lives in
+          [cendor-libs-js](https://github.com/cendorhq/cendor-libs-js/issues); the agent loop,
+          handoff, and provider response normalization live in
+          [cendor-sdk](https://github.com/cendorhq/cendor-sdk/issues).
+  - type: dropdown
+    id: distribution
+    attributes:
+      label: Which distribution?
+      description: This repo publishes nine. Pick the one the bug is in.
+      options:
+        - cendor-core
+        - cendor-tokenguard
+        - cendor-contextkit
+        - cendor-squeeze
+        - cendor-guardrails
+        - cendor-cassette
+        - cendor-acttrace
+        - cendor-libs (the umbrella meta-package)
+        - cendor (the brand alias)
+        - Not sure / more than one
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version of that distribution
+      description: Versions are independent per package — please give the exact one (`pip show cendor-core`, or `pip freeze | grep cendor`).
+      placeholder: cendor-core 1.14.1
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version and OS
+      placeholder: Python 3.12.7, uv 0.9.4, Windows 11
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider SDK involved
+      description: Provider SDKs are optional extras here. Pick the first option if your repro drives a fake provider-shaped client (that is the fastest kind of repro for us).
+      options:
+        - None — fake provider-shaped client, or no provider at all
+        - openai
+        - anthropic
+        - google-genai
+        - boto3 (AWS Bedrock)
+        - ollama
+        - huggingface_hub
+        - Other / several
+    validations:
+      required: true
+  - type: input
+    id: provider-version
+    attributes:
+      label: Provider SDK version (if one is involved)
+      placeholder: openai 6.2.0
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The smallest script or steps that show it. An **offline** repro (no key, no network — a `types.SimpleNamespace` provider-shaped fake, as the test suite and the cookbook recipes use) is the fastest for us to act on.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Traceback or output
+      description: Paste the traceback, the failing assertion, or the printed numbers.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I am on the latest released version of that distribution, or I have said above which version I am on and why.
+        - label: This is not a security vulnerability (those go through private reporting, linked above).
+        - label: If numbers are involved (cost, tokens, budget), I have included the exact values — money is `Decimal` here, never `float`.

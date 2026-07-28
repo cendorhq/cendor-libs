@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private report)
+    url: https://github.com/cendorhq/cendor-libs/security/advisories/new
+    about: Never a public issue — report privately via GitHub Private Vulnerability Reporting. See SECURITY.md.
+  - name: Documentation and the parity matrix
+    url: https://cendor.ai/docs
+    about: A question, a "how do I …", or an unclear page — start with the docs. One page per library, plus the Python/TypeScript parity matrix.
+  - name: Correct call shapes (and the common wrong ones)
+    url: https://cendor.ai/docs/for-ai-assistants
+    about: The maintained trap registry and canonical examples — check here before filing a bug about an API that "does not exist".
+  - name: TypeScript port (@cendor/* on npm)
+    url: https://github.com/cendorhq/cendor-libs-js/issues
+    about: This repo is the Python monorepo. File TypeScript bugs and requests on cendor-libs-js.
+  - name: Cookbook — copy-paste recipes
+    url: https://cendor.ai/cookbook
+    about: Every recipe runs offline with no API key. The quickest way to get a working repro to attach to a bug report.

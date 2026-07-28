@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest an idea or improvement for one of the Cendor Python libraries.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The libraries are deliberately small and composable — they sit *beneath* agent frameworks and
+        cooperate only through `cendor-core`'s event bus / interceptor seams. The two checkboxes at the
+        bottom are the shape constraints most proposals run into; please read them.
+  - type: dropdown
+    id: library
+    attributes:
+      label: Which library?
+      options:
+        - cendor-core
+        - cendor-tokenguard
+        - cendor-contextkit
+        - cendor-squeeze
+        - cendor-guardrails
+        - cendor-cassette
+        - cendor-acttrace
+        - A new library
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the use case first — the underneath-the-call concern you are hitting in your own app.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the API or behavior look like? Keep it small and composable — a full type-hinted signature is ideal.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "I did it in my own app like this" — that is useful signal.
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Fit with how these libraries are built
+      description: If one of these does not hold, say so in the proposal — it may still be the right idea, just in a different place.
+      options:
+        - label: This stays local-first — no required account, network, or running server, and any provider SDK stays an optional extra.
+        - label: This does not make one library import another (they cooperate through `cendor-core`'s bus / interceptor / protocol seams).
+        - label: This is not agent orchestration (a loop, handoff/supervisor, tool-schema generation, provider response normalization) — that belongs to [cendor-sdk](https://github.com/cendorhq/cendor-sdk).
+        - label: Any number this would let me claim is reproducible from the tests or the benchmark suite.
