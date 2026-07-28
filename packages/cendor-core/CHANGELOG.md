@@ -2,6 +2,38 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## Unreleased
+
+### Fixed
+- **A redacted Gemini call is sendable again: `Reroute(messages=…)` maps back to Gemini's `contents`
+  shape.** `_extract_request` normalizes a **non-list** `contents` — the very common
+  `generate_content(contents="summarize…")` — into one canonical `{role, content}` message, so every
+  interceptor sees every provider the same way. `_apply_reroute` then wrote that message object
+  straight back onto `contents`, and google-genai rejects it: `contents` takes a string, a `Content`
+  (`{role, parts}`) or a `Part`, never `{role, content}`. So `cendor-acttrace`'s `guard()`
+  redact-before-send scrubbed the payload correctly and then made the call impossible to send — the
+  redaction fired, the audit entry chained, and the request raised.
+
+  The back-map mirrors the one `openai_embeddings` already had: **the original request's shape is
+  what goes back.** A string input that produced a single text message returns as a string; a
+  `Content`/`Part` passes through untouched (a list input is already Gemini-native, and the guard's
+  deep scrub preserves its shape — pinned by its own test); a canonical message becomes
+  `{role, parts: [{text}]}`, with `assistant`/`model` mapped to Gemini's `model` role.
+
+  Only the reroute path changes — a call with no interceptor rewrite, and every other provider, is
+  byte-identical to before. Found by the external black-box suite driving a live Gemini key
+  (reported against `cendor-acttrace`; the fix belongs here, because `guard()`'s scrub is a
+  shape-preserving structural walk and was never the problem). Mirrors the `@cendor/core` fix.
+
+### Not changed (investigated, did not reproduce)
+- An external report that **reasoning tokens are not captured for `o3-mini`** does not reproduce.
+  `_extract_usage` reads `completion_tokens_details.reasoning_tokens` (and the Responses API's
+  `output_tokens_details.reasoning_tokens`) for the whole OpenAI family with **no model-name test
+  anywhere**, and `o3-mini` is in the bundled price snapshot, so the call is priced. Verified against
+  the real `openai` SDK's response objects on both entrypoints. A parametrized regression guard
+  across `o3-mini`/`o1-mini`/`o3`/`o4-mini`/`gpt-5.4` now pins the model-name independence; no
+  behaviour was changed and no pricing model was invented.
+
 ## [1.14.2] — 2026-07-27
 **The raw-response family, part two — the edges 1.14.1 left open.** Every case below was measured
 against the real `openai` SDK before it was fixed; the follow-up evidence pack is

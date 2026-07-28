@@ -113,6 +113,71 @@ def test_guard_redact_before_send_scrubs_the_provider_payload(tmp_path):
     assert redacted.payload["action"] == "redacted"
 
 
+# --------------------------------------------------------------- Gemini `contents` back-map
+
+
+def _gemini_client(received):
+    """A google-genai-shaped client that records the ``contents`` the SDK would have been handed."""
+
+    class Models:
+        def generate_content(self, **kwargs):
+            received["contents"] = kwargs.get("contents")
+            return SimpleNamespace(
+                usage_metadata=SimpleNamespace(prompt_token_count=1, candidates_token_count=1)
+            )
+
+    return instrument(SimpleNamespace(models=Models()))
+
+
+def test_guard_redact_before_send_keeps_a_gemini_string_contents_a_string():
+    # core's `_extract_request` normalizes a non-list `contents` into one canonical {role, content}
+    # message so interceptors see every provider alike. Writing that message object straight back
+    # onto `contents` is what google-genai rejects (it takes a str | Content | Part), so a redacted
+    # Gemini call could not proceed at all — the redaction fired and then the request raised.
+    received = {}
+    client = _gemini_client(received)
+    g = guard(Policy.default())  # email -> redact under default
+
+    add_interceptor(g)
+    try:
+        client.models.generate_content(
+            model="gemini-2.0-flash", contents="repeat back: mail me at alice@example.com"
+        )
+    finally:
+        remove_interceptor(g)
+
+    assert "content" not in str(received["contents"]), "a message list was written into `contents`"
+    assert isinstance(received["contents"], str), "a string `contents` came back as a non-string"
+    assert "alice@example.com" not in received["contents"]  # redaction actually applied
+    assert "<redacted>" in received["contents"]
+
+
+def test_guard_redact_before_send_keeps_a_gemini_contents_list_in_content_shape():
+    # The case that was NOT broken: an already-Gemini-shaped `contents` list is passed through
+    # `_extract_request` untouched and the guard's scrub preserves its structure. Pinned so a future
+    # change to the back-map can't regress it.
+    received = {}
+    client = _gemini_client(received)
+    g = guard(Policy.default())
+
+    add_interceptor(g)
+    try:
+        client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[{"role": "user", "parts": [{"text": "mail me at alice@example.com"}]}],
+        )
+    finally:
+        remove_interceptor(g)
+
+    contents = received["contents"]
+    assert isinstance(contents, list)
+    assert contents[0]["role"] == "user"
+    assert isinstance(contents[0].get("parts"), list), "the Content shape lost its `parts`"
+    assert "<redacted>" in contents[0]["parts"][0]["text"]  # redaction actually applied
+    assert "alice@example.com" not in str(contents)
+    assert '"content"' not in str(contents).replace("'", '"'), "an OpenAI message key leaked in"
+
+
 def test_guard_without_audit_still_enforces():
     calls = {"n": 0}
     client = _client(calls)

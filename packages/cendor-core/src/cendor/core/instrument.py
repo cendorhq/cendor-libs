@@ -558,10 +558,53 @@ async def _async_replay(
 
 #: Per-provider kwarg carrying the request messages, so ``Reroute(messages=…)`` rewrites the right
 #: field (Chat Completions/Anthropic/Bedrock/Ollama use ``messages``; the OpenAI Responses API uses
-#: ``input``; Gemini uses ``contents``).
+#: ``input``; Gemini uses ``contents`` — but Gemini also needs its own value *shape*, so
+#: :func:`_apply_reroute` routes ``google`` through :func:`_gemini_contents`, not this table).
 _MESSAGES_KWARG = {"openai_responses": "input", "google": "contents"}
 
 _MISSING: Any = object()  # so ``Reroute(messages=[])`` (a valid empty rewrite) is still detected
+
+#: Keys that mark a value as already Gemini-native — a ``Content`` (``parts``) or a bare ``Part``.
+_GEMINI_SHAPE_KEYS = ("parts", "text", "inline_data", "inlineData", "file_data", "fileData")
+
+
+def _gemini_contents(messages: Any, original: Any) -> Any:
+    """Back-map rerouted messages onto Gemini's ``contents`` shape.
+
+    :func:`_extract_request` normalizes a **non-list** ``contents`` — the very common
+    ``generate_content(contents="summarize…")`` — into one canonical ``{role, content}`` message so
+    every interceptor sees every provider the same way. Writing that message object straight back
+    onto ``contents`` is what google-genai rejects: it takes a string, a ``Content``
+    (``{role, parts}``) or a ``Part``, never ``{role, content}``. So a guard's redact-before-send
+    scrubbed the payload correctly and then made the call impossible to send.
+
+    The map mirrors the ``openai_embeddings`` one — **the original request's shape is what goes
+    back**: a ``Content``/``Part`` (a list input, whose shape the scrub preserved) passes through
+    untouched, a canonical message becomes ``{role, parts: [{text}]}`` (``assistant``/``model`` →
+    Gemini's ``model`` role), and a string input that produced a single text message goes back as a
+    **string**.
+    """
+    items = messages if isinstance(messages, list) else [messages]
+    mapped: list[Any] = []
+    for m in items:
+        if not isinstance(m, dict):
+            mapped.append(m)  # a bare string part / an SDK Content object stays itself
+            continue
+        if any(k in m for k in _GEMINI_SHAPE_KEYS):
+            mapped.append(m)  # already a Content / Part
+            continue
+        if "content" not in m:
+            mapped.append(m)  # unknown shape — leave it to the SDK
+            continue
+        role = "model" if m.get("role") in ("assistant", "model") else "user"
+        mapped.append({"role": role, "parts": [{"text": str(m.get("content") or "")}]})
+    if isinstance(original, str) and len(mapped) == 1:
+        parts = mapped[0].get("parts") if isinstance(mapped[0], dict) else None
+        if isinstance(parts, list) and len(parts) == 1:
+            text = parts[0].get("text") if isinstance(parts[0], dict) else None
+            if isinstance(text, str):
+                return text  # string in, string out
+    return mapped if isinstance(messages, list) else mapped[0]
 
 
 def _apply_reroute(call: LLMCall, kwargs: dict, directive: Reroute, provider: str = "") -> None:
@@ -580,6 +623,10 @@ def _apply_reroute(call: LLMCall, kwargs: dict, directive: Reroute, provider: st
             contents = [str(_get(m, "content", "") or "") for m in messages or []]
             original = kwargs.get("input")
             kwargs["input"] = contents[0] if isinstance(original, str) and contents else contents
+        elif provider == "google":
+            # Gemini takes a string / Content / Part on `contents`, never a message dict — back-map
+            # it, or a scrubbed payload becomes an unsendable request (see _gemini_contents).
+            kwargs["contents"] = _gemini_contents(messages, kwargs.get("contents"))
         else:
             kwargs[_MESSAGES_KWARG.get(provider, "messages")] = messages
         call.messages = messages

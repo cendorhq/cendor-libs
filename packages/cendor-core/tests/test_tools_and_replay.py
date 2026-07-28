@@ -173,6 +173,46 @@ def test_reroute_messages_maps_to_the_responses_api_input_kwarg(events):
     assert "messages" not in seen["kwargs"]  # no spurious `messages` kwarg leaked
 
 
+def test_reroute_messages_back_maps_onto_geminis_contents(events):
+    # `_extract_request` normalizes a NON-list `contents` — the very common
+    # generate_content(contents="summarize…") — into one canonical {role, content} message so every
+    # interceptor sees every provider alike. Writing that message object straight back onto
+    # `contents` is a shape google-genai rejects (it takes a str | Content | Part, never a message
+    # dict), so a redacting interceptor scrubbed the payload and then made the call unsendable.
+    seen = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            seen["contents"] = kwargs.get("contents")
+            return SimpleNamespace(
+                usage_metadata=SimpleNamespace(prompt_token_count=1, candidates_token_count=1)
+            )
+
+    client = instrument(SimpleNamespace(models=Models()))
+
+    def rewriter(event):
+        if not isinstance(event, LLMCall):
+            return MISS
+        return Reroute(
+            messages=[
+                {**m, "content": "clean"} if "content" in m else {**m, "parts": [{"text": "clean"}]}
+                for m in event.messages
+            ]
+        )
+
+    add_interceptor(rewriter)
+    try:
+        client.models.generate_content(model="gemini-2.0-flash", contents="dirty")
+        assert seen["contents"] == "clean"  # string in, string out
+
+        client.models.generate_content(
+            model="gemini-2.0-flash", contents=[{"role": "user", "parts": [{"text": "dirty"}]}]
+        )
+        assert seen["contents"] == [{"role": "user", "parts": [{"text": "clean"}]}]
+    finally:
+        remove_interceptor(rewriter)
+
+
 async def test_interceptor_can_reroute_messages_async(events):
     seen = {}
 
