@@ -2,7 +2,7 @@
 
 The umbrella meta-package for the **Cendor** stack — *production plumbing for LLM applications*.
 Installing it pulls the whole suite of composable Python primitives for context, cost,
-guardrails, testing, and governance.
+testing, and governance.
 
 **One install, the entire stack — `pip install cendor-libs`.** (The brand alias `pip install cendor`
 also works — it depends solely on this package.)

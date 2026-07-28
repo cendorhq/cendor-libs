@@ -34,8 +34,12 @@ uv run python benchmarks/bench_squeeze.py
 | `bench_squeeze.py` | compression ratio per kind, reversibility, MB/s |
 | `bench_contextkit.py` | budget utilization, overflow safety, assemble() latency, determinism |
 | `bench_tokenguard.py` | `instrument()` overhead, tokenguard's added per-call cost, `report()` speed, bus dispatch |
+| `bench_guardrails.py` | per-check latency for each built-in rule, the cost of a passing `apply()` gate, and the per-call overhead `install()` adds |
 | `bench_cassette.py` | replay vs live, per-call replay overhead, `semantic_match` |
 | `bench_acttrace.py` | append/verify throughput, HMAC signing cost, tamper detection |
+| `bench_pii_detectors.py` | detection *quality* for acttrace's regex/validator catalogue — per-group precision/recall on a small **synthetic** corpus, false positives on look-alikes, regex-only vs optional NER |
+| `bench_semantic_gate.py` | **not run by `run_all.py`** — the semantic-gate claim gate: per-threshold trip rate + false-positive rate; needs the `[embeddings]` model (self-skips), and a *named public corpus* before any number may be cited |
+| `eval_promptguard.py` | **not run by `run_all.py`** — the prompt-injection-classifier claim gate: precision/recall/F1 over a threshold sweep; needs a model + labelled dataset you supply (self-skips) |
 | `run_all.py` | runs everything, prints a summary, and writes `docs/benchmarks.md` |
 
 ## Method & caveats
@@ -45,5 +49,7 @@ uv run python benchmarks/bench_squeeze.py
 - **Cassette speedup** models a real call with a few-millisecond sleep; production LLM calls are far slower, so the real speedup is much larger than reported.
 - **Throughput** numbers are single-machine and hardware-dependent — treat them as relative, and re-run locally for your own figures.
 
-Each `bench_*.py` exposes `run() -> list[Result]`; adding a benchmark is a new module plus an entry
-in `run_all.py`.
+Each `bench_*.py` in the suite exposes `run() -> list[Result]`; adding a benchmark is a new module
+plus an entry in `run_all.py`. The two claim-gate evals above stand outside it — they are
+standalone scripts that self-skip when their model/corpus is absent, so nothing they need is ever a
+requirement of the offline suite.

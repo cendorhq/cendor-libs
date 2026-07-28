@@ -18,7 +18,7 @@ client = instrument(OpenAI())
 install([                                           # one interceptor gates every call
     rules.keyword_deny(["ignore previous instructions"], action="block"),
     rules.regex_rule(r"\bsk-[A-Za-z0-9]{20,}\b", action="redact", stage="input"),
-    rules.url_allowlist(["docs.cendor.ai"], stage="input"),
+    rules.url_allowlist(["cendor.ai"], stage="input"),
 ])
 
 client.chat.completions.create(model="gpt-4o", messages=msgs)
@@ -85,4 +85,4 @@ judge (`rules.llm_judge`, an adapter contract — you supply the call, and the e
 real) and treat the deterministic rules as the fast, free floor, not a ceiling. PII/secret
 detection lives in `cendor-acttrace` (`guard(Policy…)`), not here.
 
-*Part of the Cendor stack — github.com/cendorhq/cendor-libs. Powered by PowerAI Labs.*
+See [`docs/guardrails.md`](https://github.com/cendorhq/cendor-libs/blob/main/docs/guardrails.md) · [CHANGELOG](https://github.com/cendorhq/cendor-libs/blob/main/packages/cendor-guardrails/CHANGELOG.md). *Part of the Cendor stack — [github.com/cendorhq/cendor-libs](https://github.com/cendorhq/cendor-libs). Powered by PowerAI Labs. Apache-2.0; provided "as is", without warranty — use at your own risk (LICENSE §7–8).*

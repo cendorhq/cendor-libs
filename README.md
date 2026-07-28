@@ -108,7 +108,10 @@ Read that as **one call's lifecycle, not a dependency chain** — assemble and c
 budget and gate before send, then test, re-gate the output, guard, and audit after — every library
 standalone, all cooperating on `cendor-core`'s bus.
 
-All seven are **published on PyPI** and green in CI (offline tests · ruff · mypy).
+All seven are **published on PyPI** and green in CI (offline tests · ruff · mypy). The same seven
+also ship in **TypeScript** as [`@cendor/*` on npm](https://github.com/cendorhq/cendor-libs-js) —
+one API, two spellings (`snake_case` ↔ `camelCase`), both bound by the same versioned
+[format specs](docs/specs/); what differs is in [Languages & parity](docs/languages.md).
 
 ## Proof
 
@@ -121,7 +124,7 @@ below is directional — timing rows vary by machine.
 | What | Measured |
 |---|---|
 | OpenAI token counting | **exact** for the families `tiktoken` maps (gpt-4o / gpt-4.1 / o-series) — 0% error vs the real tokenizer; gpt-5.x counts via the o200k BPE proxy until tiktoken ships a mapping |
-| Log compression (squeeze) | **~99% on repetition-heavy logs, ~30% on high-entropy logs** — always **fully reversible** |
+| Log compression (squeeze) | **~99% on repetition-heavy logs, ~30% on mixed-entropy logs** — always **fully reversible** |
 | Replayed run vs live (cassette) | **orders of magnitude faster**, no API key (modeled at 4 ms/call; real LLMs are far slower) |
 | `instrument()` overhead per call | **~15 µs** — bus emit + usage extraction + Decimal pricing |
 | Tamper detection (acttrace) | a **single edited byte** breaks the chain → `verify()` returns `False` |
@@ -134,7 +137,11 @@ pip install cendor-tokenguard  # or just one piece (pulls core in transitively)
 # Using uv? Same names, same extras: `uv add` instead of `pip install`.
 ```
 
-All packages share the `cendor.*` import namespace (PEP 420).
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
+All packages share the `cendor.*` import namespace (PEP 420). Looking for a governed agent loop
+rather than the primitives? That's [`cendor-sdk`](https://pypi.org/project/cendor-sdk/) (imports as
+`cendor.sdk`, same namespace) — built on these seven.
 
 ## Quickstart — offline, no API key
 
@@ -194,7 +201,7 @@ original = handle.expand()                                            # byte-for
 
 > Stop runaway bills, and get per-feature / per-user cost for free.
 
-- **Pre-flight circuit breaker** — `on_exceed="block"` raises **before** an over-budget call runs; `"downgrade"` reroutes to a cheaper model pre-flight; `"truncate"` degrades gracefully; `"raise"` stops a runaway loop; or pass a **callable**.
+- **Pre-flight circuit breaker** — `on_exceed="block"` raises **before** an over-budget call runs; `"downgrade"` reroutes to a cheaper model pre-flight; `"clamp"` injects the provider's own output ceiling so one call is capped server-side; `"break"` cuts a running **stream** the moment its estimate crosses the cap; `"truncate"` degrades gracefully; `"raise"` stops a runaway loop; or pass a **callable**.
 - **Decorator *and* context manager** — `@budget(usd=…, tokens=…)`; budgets **nest** and the tightest applicable cap wins (an inner downgrade never masks an outer hard cap).
 - **Cost attribution, free** — `track(feature=…, user_id=…)` tags ambient spend via `contextvars` (works across nested + async calls); `report(group_by=[…])` aggregates per tag → `{usd, tokens, calls, …}`.
 - **Cost as a test assertion** — `report().assert_under(usd=0.05, feature="search")`.
@@ -260,7 +267,7 @@ ok, detail = verify("evidence.jsonl", key="k")   # tamper-evident, verified offl
 
 > Kept tiny on purpose — it's the blast radius for every other tool.
 
-- **`instrument()`** — wrap any client once: **OpenAI** (Chat Completions **and** the Responses API) **· Anthropic · AWS Bedrock · Google Gemini** (the `google-genai` SDK **and** legacy `google-generativeai`) **· Ollama**, detected by *shape* (so new models work the day they ship). Sync, async, **and streaming** (the streamed value is both an iterator **and** a context manager, matching the SDK — so `with client…create(stream=True) as s:` works, e.g. under LangChain); idempotent and additive. `instrument_tool()` does the same for your tools (emits `ToolCall`s).
+- **`instrument()`** — wrap any client once: **OpenAI** (Chat Completions **and** the Responses API) **· Anthropic · Hugging Face** (`InferenceClient`) **· AWS Bedrock · Google Gemini** (the `google-genai` SDK **and** legacy `google-generativeai`) **· Ollama**, detected by *shape* (so new models work the day they ship). Sync, async, **and streaming** (the streamed value is both an iterator **and** a context manager, matching the SDK — so `with client…create(stream=True) as s:` works, e.g. under LangChain); idempotent and additive. `instrument_tool()` does the same for your tools (emits `ToolCall`s).
 - **LangChain / LangGraph** — `cendor.core.langchain.CendorCallbackHandler` (optional `cendor-core[langchain]`) records usage + **reasoning** + tools + a **run-correlated `trace_id`** from the framework's callbacks — the SDK-aligned way to observe a framework, no client touch. Recording-only; enforcement stays on the `instrument()` seam. (`core.trace("run-id")` gives direct-SDK agents the same correlation.)
 - **Event bus** — `subscribe` / `emit`; **thread-safe within a process**; one failing subscriber never starves another (the first exception re-raises after all run).
 - **Interceptor seam** — `add_interceptor` + `Reroute` / `MISS` powers replay (cassette) and reroute/block (tokenguard) **without a second patch point**.
@@ -367,17 +374,19 @@ Knowing exactly where the edges are is part of the design:
   reopen-per-entry). One caveat: `tokenguard` budgets/tags are `ContextVar`-based — `asyncio` tasks
   inherit them, but a plain `threading.Thread` does not (use `contextvars.copy_context()`). State is
   module-global — ideal for scripts, tests, and a worker process; a multi-*process* deployment
-  externalizes durable spend via a sink (a deliberate v2 boundary). For long runs, both in-memory
+  externalizes durable spend via a sink (a deliberate scope boundary). For long runs, both in-memory
   buffers are boundable — `tokenguard`'s spend cap and `acttrace`'s `max_entries` (the file stays the
   full, verifiable chain) — and `tokenguard.sinks.QueueSink` moves durable sink I/O off the hot path.
 - **`tokenguard` enforcement is projection-based.** Pre-flight `block` / `downgrade` use offline token
   estimates plus an output reserve, so they're approximate; post-flight `raise` is exact but stops the
   **next** call in a loop, not the one that breached — and for a **streamed** call it fires when the
   stream is *consumed*, not launched (a loop launching many streams before draining them can overspend;
-  use a pre-flight mode to gate that). A call whose model has **no price** records `$0`, so a USD cap
-  can't bite it — tokenguard warns once per model (`UnpricedModelWarning`), counts them in
-  `unpriced_calls()`, and `configure(on_unpriced="raise")` makes `block` reject them; token caps enforce
-  regardless of price.
+  use a pre-flight mode to gate that, or `on_exceed="break"`, the mid-stream breaker built for exactly
+  this — it recounts a running stream and cuts it the instant its estimate crosses the cap, which stops
+  the meter but does not un-bill what the provider already generated). A call whose model has **no
+  price** records `$0`, so a USD cap can't bite it — tokenguard warns once per model
+  (`UnpricedModelWarning`), counts them in `unpriced_calls()`, and `configure(on_unpriced="raise")`
+  makes `block` reject them; token caps enforce regardless of price.
 - **`acttrace` is evidence, not a guarantee.** The hash chain detects edits/deletions on `verify()`;
   **HMAC signing** is what makes it tamper-evident against a rewrite. Control mappings are starting
   templates for a compliance team, not legal advice.
@@ -392,7 +401,7 @@ searchable site at [cendor.ai/docs](https://cendor.ai/docs):
 - [Getting Started](docs/getting-started.md) — install + your first budgeted, audited call
 - [Architecture](docs/architecture.md) — the layering, the `instrument()` seam, the event bus
 - **Libraries** — [core](docs/core.md) · [contextkit](docs/contextkit.md) · [squeeze](docs/squeeze.md) · [tokenguard](docs/tokenguard.md) · [guardrails](docs/guardrails.md) · [cassette](docs/cassette.md) · [acttrace](docs/acttrace.md)
-- [Providers & Integration](docs/providers.md) · [Guides & Recipes](docs/guides.md) · [Benchmarks](docs/benchmarks.md) · [FAQ](docs/faq.md)
+- [Providers & Integration](docs/providers.md) · [Guides & Recipes](docs/guides.md) · [Languages & parity](docs/languages.md) · [Benchmarks](docs/benchmarks.md) · [FAQ](docs/faq.md)
 
 ## Contributing / building
 

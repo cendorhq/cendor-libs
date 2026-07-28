@@ -4,7 +4,7 @@ A tamper-evident, append-only record of every AI decision — what model, what c
 cost, which tools, and who signed off — mapped to control templates and exportable as an evidence
 pack. No database, no infra: integrity comes from a hash chain, not a server.
 
-**Detect and prove: 20 categories of secrets, PII & special-category data — block / warn / redact in one line, offline — every decision in a hash chain you can verify without a server.**
+**Detect and prove: 20 categories of secrets, PII & special-category data — block / flag / redact in one line, offline — every decision in a hash chain you can verify without a server.**
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-acttrace) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-acttrace`
 

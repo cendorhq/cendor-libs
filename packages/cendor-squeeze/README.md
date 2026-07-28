@@ -4,7 +4,7 @@ Shrink verbose context — JSON, logs, code, prose — without throwing anything
 returns a *handle*; the original is always restorable. Content-aware: each type gets a
 purpose-built, **deterministic** compressor — **no LLM, no model download, byte-reproducible**.
 
-**Up to ~99% smaller on repetition-heavy logs (~50% on structured data), 100% reversible — zero dependencies, deterministic output.**
+**Up to ~99% smaller on repetition-heavy logs (~50% on structured data), 100% reversible — no ML dependency, deterministic output.**
 
 ![PyPI](https://img.shields.io/pypi/v/cendor-squeeze) ![license](https://img.shields.io/badge/license-Apache_2.0-blue) · `pip install cendor-squeeze`
 

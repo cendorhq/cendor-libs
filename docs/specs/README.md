@@ -2,8 +2,9 @@
 
 These pages specify the **cross-language, cross-version data contracts** of the Cendor stack — the
 formats that must interoperate no matter which language produced them. They exist so that the Python
-packages in this repo are understood as *one implementation of a spec*, not the spec itself. A future
-TypeScript port (`@cendor/*`) is bound by exactly these documents.
+packages in this repo are understood as *one implementation of a spec*, not the spec itself. The
+TypeScript port ([`@cendor/*`](https://github.com/cendorhq/cendor-libs-js), on npm) is bound by
+exactly these documents.
 
 Each spec is **versioned independently** of the packages that implement it (a spec version like
 `cassette/1` changes only on a wire-format change, far less often than package versions). Where a spec
@@ -32,8 +33,10 @@ Two rules make interoperability real rather than aspirational:
 
 Golden fixtures — recorded cassettes, signed chains, a price snapshot, canonical bus events — are the
 executable form of these specs. Every language implementation's CI must pass them; a change here that
-would break another language must ship updated vectors in the same change. (The vector set is assembled
-alongside these specs.)
+would break another language must ship updated vectors in the same change. Both directions are
+committed and exercised today: the Python suite replays TypeScript-written audit chains
+(`packages/cendor-acttrace/tests/vectors/`), and the TypeScript suite runs against fixtures generated
+from the Python implementation (`fixtures/` in `cendor-libs-js`).
 
 ## Versioning & stability
 

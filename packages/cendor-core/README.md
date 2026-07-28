@@ -42,6 +42,8 @@ byte-identical.
 Several calls that *are* one unit of work — a retrieval, a chat, a tool — belong in one trace:
 
 ```python
+from cendor.core import trace     # `client` is the instrumented client from above
+
 with trace("nightly-sweep"):
     client.chat.completions.create(...)
     client.chat.completions.create(...)
@@ -69,7 +71,7 @@ server-side runtime's tokens or cost appear.
 - **Streaming is a context manager *and* an iterator** — the streamed value supports both `for chunk in stream` / `async for` **and** `with client…create(stream=True) as stream:` / `async with`, matching the SDK's own stream and unbreaking frameworks (e.g. LangChain) that consume streams via `with`. Usage/cost finalize exactly once.
 - **Event bus** — `subscribe` / `emit`; **thread-safe within a process**; one failing subscriber never starves another.
 - **Interceptor seam** — `add_interceptor` + `Reroute` / `MISS` powers replay (cassette) and reroute / block (tokenguard) **without a second patch point**.
-- **Token counting, exact by default** — `tiktoken` is a required dependency, so OpenAI counts are exact out of the box (Claude/Gemini use its `o200k` BPE as a close estimate); a character heuristic remains only as a defensive fallback if `tiktoken` fails to import. `tokens.method(model)` reports which tier is active; `tokens.register()` plugs in a precise counter.
+- **Token counting, exact by default** — `tiktoken` is a required dependency, so the OpenAI families it maps (gpt-4o / gpt-4.1 / o-series) count exactly out of the box (Claude/Gemini **and gpt-5.x**, which tiktoken doesn't map yet, use its `o200k` BPE as a close estimate); a character heuristic remains only as a defensive fallback if `tiktoken` fails to import. `tokens.method(model)` reports which tier is active; `tokens.register()` plugs in a precise counter.
 - **Reasoning-token accounting** — `Usage.reasoning_tokens` breaks out a reasoning/thinking model's internal reasoning (OpenAI `reasoning_tokens`, Gemini `thoughts_token_count`), non-streaming and streaming. A subset of `output_tokens`, so cost is unchanged; Gemini's separately-reported thoughts are folded into the output total.
 - **Offline-first, refreshable prices** — bundled dated snapshot; `estimate() -> Decimal Money` (never `float`); optional `refresh(source="litellm"|"openrouter"|"azure")` from live no-auth sources, with `age_days()`/`is_stale()` staleness signals. Cached tokens are billed **once** (`cached ⊆ input`, normalized across providers), not at both the input and cached rate. A gateway-reported cost (e.g. OpenRouter's `usage.cost`) is preferred over the estimate and labeled `cost_reported` vs `cost_estimated`.
 - **OpenTelemetry** — emit `gen_ai.*` spans, or `otel.ingest()` a managed runtime's spans onto the bus. Structural protocols (`Compressor` / `EvictionStrategy` / `Sink` / `Subscriber` / `Handle`) let the tools interlock without coupling. `Sink` now has optional `flush()`/`close()` lifecycle methods (write-only sinks still valid).
