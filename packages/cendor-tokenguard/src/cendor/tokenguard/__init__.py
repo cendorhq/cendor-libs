@@ -851,11 +851,32 @@ def _enforce(frame: _Frame, call: LLMCall) -> None:
         return  # already handled pre-flight (interceptor rerouted the model / clamped the cap)
     if on_exceed == "break" and call.metadata.get(_TG_BROKEN_KEY):
         return  # the mid-stream breaker already cut + raised for this call — exactly one raise
+    # Report the cap the caller actually SET. This used to be hardcoded in dollars, so a
+    # `budget(tokens=…)` breach read "spent $0.0140800 > cap $None" — a token cap rendered as money,
+    # with a literal `cap $None` where the number should be. Both caps are reported when both were
+    # set and both breached, so a two-dimension budget is never silently reduced to one.
+    breaches: list[str] = []
+    if frame.cap_usd is not None and frame.spent_usd > frame.cap_usd:
+        breaches.append(f"spent ${frame.spent_usd} > cap ${frame.cap_usd}")
+    if frame.cap_tokens is not None and frame.spent_tokens > frame.cap_tokens:
+        breaches.append(f"used {frame.spent_tokens} tokens > cap {frame.cap_tokens} tokens")
+    if not breaches:  # defensive: _over() said yes, so one of the two above must have
+        breaches.append(f"spent ${frame.spent_usd} > cap ${frame.cap_usd}")
     reason = (
-        f"budget exceeded: spent ${frame.spent_usd} > cap ${frame.cap_usd} "
+        f"budget exceeded: {' and '.join(breaches)} "
         f"after {frame.calls} call(s); last model={call.model}. "
     )
-    if on_exceed == "break":
+    if on_exceed == "block":
+        # `block` IS pre-flight — reaching the post-flight check means the ESTIMATE fitted and the
+        # settled usage did not. Telling this caller to "use on_exceed='block'" (which the previous
+        # message did) is advice they have already taken.
+        reason += (
+            "on_exceed='block' refused nothing here: the pre-flight estimate fitted the cap and "
+            "the call's settled usage did not, so the cumulative post-flight check raised. Reserve "
+            "more output (output_reserve=/reasoning_reserve=) or add on_exceed='clamp' to cap the "
+            "call server-side."
+        )
+    elif on_exceed == "break":
         # break cut runaway *streams* mid-flight; this call still settled over the cumulative cap
         # post-flight (a non-streamed call, or one whose per-stream allowance held) — same overshoot
         # window as 'raise'. Use 'block' for a pre-flight hard cap that never overspends.

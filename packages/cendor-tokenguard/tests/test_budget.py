@@ -264,3 +264,71 @@ def test_streaming_budget_fires_on_consumption_not_launch():
         # Draining the stream records the spend and trips the post-flight breaker at that moment.
         with pytest.raises(BudgetExceeded):
             list(stream)
+
+
+# ── the post-flight message names the cap the caller actually set ────────────────────────────────
+#
+# Found 2026-07-30 driving a real Bedrock Converse call through the cendor-cookbook recipe: a TOKEN
+# budget whose pre-flight estimate fitted but whose settled usage did not raised
+#
+#   budget exceeded: spent $0.0140800 > cap $None after 1 call(s); last model=gpt-4o.
+#   on_exceed='raise' is post-flight … use on_exceed='block' for a pre-flight hard cap …
+#
+# Three defects in one string: a token cap rendered as money, a literal `cap $None` where the number
+# belongs, and advice to use the option the caller had already passed. Enforcement was always
+# correct — only the sentence was wrong, which is worse than it sounds for a governance library
+# whose message ends up in an incident channel.
+
+
+def test_token_cap_breach_is_reported_in_tokens():
+    client = _client(prompt_tokens=8, completion_tokens=1400)  # small estimate, large settled usage
+    with pytest.raises(BudgetExceeded) as exc:
+        with budget(tokens=1000, on_exceed="block"):
+            _call(client)
+    msg = str(exc.value)
+    assert "used 1408 tokens > cap 1000 tokens" in msg, msg
+    assert "cap $None" not in msg, msg
+    head = msg.split("after")[0]
+    assert "$" not in head, f"a token-only cap must not be framed in dollars: {msg}"
+
+
+def test_usd_cap_breach_is_still_reported_in_usd():
+    client = _client()  # 0.0075 USD per call
+    with pytest.raises(BudgetExceeded) as exc:
+        with budget(usd=0.001, on_exceed="raise"):
+            _call(client)
+    msg = str(exc.value)
+    assert "spent $0.007500000 > cap $0.001" in msg, msg
+    assert "tokens > cap" not in msg, msg
+
+
+def test_both_caps_breached_reports_both():
+    client = _client()  # 0.0075 USD and 1500 tokens per call
+    with pytest.raises(BudgetExceeded) as exc:
+        with budget(usd=0.001, tokens=100, on_exceed="raise"):
+            _call(client)
+    msg = str(exc.value)
+    assert "spent $0.007500000 > cap $0.001" in msg, msg
+    assert "used 1500 tokens > cap 100 tokens" in msg, msg
+    assert " and " in msg, msg
+
+
+def test_block_caller_is_not_told_to_use_block():
+    """`block` IS pre-flight, so reaching the post-flight check means the estimate fitted and the
+    settled usage did not. The old message told this caller to use the option they had passed."""
+    client = _client(prompt_tokens=8, completion_tokens=1400)
+    with pytest.raises(BudgetExceeded) as exc:
+        with budget(tokens=1000, on_exceed="block"):
+            _call(client)
+    msg = str(exc.value)
+    assert "use on_exceed='block'" not in msg, msg
+    assert "the pre-flight estimate fitted the cap" in msg, msg
+    assert "output_reserve=" in msg, msg
+
+
+def test_raise_and_break_keep_their_own_advice():
+    client = _client()
+    with pytest.raises(BudgetExceeded) as exc:
+        with budget(usd=0.001, on_exceed="raise"):
+            _call(client)
+    assert "on_exceed='raise' is post-flight" in str(exc.value)
