@@ -103,35 +103,78 @@ await client.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 256, mess
 <!-- /tabs -->
 
 ### Azure AI Foundry (models via the OpenAI SDK)
-Detected as `openai` (same SDK shape). For the Foundry **Agent Service** (server-side loop), don't
-`instrument()` — ingest its telemetry (see [Managed runtimes](#managed-runtimes-opentelemetry-ingestion)).
+Foundry deployments are consumed with the **standard `openai` client** pointed at the **v1 GA
+endpoint** — `base_url = <endpoint>/openai/v1/`, no `api-version`. That is Microsoft's current
+guidance, and it is also `instrument()`'s native detection target, so nothing about capture is
+special-cased. Call your **deployment name** as the model (Azure keys on deployment, not model).
+
+Three endpoint forms all work: `https://<res>.openai.azure.com` (Azure OpenAI models),
+`https://<res>.services.ai.azure.com` (Foundry Models — DeepSeek, Grok, Llama, …), and the
+**project endpoint** the portal shows, `https://<res>.services.ai.azure.com/api/projects/<project>`.
+
+For the Foundry **Agent Service** (server-side loop) don't `instrument()` — ingest its telemetry
+(see [Managed runtimes](#managed-runtimes-opentelemetry-ingestion)).
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
 
 ```python
-from openai import AzureOpenAI
-client = instrument(AzureOpenAI(
-    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-    api_key=os.environ["AZURE_OPENAI_API_KEY"],
-    api_version="2024-10-21"))
+from openai import OpenAI
+endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
+client = instrument(OpenAI(
+    base_url=f"{endpoint}/openai/v1/",              # no api-version: the v1 GA API infers it
+    api_key=os.environ["AZURE_OPENAI_API_KEY"]))
 client.chat.completions.create(model="<your-deployment-name>", messages=[...])  # detected as openai
+```
+```python
+# Microsoft Entra ID (keyless) — the v1 client re-reads the token provider per request:
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+token = get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")
+client = instrument(OpenAI(base_url=f"{endpoint}/openai/v1/", api_key=token))
+```
+```python
+# Already building an AIProjectClient? Its OpenAI client is a plain `openai.OpenAI` on /openai/v1 —
+# hand it straight to instrument(). `azure-ai-projects` is YOUR dependency, never cendor's.
+from azure.ai.projects import AIProjectClient
+project = AIProjectClient(endpoint=os.environ["AZURE_PROJECT_ENDPOINT"],
+                          credential=DefaultAzureCredential())
+client = instrument(project.get_openai_client())
 ```
 
 <!-- tab: TypeScript -->
 
 ```ts
-import { AzureOpenAI } from 'openai';
+import OpenAI from 'openai';
 import { instrument } from '@cendor/core';
-// AzureOpenAI has the same chat.completions.create shape, so it's detected as openai:
-const client = instrument(new AzureOpenAI({
-  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-  apiKey: process.env.AZURE_OPENAI_API_KEY,
-  apiVersion: '2024-10-21' }));
+const endpoint = (process.env.AZURE_OPENAI_ENDPOINT ?? '').replace(/\/+$/, '');
+const client = instrument(new OpenAI({
+  baseURL: `${endpoint}/openai/v1/`,               // no apiVersion: the v1 GA API infers it
+  apiKey: process.env.AZURE_OPENAI_API_KEY }));
 await client.chat.completions.create({ model: '<your-deployment-name>', messages: [/* ... */] });
+```
+```ts
+// Already building an AIProjectClient? Its OpenAI client is a plain `OpenAI` on /openai/v1 —
+// hand it straight to instrument(). `@azure/ai-projects` is YOUR dependency, never cendor's.
+import { AIProjectClient } from '@azure/ai-projects';
+import { DefaultAzureCredential } from '@azure/identity';
+const project = new AIProjectClient(process.env.AZURE_PROJECT_ENDPOINT ?? '', new DefaultAzureCredential());
+const foundry = instrument(project.getOpenAIClient());
 ```
 
 <!-- /tabs -->
+
+> **Legacy note — `AzureOpenAI` still works.** An older app builds `openai.AzureOpenAI` /
+> `new AzureOpenAI({...})` with an `api_version`. Detection is **structural**, so those clients are
+> still captured exactly as before, and a regression test pins that in both languages on purpose.
+> There is nothing to migrate for capture's sake; the v1 form above is simply what Microsoft
+> documents for new code.
+>
+> Two traps worth knowing, both measured against a live deployment: a **bare project endpoint**
+> (no `/openai/v1/`) answers `400 Missing required query parameter: api-version`, which reads like
+> "go back to the legacy client" and is not; and a **reasoning-family** deployment (`gpt-5*`, `o*`)
+> rejects `max_tokens` and names `max_completion_tokens` instead — a deployment name cannot tell you
+> which family it is, so read the error rather than guessing. (On the SDK door, `cendor-sdk` ≥ 1.21.0
+> / `@cendor/sdk` ≥ 3.1.0 does that for you.)
 
 ### Google Gemini
 Both SDKs are detected — the current `google-genai` (model from the kwarg) and the legacy
