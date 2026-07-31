@@ -4,9 +4,10 @@
 provider work the day they ship. It supports six providers directly — **OpenAI, Anthropic, Hugging
 Face, Google Gemini, AWS Bedrock, and Ollama** — an OpenTelemetry ingestion path for managed
 runtimes, and a callback handler for **LangChain / LangGraph** (see
-[Frameworks](#frameworks-langchain--langgraph)). Per-provider setup ends with the case where your
-agent runs inside somebody else's **host process** — a [Microsoft 365 Agents SDK custom engine
-agent](#microsoft-365-agents-sdk-custom-engine-agent).
+[Frameworks](#frameworks-langchain--langgraph)). **Azure OpenAI and Azure AI Foundry models need no
+seventh provider**: they are the OpenAI client shape, so they are detected as `openai`. Per-provider
+setup ends with the case where your agent runs inside somebody else's **host process** — a
+[Microsoft 365 Agents SDK custom engine agent](#microsoft-365-agents-sdk-custom-engine-agent).
 
 ## How detection works
 
@@ -15,33 +16,71 @@ agent](#microsoft-365-agents-sdk-custom-engine-agent).
 graph TD
     A["instrument(client)"] --> B{"client has…"}
     B -->|"chat_completion (InferenceClient)"| HF["huggingface"]
-    B -->|"chat.completions.create"| OAI["openai"]
-    B -->|"responses.create"| OAI
+    B -->|"chat.completions.create · .parse"| OAI["openai"]
+    B -->|"responses.create · .parse"| OAI
+    B -->|"embeddings.create"| OAI
     B -->|"messages.create"| ANT["anthropic"]
-    B -->|"converse"| BR["bedrock"]
+    B -->|"messages.stream · .parse (Python)"| ANT
+    B -->|"converse · converse_stream"| BR["bedrock"]
+    B -->|"send(ConverseCommand) — aws-sdk-v3, TS"| BR
     B -->|"generate_content (GenerativeModel)"| GEM["google"]
     B -->|"models.generate_content (google-genai)"| GEM
     B -->|"models.generate_content_stream (google-genai)"| GEM
     B -->|"chat callable"| OLL["ollama"]
     B -->|"none of the above"| NOOP["returned untouched"]
 
+    OAI --> AZ["Azure OpenAI + Azure AI Foundry
+    arrive here — same client shape"]
+
     classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
+    classDef note fill:#EFF6FF,color:#1E3A8A,stroke:#93C5FD;
     class A seam;
+    class AZ note;
 ```
 
-An OpenAI client exposes both `chat.completions.create` and `responses.create`; a `google-genai`
-`Client` exposes `models.generate_content`, `aio.models.generate_content` and both
-`generate_content_stream` twins. `instrument()` wraps **every** entrypoint it finds, so whichever
-API your code calls is captured.
+**Azure and Azure AI Foundry are not separate branches** — that is the point of shape-based detection.
+Both are consumed with the standard `openai` client pointed at the v1 GA endpoint, so they land on the
+`openai` node and nothing about their capture is special-cased. See
+[Azure AI Foundry](#azure-ai-foundry-models-via-the-openai-sdk).
+
+An OpenAI client exposes both `chat.completions.create` and `responses.create` (plus their `parse`
+twins and `embeddings.create`); a `google-genai` `Client` exposes `models.generate_content`,
+`aio.models.generate_content` and both `generate_content_stream` twins. `instrument()` wraps **every**
+entrypoint it finds, so whichever API your code calls is captured.
+
+**Two entrypoints are wrapped in one language only, and that is deliberate rather than a gap.**
+Anthropic's `messages.stream` / `messages.parse` are their own targets in **Python** (since
+`cendor-core` 1.17.0) because each POSTs its own request; in TypeScript those same helpers are built
+*on* `create`, so the wrapped `create` already captures them exactly once and a second target would
+**double-count**. Bedrock's aws-sdk-v3 `send(ConverseCommand)` is detected in **TypeScript** (since
+`@cendor/core` 3.3.0) because that is the only shape that SDK offers; Python's boto3 client exposes
+`converse()` directly, so it needs nothing extra. Parity of *behaviour*, not of mechanism — the
+[parity matrix](languages.md) is the contract.
+
+**What is NOT on this diagram, because it is not detection.** Two Microsoft integrations govern calls
+without `instrument()` ever inspecting a client, and they are easy to confuse for each other:
+
+| | what it is | how governance attaches |
+|---|---|---|
+| [**M365 Agents SDK**](#microsoft-365-agents-sdk-custom-engine-agent) (pro-code custom engine agent) | your agent runs inside **Microsoft's** host process | you still own the model call — `instrument()` the provider client **inside** your agent, exactly as anywhere else. There is no "M365 client" to duck-type |
+| **Foundry Agent Service** + `FoundryAdapter` | the agent loop runs **server-side**, at Microsoft | attribution-only: ingest its OpenTelemetry (see [Managed runtimes](#managed-runtimes-opentelemetry-ingestion)). No per-step token/cost, because no call passes through your process |
+
+⚠️ These are **two separate Microsoft integrations**, and picking the wrong one fails quietly:
+`FoundryAdapter` is not the M365 path, and driving the M365 path through it returns a valid-looking
+Activity and raises nothing. Azure AI Foundry *models* (the row above, via the OpenAI SDK) are a third
+thing again, and those **are** detected.
 
 ## Per-provider setup
 
 > **TypeScript.** `instrument()` detects all six providers in both languages — **OpenAI (Chat +
 > Responses), Anthropic, Hugging Face, google-genai, Bedrock, and Ollama** — plus the OpenTelemetry
-> ingestion path. The **LangChain / LangGraph** callback handler now ships in both languages too
-> (`@cendor/core/langchain`). One thing stays Python-only: aws-sdk-v3 Bedrock (`instrument()` matches
-> a boto-shaped `converse()`; the `send(ConverseCommand)` client rides the SDK provider). See the
-> [parity matrix](languages.md).
+> ingestion path. The **LangChain / LangGraph** callback handler ships in both languages
+> (`@cendor/core/langchain`). Since `@cendor/core` 3.3.0 TypeScript also detects the **aws-sdk-v3**
+> Bedrock client's `send(new ConverseCommand(…))`, which used to be the one detection asymmetry — so a
+> libs-only TypeScript Bedrock app no longer needs the SDK or a hand-written `converse()` shim. What
+> differs now is *mechanism*, not coverage: Anthropic's `messages.stream` / `messages.parse` are their
+> own targets in Python and deliberately not in TypeScript (there they are helpers on `create`, so a
+> target would double-count). See the [parity matrix](languages.md).
 
 ### OpenAI (Chat Completions + Responses API + Embeddings)
 `instrument()` wraps all three entrypoints; the Responses API reports usage differently, and it's
@@ -283,12 +322,30 @@ client.converse(modelId="anthropic.claude-…",
 
 <!-- tab: TypeScript -->
 
-> **Bedrock in TypeScript.** `@cendor/core`'s `instrument()` **ships** Bedrock detection — it matches a
-> **boto-shaped `converse()`** method, so a wrapper client that exposes `converse(...)` directly is
-> captured. The official `@aws-sdk/client-bedrock-runtime` v3 has **no such method**: it issues calls
-> generically as `client.send(new ConverseCommand(...))`, and `send` is shared by every AWS command, so it
-> can't be duck-typed. aws-sdk-v3 Bedrock is therefore captured via the **SDK provider** (`@cendor/sdk`
-> wraps the client directly), not `instrument()`. See the [parity matrix](languages.md).
+> **Bedrock in TypeScript — the official aws-sdk-v3 client is detected** (since `@cendor/core` 3.3.0).
+> `instrument()` matches both shapes: a **boto-shaped `converse()`** wrapper, and the official
+> `@aws-sdk/client-bedrock-runtime` v3 client, which issues everything as
+> `client.send(new ConverseCommand(…))`. Because `send` is shared by every AWS command, the *client* is
+> identified once (`config.serviceId === "Bedrock Runtime"`) and the *command* per call — so
+> `ConverseCommand` and `ConverseStreamCommand` are captured while **every other AWS command passes
+> through untouched, emitting nothing**. `InvokeModelCommand` is deliberately not captured: its request
+> and response bodies are opaque, provider-specific JSON, so any usage reading would be a guess.
+> `@cendor/sdk`'s Bedrock provider still wraps the client in a synthetic `converse()` and cannot
+> double-count. Before 3.3.0 this was the JS port's one zero-capture gap. See the
+> [parity matrix](languages.md).
+
+<!-- ts-check: skip -->
+
+```ts
+import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import { instrument } from '@cendor/core';
+
+const client = instrument(new BedrockRuntimeClient({ region: 'us-east-1' }));
+await client.send(new ConverseCommand({          // captured — no shim needed
+  modelId: 'anthropic.claude-…',
+  messages: [{ role: 'user', content: [{ text: '…' }] }],
+}));
+```
 
 <!-- /tabs -->
 
@@ -778,11 +835,16 @@ stream completes. How real (vs estimated) the streamed usage is depends on the e
 - **Hugging Face** — `instrument()` injects `stream_options={"include_usage": True}` **only when the
   installed `huggingface_hub`'s `chat_completion` signature explicitly accepts it** (Python; older
   hubs / TS are left untouched — pass it yourself where the router supports it). Since core 1.10.
-- **Bedrock `converse_stream`** — captured in **Python** since core 1.10 (a Bedrock client exposes both
-  `converse` and `converse_stream`; the latter has no `stream=` kwarg and returns the event iterable as
-  the `"stream"` member of a dict response, which `instrument()` wraps and hands back unchanged). TS
-  aws-sdk-v3 streaming still rides the SDK provider (the `send(ConverseCommand)` shape can't be
-  duck-typed).
+- **Bedrock `converse_stream`** — captured in **Python** since core 1.10 and in **TypeScript** since
+  `@cendor/core` 0.12.2 (a Bedrock client exposes both `converse` and `converse_stream`; the latter has
+  no `stream=` kwarg and returns the event iterable as the `"stream"` member of a dict response, which
+  `instrument()` wraps and hands back unchanged). Since `@cendor/core` 3.3.0 the aws-sdk-v3
+  `send(new ConverseStreamCommand(…))` shape is captured too, on the same always-stream path.
+- **Anthropic `messages.stream()`** — captured. In **Python** it is its own always-stream target since
+  core 1.17.0: the helper POSTs its own request, so before that it emitted **nothing at all** through
+  every consumption path (iteration, `.text_stream`, `.get_final_message()`). You still get the SDK's
+  own `MessageStream` back. In **TypeScript** the helper is built on `create({…, stream: true})`, so the
+  wrapped `create` has always captured it.
 - **Other providers** — usage is read from the provider's own stream reporting where present, else an
   offline estimate flagged `usage_estimated`. The offline estimate now also counts **visible** thinking
   (Anthropic `thinking_delta`, Ollama `message.thinking`, OpenAI-compat `reasoning_content`, Bedrock
