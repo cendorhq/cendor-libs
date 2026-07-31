@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.6.3] — 2026-07-31
+**Pinned: `on_exceed="break"` cuts a Gemini stream.**
+
+No behaviour change here — the mid-stream breaker rides `cendor-core`'s stream-observer seam, so it
+works for every capture path core adds. But "should" is not "does": until `cendor-core` 1.15.0 a
+`generate_content_stream` call emitted no `LLMCall` at all, so a `budget(..., on_exceed="break")`
+wrapped around a streamed Gemini call was **silently inert**. Now pinned on the real chunk shape
+(`.text` + a cumulative `usage_metadata`), with a negative control proving an under-cap stream is
+not cut and settles with real, non-estimated usage. Floor raised to `cendor-core>=1.15,<2.0`.
+
 ## [1.6.2] — 2026-07-30
 **Fix: a post-flight `BudgetExceeded` now names the cap you actually set.**
 

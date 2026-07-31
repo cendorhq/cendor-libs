@@ -86,7 +86,8 @@ def register(fam: str, counter: Counter) -> None:
     """Override the counter for a family (e.g. plug in a precise tokenizer). See docs/core.md §8.
 
     This registers a token *counter*, not a price — to register a model's **price** use
-    ``cendor.sdk.register_model_price(...)`` (``cendor.core.prices`` has no ``register``).
+    ``cendor.core.prices.register_model_price(...)`` (per-1M rates) or
+    ``cendor.core.prices.register(...)`` (per-token).
 
     ```python
     from cendor.core import tokens

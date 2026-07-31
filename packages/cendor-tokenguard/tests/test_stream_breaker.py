@@ -240,3 +240,83 @@ def test_break_validates_and_type_surface():
     budget(tokens=10, on_exceed="break")  # no raise
     with pytest.raises(ValueError, match="on_exceed"):
         budget(tokens=10, on_exceed="brake")  # typo
+
+
+# --- Gemini streaming (google-genai `generate_content_stream`, core >= 1.15) -------------------
+#
+# The breaker rides core's stream-observer seam, so it works for any capture path core adds — but
+# "should" is not "does": before core 1.15 a Gemini stream emitted no LLMCall at all, so a
+# `budget(..., on_exceed="break")` around one was silently inert. Pinned here, on the real chunk
+# shape (`.text` + a cumulative `usage_metadata`), with a real cadence.
+
+
+class _ClosableGeminiStream:
+    """A google-genai-shaped stream: chunks carry `.text`, and `close()` is observable."""
+
+    def __init__(self, chunks):
+        self._it = iter(chunks)
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._it)
+
+    def close(self):
+        self.closed = True
+
+
+def _gemini_chunk(text, prompt=4, candidates=0):
+    return SimpleNamespace(
+        text=text,
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=prompt, candidates_token_count=candidates, thoughts_token_count=None
+        ),
+    )
+
+
+def _gemini_client(stream):
+    class Models:
+        def generate_content_stream(self, **kwargs):
+            return stream
+
+    return SimpleNamespace(models=Models())
+
+
+def test_break_cuts_a_gemini_stream_mid_flight(events):
+    chunks = [_gemini_chunk("one two three four five ", candidates=5 * (i + 1)) for i in range(50)]
+    stream = _ClosableGeminiStream(chunks)
+    client = instrument(_gemini_client(stream))
+
+    got = []
+    with budget(tokens=20, on_exceed="break", name="gemini-stream-cap"):
+        s = client.models.generate_content_stream(model="gemini-2.5-flash", contents="go")
+        with pytest.raises(BudgetExceeded, match="mid-stream break"):
+            for ch in s:
+                got.append(ch)
+
+    assert 0 < len(got) < 50, "cut well before the 50-chunk stream drained"
+    assert stream.closed is True, "the underlying provider stream was closed"
+    calls = _llm_calls(events)
+    assert len(calls) == 1 and calls[0].provider == "google"
+    assert calls[0].metadata.get("streamed") is True
+    broken = [e for e in _budget_events(events) if e.action == "broken"]
+    assert len(broken) == 1 and broken[0].name == "gemini-stream-cap"
+
+
+def test_gemini_stream_under_the_cap_completes_and_settles(events):
+    # Negative control: the same wiring must NOT cut a stream that stays inside the budget.
+    stream = _ClosableGeminiStream(
+        [_gemini_chunk("hi ", candidates=2), _gemini_chunk("there", candidates=4)]
+    )
+    client = instrument(_gemini_client(stream))
+    with budget(tokens=10_000, on_exceed="break"):
+        got = list(client.models.generate_content_stream(model="gemini-2.5-flash", contents="go"))
+    assert len(got) == 2
+    assert stream.closed is False
+    calls = _llm_calls(events)
+    assert len(calls) == 1
+    assert calls[0].usage.output_tokens == 4  # real cumulative usage, not an estimate
+    assert not calls[0].metadata.get("usage_estimated")
+    assert not [e for e in _budget_events(events) if e.action == "broken"]

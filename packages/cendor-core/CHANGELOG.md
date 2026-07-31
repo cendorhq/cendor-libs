@@ -2,9 +2,39 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
-## Unreleased
+## [1.15.0] — 2026-07-31
+
+### Added
+- **`prices.register(model, rates)` and `prices.register_model_price(model, input=…, output=…, per="1M")` are public.**
+  Python core deliberately had *no* public price-registration API: `prices.register` raised a PEP 562
+  pointer at `cendor.sdk.register_model_price`, so a **libraries-door** user had to install the SDK
+  distribution to price one Azure deployment / fine-tune / Bedrock marketplace id. That asymmetry is
+  gone — `@cendor/core` has had `prices.register` all along, and now so does this. Both forms write
+  through the same seam, override a snapshot row with the same id, and **survive `refresh()`**.
+  `cendor.sdk.register_model_price` becomes a thin re-export (identical signature, nothing to change
+  in existing code), and the old private `prices._register` hook stays as a deprecated alias so an
+  older pinned SDK keeps working. The PEP 562 hook now teaches near-misses (`set_price`,
+  `registerModelPrice`, …) instead of denying the real name.
+- **Gemini streaming is captured** — `client.models.generate_content_stream` and
+  `client.aio.models.generate_content_stream` (google-genai). The SDK streams through a **separate
+  method**, not a `stream=True` kwarg, so it needed its own always-stream target (the machinery
+  Bedrock's `converse_stream` already uses); until now a streamed Gemini call emitted **nothing at
+  all** — measured live 2026-07-31, sync and async, zero `LLMCall`s. One `LLMCall` on completion with
+  `metadata["streamed"]`, real usage taken from the **last** chunk's `usage_metadata` (Gemini reports
+  *running totals* on every chunk, so first-chunk-wins would under-count), `thoughts_token_count`
+  folded into output and surfaced as `reasoning_tokens`, a flagged offline estimate when a stream
+  reports no usage, chunks passed through unchanged, and the stream-observer seam firing per chunk —
+  so `cendor-tokenguard`'s `budget(..., on_exceed="break")` cuts a runaway Gemini stream and closes it.
 
 ### Fixed
+- **`prices.refresh(source="azure")` had never worked.** `AZURE_URL` carried raw spaces in its
+  `$filter` query; `urllib.request.urlopen` rejects that outright (`InvalidURL: URL can't contain
+  control characters`), and because `refresh()` swallows every exception the caller saw a plain
+  `False` — indistinguishable from being offline. Percent-encoded, the same query returns 1000 items
+  → 95 mapped models with a real `_updated`. The TypeScript twin was never affected (`fetch` encodes
+  for us). A test now asserts every built-in source URL is one `urllib` will accept, with a negative
+  control on the exact shape that shipped.
+
 - **A redacted Gemini call is sendable again: `Reroute(messages=…)` maps back to Gemini's `contents`
   shape.** `_extract_request` normalizes a **non-list** `contents` — the very common
   `generate_content(contents="summarize…")` — into one canonical `{role, content}` message, so every

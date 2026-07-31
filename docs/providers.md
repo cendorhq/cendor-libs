@@ -21,6 +21,7 @@ graph TD
     B -->|"converse"| BR["bedrock"]
     B -->|"generate_content (GenerativeModel)"| GEM["google"]
     B -->|"models.generate_content (google-genai)"| GEM
+    B -->|"models.generate_content_stream (google-genai)"| GEM
     B -->|"chat callable"| OLL["ollama"]
     B -->|"none of the above"| NOOP["returned untouched"]
 
@@ -29,8 +30,9 @@ graph TD
 ```
 
 An OpenAI client exposes both `chat.completions.create` and `responses.create`; a `google-genai`
-`Client` exposes both `models.generate_content` and `aio.models.generate_content`. `instrument()`
-wraps **every** entrypoint it finds, so whichever API your code calls is captured.
+`Client` exposes `models.generate_content`, `aio.models.generate_content` and both
+`generate_content_stream` twins. `instrument()` wraps **every** entrypoint it finds, so whichever
+API your code calls is captured.
 
 ## Per-provider setup
 
@@ -161,6 +163,32 @@ import { GoogleGenAI } from '@google/genai';
 import { instrument } from '@cendor/core';
 const client = instrument(new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY }));
 await client.models.generateContent({ model: 'gemini-1.5-pro', contents: '…' });  // detected as google
+```
+
+<!-- /tabs -->
+
+**Streaming is captured too** (core ≥ 1.15.0 / `@cendor/core` ≥ 3.1.0). Gemini streams through a
+*separate method* rather than a `stream=True` flag, so it needs its own detection target — before
+those versions a streamed Gemini call emitted **nothing at all**. One `LLMCall` lands when the
+stream completes, with real usage read from the final chunk's `usage_metadata`/`usageMetadata`
+(Gemini reports running totals on every chunk, so the last one is the total); when a stream reports
+no usage, cendor estimates it offline and flags `metadata["usage_estimated"]`. Mid-stream governance
+works: a `budget(..., on_exceed="break")` cuts the stream and closes it.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+for chunk in client.models.generate_content_stream(model="gemini-2.5-flash", contents="…"):
+    print(chunk.text, end="")
+# async: `async for c in await client.aio.models.generate_content_stream(...)` — also wrapped
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+const stream = await client.models.generateContentStream({ model: 'gemini-2.5-flash', contents: '…' });
+for await (const chunk of stream) process.stdout.write(chunk.text ?? '');
 ```
 
 <!-- /tabs -->

@@ -240,11 +240,13 @@ def instrument(client: T) -> T:
       (embedding calls emit an ``LLMCall`` with ``metadata["embedding"] = True``; covers Azure
       OpenAI too, which shares the client shape); all are wrapped when present.
     * **Anthropic** — ``messages.create``.
-    * **AWS Bedrock** — ``converse``.
+    * **AWS Bedrock** — ``converse`` and ``converse_stream``.
     * **Google Gemini** — the legacy ``google-generativeai`` ``GenerativeModel.generate_content``
       (model read from the object's ``model_name``) **and** the current ``google-genai`` SDK
       ``client.models.generate_content`` / ``client.aio.models.generate_content`` (model from the
-      ``model=`` kwarg).
+      ``model=`` kwarg), plus their streaming twins ``generate_content_stream`` /
+      ``client.aio.models.generate_content_stream`` (a separate method, not a ``stream=True``
+      kwarg — so it needs its own target; usage comes from the final chunk's ``usage_metadata``).
     * **Hugging Face** — ``huggingface_hub`` ``InferenceClient.chat_completion`` (an
       OpenAI-shaped response; the client also exposes an OpenAI-compatible
       ``chat.completions.create``, but binding to ``chat_completion`` attributes the call to
@@ -275,7 +277,7 @@ def instrument(client: T) -> T:
             if getattr(fn, _WRAPPED, False):
                 continue  # already instrumented — no double-wrap
             model_default = ""
-            if provider == "google":
+            if provider in _GOOGLE_TAGS:
                 # The legacy GenerativeModel binds the model to the object (not the call kwargs);
                 # read it so the LLMCall carries a real, priceable model id (strip "models/"). The
                 # google-genai Client has no model_name — its model rides the model= kwarg instead.
@@ -373,15 +375,24 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
             bedrock.append((client, "converse_stream", "bedrock_stream"))
         return bedrock
     if callable(getattr(client, "generate_content", None)):  # legacy google-generativeai
+        # The legacy GenerativeModel streams through the same method with `stream=True`, so one
+        # target covers both; there is no separate `generate_content_stream` on that class.
         return [(client, "generate_content", "google")]
-    # google-genai SDK: sync client.models + async client.aio.models generate_content
+    # google-genai SDK: sync client.models + async client.aio.models generate_content. The SDK
+    # streams through a *separate method* (`generate_content_stream`) rather than a `stream=True`
+    # kwarg, so it needs its own always-stream target — otherwise a streamed Gemini call emitted
+    # nothing at all (measured 2026-07-31: 0 LLMCalls, sync and aio, in both languages).
     google: list[tuple[Any, str, str]] = []
     models = getattr(client, "models", None)
     if models is not None and callable(getattr(models, "generate_content", None)):
         google.append((models, "generate_content", "google"))
+    if models is not None and callable(getattr(models, "generate_content_stream", None)):
+        google.append((models, "generate_content_stream", "google_stream"))
     aio_models = getattr(getattr(client, "aio", None), "models", None)
     if aio_models is not None and callable(getattr(aio_models, "generate_content", None)):
         google.append((aio_models, "generate_content", "google"))
+    if aio_models is not None and callable(getattr(aio_models, "generate_content_stream", None)):
+        google.append((aio_models, "generate_content_stream", "google_stream"))
     if google:
         return google
     if callable(chat):  # Ollama: client.chat(...) is itself callable (vs OpenAI's chat namespace)
@@ -394,7 +405,11 @@ _PUBLIC_PROVIDER = {
     "openai_responses": "openai",
     "openai_embeddings": "openai",
     "bedrock_stream": "bedrock",
+    "google_stream": "google",
 }
+
+#: Internal tags whose request shape is Gemini's (``contents``, not ``messages``).
+_GOOGLE_TAGS = frozenset({"google", "google_stream"})
 
 
 def _public_provider(provider: str) -> str:
@@ -403,13 +418,15 @@ def _public_provider(provider: str) -> str:
 
 
 #: Detection tags whose target is *always* streaming (no ``stream=True`` kwarg to key off) — the
-#: iterable arrives via a fixed response shape. Bedrock's ``converse_stream`` is the only one today.
-_ALWAYS_STREAM = frozenset({"bedrock_stream"})
+#: iterable arrives from a dedicated method. Bedrock's ``converse_stream`` and google-genai's
+#: ``generate_content_stream`` are the two.
+_ALWAYS_STREAM = frozenset({"bedrock_stream", "google_stream"})
 
 #: Internal tag → the provider the streaming extractors (:func:`_stream_text`/:func:`_stream_usage`)
-#: should use for a wrapped stream. ``bedrock_stream`` reuses the plain ``bedrock`` branches;
-#: ``openai_responses`` keeps its own (distinct stream event shape), so it is deliberately absent.
-_STREAM_PROVIDER = {"bedrock_stream": "bedrock"}
+#: should use for a wrapped stream. ``bedrock_stream`` reuses the plain ``bedrock`` branches and
+#: ``google_stream`` the ``google`` ones; ``openai_responses`` keeps its own (distinct stream event
+#: shape), so it is deliberately absent.
+_STREAM_PROVIDER = {"bedrock_stream": "bedrock", "google_stream": "google"}
 
 
 def _stream_provider(provider: str) -> str:
@@ -560,7 +577,7 @@ async def _async_replay(
 #: field (Chat Completions/Anthropic/Bedrock/Ollama use ``messages``; the OpenAI Responses API uses
 #: ``input``; Gemini uses ``contents`` — but Gemini also needs its own value *shape*, so
 #: :func:`_apply_reroute` routes ``google`` through :func:`_gemini_contents`, not this table).
-_MESSAGES_KWARG = {"openai_responses": "input", "google": "contents"}
+_MESSAGES_KWARG = {"openai_responses": "input", "google": "contents", "google_stream": "contents"}
 
 _MISSING: Any = object()  # so ``Reroute(messages=[])`` (a valid empty rewrite) is still detected
 
@@ -623,7 +640,7 @@ def _apply_reroute(call: LLMCall, kwargs: dict, directive: Reroute, provider: st
             contents = [str(_get(m, "content", "") or "") for m in messages or []]
             original = kwargs.get("input")
             kwargs["input"] = contents[0] if isinstance(original, str) and contents else contents
-        elif provider == "google":
+        elif provider in _GOOGLE_TAGS:
             # Gemini takes a string / Content / Part on `contents`, never a message dict — back-map
             # it, or a scrubbed payload becomes an unsendable request (see _gemini_contents).
             kwargs["contents"] = _gemini_contents(messages, kwargs.get("contents"))
@@ -685,7 +702,7 @@ def _extract_request(
         return kwargs.get("model", ""), messages
     if provider in ("bedrock", "bedrock_stream"):
         return kwargs.get("modelId", ""), list(kwargs.get("messages") or [])
-    if provider == "google":
+    if provider in _GOOGLE_TAGS:
         contents = kwargs.get("contents")
         if contents is None and args:
             contents = args[0]
@@ -1189,7 +1206,18 @@ def _stream_usage(chunks: list, provider: str) -> Usage | None:
             if resp is not None and _get(resp, "usage") is not None:
                 return _extract_usage(resp, "openai_responses")
         return None
-    for ch in chunks:  # openai / ollama / google: usage rides one chunk, full-response shaped
+    if provider == "google":
+        # Gemini puts `usage_metadata` on EVERY chunk carrying the *running* totals, not just the
+        # final one (measured 2026-07-31 on google-genai: two chunks, both `(4, 7, 11)`). Taking the
+        # first usage-bearing chunk — which is what the generic loop below does — would therefore
+        # under-count a longer stream. Take the LAST one: it is the final total.
+        last: Usage | None = None
+        for ch in chunks:
+            u = _extract_usage(ch, "google")
+            if u is not None:
+                last = u
+        return last
+    for ch in chunks:  # openai / ollama: usage rides one (final) chunk, full-response shaped
         u = _extract_usage(ch, provider)
         if u is not None:
             return u

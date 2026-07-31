@@ -93,6 +93,36 @@ cached portion **once** — `input_rate*(input − cached) + cached_rate*cached`
 rates. A model with no published cached rate falls back to the input rate for cache reads (no
 discount, no double charge).
 
+**Register a price for a model the snapshot doesn't know.** An Azure/Foundry *deployment* name, a
+fine-tune, a Bedrock marketplace id or a local model is unpriced — cost comes back `None`/`null`
+and a **USD** cap silently never binds (a token cap still does). One line fixes it, and the
+registration survives `refresh()`:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import prices
+
+prices.register_model_price("my-deployment", input=2.50, output=10.00)   # USD per 1M tokens
+prices.register("my-deployment", {"input": "0.0000025", "output": "0.00001"})  # or per-token
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { prices } from '@cendor/core';
+
+prices.register('my-deployment', { input: '0.0000025', output: '0.00001' }); // per-token Decimal
+// per-1M convenience: `registerModelPrice` from @cendor/sdk
+```
+
+<!-- /tabs -->
+
+Since **core 1.15.0** this lives in `cendor-core` on the Python side too — a libraries-door user no
+longer needs the SDK distribution to price a deployment. `cendor.sdk.register_model_price` is now a
+thin re-export of `prices.register_model_price`, so existing code is unaffected.
+
 ### Cost provenance: reported vs estimated
 When a response carries a real billed cost (e.g. a gateway's `usage.cost`), `instrument()`
 prefers it and tags `metadata["cost_reported"] = True`; otherwise it prices from the snapshot
@@ -269,6 +299,7 @@ per provider and the [streaming](#streaming) note below.
 ```python
 prices.estimate("gpt-4o", input_tokens=1000, output_tokens=300, cached_tokens=200)  # -> Money
 prices.refresh(source="litellm")       # or "openrouter" | "azure" | a static-JSON URL
+prices.register_model_price("my-deployment", input=2.50, output=10.00)  # USD per 1M tokens
 ```
 
 <!-- tab: TypeScript -->
@@ -284,6 +315,8 @@ await prices.refresh(undefined, { source: 'litellm' });  // or 'openrouter' | 'a
 |---|---|---|
 | `estimate(model, input_tokens=, output_tokens=, cached_tokens=)` | `Money` | Price a call from the active table (Decimal, never float). |
 | `refresh(source=… \| url \| url, mapper=)` | — | Pull live rates from a no-auth JSON source; falls back silently to the last-good table. |
+| `register(model, rates)` | — | Register **per-token** rates for a model the snapshot doesn't know. Survives `refresh()`. (TS: `prices.register`.) |
+| `register_model_price(model, input=, output=, cached=, cache_write=, per="1M")` | `dict` | The per-1M/1K convenience over `register`. Python only; TS's twin is `registerModelPrice` in `@cendor/sdk`. |
 | `models()` · `snapshot_date()` · `source()` | — | Introspect the active table. |
 | `age_days()` · `is_stale(max_age_days=30)` | — | Freshness signals. |
 | `source_name()` · `source_url()` | — | Provenance of the active rates. |
@@ -291,9 +324,9 @@ await prices.refresh(undefined, { source: 'litellm' });  // or 'openrouter' | 'a
 `refresh()` fetches a **static** resource over http(s) only (it rejects `file://` and other
 schemes), maps it to our schema **in memory** (nothing persisted), and normalizes source ids
 to bare keys (`openai/gpt-4o` → `gpt-4o`). See [Providers → Live pricing](providers.md#live-pricing)
-for which sources expose rates. Programmatic price registrations (TS `prices.register`; in Python
-the SDK's `register_model_price` writes through core's contractual hook) **survive `refresh()`**
-since 1.6.0 / 0.6.0 — they are re-applied after every table swap.
+for which sources expose rates. Programmatic price registrations (`prices.register` in **both**
+languages since core 1.15.0 / 0.6.0) **survive `refresh()`** — they are re-applied after every
+table swap.
 
 ### `bus`
 

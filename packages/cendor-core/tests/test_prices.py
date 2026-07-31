@@ -399,3 +399,107 @@ def test_embedding_models_priced_in_snapshot():
     assert prices.estimate("text-embedding-3-small", 1000).amount == Decimal("0.00002")
     assert prices.estimate("text-embedding-3-large", 1000).amount == Decimal("0.00013")
     assert prices.estimate("text-embedding-ada-002", 1000).amount == Decimal("0.0001")
+
+
+# --- register / register_model_price: the PUBLIC registration API (1.15.0, D3) -------------------
+#
+# Before 1.15 `cendor.core.prices` deliberately had no public `register` and a PEP 562 __getattr__
+# pointed callers at `cendor.sdk.register_model_price` — which meant a **libraries-door** user had
+# to install the SDK distribution to price one deployment. Parity with `@cendor/core`'s
+# `prices.register` (prices.ts) closes that.
+
+
+def test_register_is_public_and_survives_refresh(monkeypatch):
+    import contextlib
+    import io
+    import json
+
+    prices.register("my-deployment", {"input": Decimal("0.0000025"), "output": "0.00001"})
+    assert "my-deployment" in prices.models()
+    # 0.0000025*1000 + 0.00001*500 = 0.0025 + 0.005 = 0.0075
+    assert prices.estimate("my-deployment", 1000, 500).amount == Decimal("0.0075")
+
+    payload = json.dumps(
+        {"_updated": "2099-02-02", "models": {"gpt-4o": {"input": 1, "output": 0}}}
+    )
+
+    @contextlib.contextmanager
+    def fake_urlopen(url, timeout=5.0):
+        yield io.BytesIO(payload.encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert prices.refresh() is True
+    assert prices.estimate("my-deployment", 1000).amount == Decimal("0.0025")  # not dropped
+
+
+def test_register_model_price_converts_per_1m_by_default():
+    rates = prices.register_model_price("my-deployment", input=2.50, output=10.00)
+    assert rates["input"] == Decimal("2.50") / Decimal(1_000_000)
+    # 1M in + 1M out at $2.50 / $10.00 -> $12.50 exactly, no float noise.
+    assert prices.estimate("my-deployment", 1_000_000, 1_000_000).amount == Decimal("12.50")
+
+
+def test_register_model_price_honours_1k_and_token_units():
+    prices.register_model_price("per-1k", input="1", per="1K")
+    prices.register_model_price("per-token", input="0.001", per="token")
+    assert prices.estimate("per-1k", 1000).amount == Decimal("1")
+    assert prices.estimate("per-token", 1000).amount == Decimal("1")
+
+
+def test_register_model_price_rejects_an_unknown_unit():
+    with pytest.raises(ValueError, match="per must be one of"):
+        prices.register_model_price("x", input=1, per="1B")
+    assert "x" not in prices.models()  # nothing registered on the failure path
+
+
+def test_register_model_price_carries_cached_and_cache_write():
+    prices.register_model_price("cachey", input=10, output=0, cached=1, cache_write=12.5)
+    # 1M input, 200k of it cached: 10*0.8 + 1*0.2 = 8.2 ; plus 100k cache-write at 12.5 -> 1.25
+    got = prices.estimate("cachey", 1_000_000, 0, cached_tokens=200_000, cache_write_tokens=100_000)
+    assert got.amount == Decimal("9.45")
+
+
+def test_sdk_era_private_alias_still_writes():
+    # An older `cendor-sdk` pinned against an older core calls `prices._register`. Keep it working.
+    prices._register("legacy-hook", {"input": Decimal("0.000001")})
+    assert prices.estimate("legacy-hook", 1000).amount == Decimal("0.001")
+
+
+def test_getattr_still_teaches_a_near_miss_but_no_longer_denies_register():
+    # Negative control for the PEP 562 hook: the real functions must NOT reach it...
+    assert callable(prices.register) and callable(prices.register_model_price)
+    # ...while a plausible wrong spelling still gets a pointer naming both real entry points.
+    with pytest.raises(AttributeError) as ei:
+        prices.set_price  # noqa: B018 - attribute access is the assertion
+    msg = str(ei.value)
+    assert "register_model_price" in msg and "prices.register(" in msg
+    with pytest.raises(AttributeError, match="has no attribute 'nope'"):
+        prices.nope  # noqa: B018
+
+
+# --- source URLs must be fetchable by the stdlib (D5-1 regression) -------------------------------
+
+
+def test_builtin_source_urls_are_urllib_safe():
+    """`refresh(source="azure")` had never worked: AZURE_URL carried raw spaces in its `$filter`,
+    `urllib.request.urlopen` rejects those outright (`InvalidURL: URL can't contain control
+    characters`), and `refresh()` swallows every exception — so the failure looked exactly like
+    being offline. Measured 2026-07-31; the TS twin was fine because `fetch` encodes for us.
+
+    This is the negative control: with the pre-fix URL, `Request(...)` raises here.
+    """
+    import http.client
+    import urllib.request
+
+    from cendor.core.prices import _SOURCES
+
+    for name, (url, _mapper) in _SOURCES.items():
+        assert " " not in url, f"{name} source URL carries a raw space: {url}"
+        urllib.request.Request(url)  # constructs == urlopen will accept the URL
+    # Teeth: the exact shape that shipped is rejected by the stdlib *before* any socket work
+    # (`_validate_path` runs inside `putrequest`), so this control needs no network. The host is
+    # `.invalid` so it could not resolve even if the order ever changed.
+    with pytest.raises(http.client.InvalidURL, match="control characters"):
+        urllib.request.urlopen(  # noqa: S310 - https only; raises on the raw space, never connects
+            "https://cendor.invalid/x?$filter=productName eq 'Azure OpenAI'", timeout=0.001
+        )

@@ -50,9 +50,16 @@ LITELLM_URL: str = (
 #: OpenRouter's public model catalog — per-token pricing as JSON strings, no auth.
 OPENROUTER_URL: str = "https://openrouter.ai/api/v1/models"
 #: Azure Retail Prices API filtered to Azure OpenAI meters — public, no auth.
+#: **Percent-encoded on purpose.** The readable form (``&$filter=productName eq 'Azure OpenAI'``)
+#: carries raw spaces, and ``urllib.request.urlopen`` refuses it outright
+#: (``InvalidURL: URL can't contain control characters``). Because :func:`refresh` swallows every
+#: exception, that surfaced as a plain ``False`` — indistinguishable from being offline — so
+#: ``refresh(source="azure")`` had never once worked in Python (measured 2026-07-31; the TS twin
+#: was unaffected because ``fetch`` encodes for us). Encoded, the same query returns 1000 items →
+#: 95 mapped models. Keep it encoded.
 AZURE_URL: str = (
     "https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview"
-    "&$filter=productName eq 'Azure OpenAI'"
+    "&%24filter=productName%20eq%20%27Azure%20OpenAI%27"
 )
 
 #: Optional explicit id aliases applied after prefix-stripping (extend as needed).
@@ -88,24 +95,110 @@ def _ensure_loaded() -> dict:
     return _table
 
 
-def _register(model: str, rates: dict) -> None:
-    """Register (or override) one model's rates programmatically — survives ``refresh()``.
+def register(model: str, rates: dict) -> None:
+    """Register (or override) one model's **per-token** rates — survives ``refresh()``.
 
-    This is the **contractual write hook** the SDK's ``cendor.sdk.register_model_price`` writes
-    through — underscore-named to keep it out of the end-user API (users register prices via that
-    SDK helper; the TS port exposes a public ``prices.register``), but its name, signature, and
-    survive-refresh semantics are stable within 1.x. ``rates`` uses per-**token** values with the
-    snapshot's keys (``input``/``output``/``cached``/``cache_write``); values are coerced to
-    ``Decimal`` via ``str`` so callers can pass ``Decimal``/``str``/``int`` (never rely on float
-    binary noise). The registration is applied to the active table immediately and re-applied
-    after every ``refresh()`` table swap, so a refresh never drops it; it overrides a snapshot
-    entry with the same id. ``_reset()`` (tests) clears registrations.
+    Use this when a model id is absent from the bundled snapshot (an Azure/Foundry **deployment**
+    name, a fine-tune, a Bedrock marketplace id, a local model), so its calls are costed and USD
+    ``budget(...)`` caps can bind on it. Parity with ``@cendor/core``'s ``prices.register``; for
+    rates quoted per 1M/1K tokens use :func:`register_model_price` instead.
+
+    ``rates`` uses per-**token** values with the snapshot's keys (``input`` / ``output`` /
+    ``cached`` / ``cache_write``); values are coerced to ``Decimal`` via ``str``, so pass
+    ``Decimal``/``str``/``int`` and never a float you care about. The registration is applied to
+    the active table immediately and re-applied after every ``refresh()`` table swap, so a refresh
+    never drops it; it overrides a snapshot entry with the same id. ``_reset()`` (tests) clears
+    registrations.
+
+    ```python
+    from decimal import Decimal
+    from cendor.core import prices
+
+    prices.register("my-deployment", {"input": Decimal("0.0000025"), "output": "0.00001"})
+    prices.estimate("my-deployment", 1000, output_tokens=500)   # -> Money("0.0075", "USD")
+    ```
+
+    Args:
+        model: The exact model id calls report (deployment name / Hub id / local id).
+        rates: Per-**token** USD rates — ``input`` (required), ``output``, ``cached``,
+            ``cache_write``.
     """
     entry = {k: Decimal(str(v)) for k, v in rates.items()}
     table = _ensure_loaded()
     with _table_lock:
         _registered[str(model)] = entry
         table.setdefault("models", {})[str(model)] = entry
+
+
+#: Accepted ``per=`` units for :func:`register_model_price` → tokens per price unit.
+_PER: dict[str, Decimal] = {
+    "1M": Decimal(1_000_000),
+    "1K": Decimal(1000),
+    "token": Decimal(1),
+}
+
+
+def register_model_price(
+    model: str,
+    *,
+    input: float | str | Decimal,  # noqa: A002 - mirrors the published SDK helper's signature
+    output: float | str | Decimal = 0,
+    cached: float | str | Decimal | None = None,
+    cache_write: float | str | Decimal | None = None,
+    per: str = "1M",
+) -> dict[str, Decimal]:
+    """Register a model's rates quoted **per 1M tokens** (the unit price lists use).
+
+    The unit-converting convenience over :func:`register`: rates are divided by ``per`` and stored
+    as exact per-token ``Decimal``, so ``LLMCall.cost`` is non-zero for the model and USD budgets
+    enforce against it. Registrations survive :func:`refresh`.
+
+    ``cendor.sdk.register_model_price`` is a thin re-export of this function — a **libraries-door**
+    user needs only ``cendor-core``, not the SDK distribution.
+
+    ```python
+    from cendor.core import prices
+
+    prices.register_model_price("my-deployment", input=2.50, output=10.00)  # USD per 1M tokens
+    ```
+
+    Args:
+        model: The exact model id calls report (deployment name / Hub id / local id).
+        input: Input (prompt) price, in units of ``per``.
+        output: Output (completion) price.
+        cached: Optional cache-read price (defaults to the input rate when absent).
+        cache_write: Optional cache-write price (Anthropic-style).
+        per: Unit the prices are expressed in — ``"1M"`` (default), ``"1K"``, or ``"token"``.
+
+    Returns:
+        The stored per-token rate dict.
+
+    Raises:
+        ValueError: If ``per`` is not one of ``"1M"`` / ``"1K"`` / ``"token"``.
+    """
+    if per not in _PER:
+        raise ValueError(f"per must be one of {sorted(_PER)}, got {per!r}")
+    divisor = _PER[per]
+    rates: dict[str, Decimal] = {
+        "input": Decimal(str(input)) / divisor,
+        "output": Decimal(str(output)) / divisor,
+    }
+    if cached is not None:
+        rates["cached"] = Decimal(str(cached)) / divisor
+    if cache_write is not None:
+        rates["cache_write"] = Decimal(str(cache_write)) / divisor
+    register(model, rates)
+    return rates
+
+
+def _register(model: str, rates: dict) -> None:
+    """Deprecated private alias of :func:`register`, kept for the pre-1.15 contractual write hook.
+
+    ``cendor.sdk.register_model_price`` wrote through this name before ``register`` was public
+    (core 1.6 → 1.14). Retained so an older SDK pinned against an older core keeps working; new
+    code calls :func:`register`.
+    """
+    register(model, rates)
 
 
 # Wire-level id decorations stripped at LOOKUP time (the table keys stay bare). Alpha-only dotted
@@ -437,16 +530,19 @@ def _reset() -> None:
 
 
 def __getattr__(name: str) -> object:  # PEP 562 — teach the common wrong guess
-    """Turn the hallucinated ``prices.register`` into a helpful error, not a bare AttributeError.
+    """Turn a near-miss price-registration name into a helpful error, not a bare AttributeError.
 
-    The TS port has ``prices.register`` on ``@cendor/core``, but in Python a model's price is
-    registered with ``cendor.sdk.register_model_price(model, input=..., output=...)`` (which writes
-    into this table). ``tokens.register`` is a different thing — it registers a token *counter*.
+    ``register`` and ``register_model_price`` are **real functions** here since core 1.15 (parity
+    with ``@cendor/core``'s ``prices.register``), so they never reach this hook. What still misses
+    is the *counter* confusion and a couple of plausible spellings: ``cendor.core.tokens.register``
+    registers a token counter, not a price.
     """
-    if name in ("register", "register_model_price"):
+    if name in ("register_price", "registerModelPrice", "add_price", "set_price"):
         raise AttributeError(
-            "cendor.core.prices has no 'register'. To register a model's price use "
-            "cendor.sdk.register_model_price(model, input=..., output=..., per='1M'); "
-            "cendor.core.tokens.register(fam, counter) registers a token counter, not a price."
+            f"cendor.core.prices has no {name!r}. Register a price with "
+            "cendor.core.prices.register_model_price(model, input=..., output=..., per='1M') "
+            "(per-1M rates) or cendor.core.prices.register(model, {'input': ..., 'output': ...}) "
+            "(per-token); cendor.core.tokens.register(fam, counter) registers a token counter, "
+            "not a price."
         )
     raise AttributeError(f"module 'cendor.core.prices' has no attribute {name!r}")

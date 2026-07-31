@@ -313,7 +313,7 @@ provides-extras = ["squeeze"]
 
 [[package]]
 name = "cendor-core"
-version = "1.14.2"
+version = "1.15.0"
 source = { editable = "packages/cendor-core" }
 dependencies = [
     { name = "tiktoken" },
@@ -435,14 +435,14 @@ requires-dist = [{ name = "cendor-core", specifier = ">=1.6,<2.0" }]
 
 [[package]]
 name = "cendor-tokenguard"
-version = "1.6.2"
+version = "1.6.3"
 source = { editable = "packages/cendor-tokenguard" }
 dependencies = [
     { name = "cendor-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "cendor-core", specifier = ">=1.12,<2.0" }]
+requires-dist = [{ name = "cendor-core", specifier = ">=1.15,<2.0" }]
 
 [[package]]
 name = "cendor-workspace"
