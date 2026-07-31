@@ -167,6 +167,22 @@ so one store can serve a threaded server (writes are idempotent). A bounded stor
 original; expanding an evicted handle raises `KeyError` — the documented trade-off of a capped
 store.
 
+> **TypeScript on Node 20: `better-sqlite3` needs a build toolchain.** `SQLiteStore` is backed by the
+> optional native `better-sqlite3`, and on **linux-x64 Node 20** the pinned 12.x line publishes **no
+> prebuilt binary** — `npm install` runs `prebuild-install || node-gyp rebuild` and exits 1 unless
+> `python3`, `make` and a C++ compiler are present. With them it compiles from source and works
+> (measured on the `node:20` image); without them the import fails with `ERR_MODULE_NOT_FOUND`
+> (measured on `node:20-slim`). **Node 22+ installs a prebuilt binary and needs nothing.**
+>
+> ⚠️ **Do not reach for `better-sqlite3@13` as the workaround** — the obvious fix, and it is worse.
+> It installs cleanly on Node 20 and then **segfaults on the first `new Database()`** (measured,
+> `node:20-slim` linux-x64), trading a loud install error for a silent process crash. That is why
+> the optional dependency stays at `^12.11.1`. On Node 22 both lines are fine.
+>
+> npm **silently skips** an optionalDependency it cannot build, so `npm install` *succeeds* and the
+> failure only appears at first import. `MemoryStore` needs no native module and is unaffected.
+
+
 ## How it works
 
 ```mermaid

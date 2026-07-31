@@ -399,6 +399,20 @@ await sink.close();  // flush + stop the drain loop + close the inner sink
   before exit or a hard crash can drop still-queued rows. `flush()`/`close()` are the optional
   [`core.protocols.Sink`](core.md#modules--protocols) lifecycle methods.
 
+> **TypeScript on Node 20: `SQLiteSink` needs a build toolchain.** It is backed by the optional
+> native `better-sqlite3`, and on **linux-x64 Node 20** the pinned 12.x line publishes **no prebuilt
+> binary** — `npm install` runs `prebuild-install || node-gyp rebuild` and exits 1 unless `python3`,
+> `make` and a C++ compiler are present. With them it compiles from source and works (measured on
+> the `node:20` image); without them the import fails (measured on `node:20-slim`). **Node 22+
+> installs a prebuilt binary and needs nothing.** ⚠️ `better-sqlite3@13` is **not** the workaround:
+> it installs on Node 20 and then **segfaults on the first `new Database()`**, which is why the
+> optional dependency stays at `^12.11.1`.
+>
+> Since `@cendor/tokenguard` **3.1.0** this only affects `SQLiteSink`. Below that version
+> `dist/sinks.js` imported `better-sqlite3` eagerly at module scope, so a missing native module made
+> the **whole `@cendor/tokenguard/sinks` subpath** unimportable — taking `QueueSink` and `OTelSink`,
+> neither of which touches SQLite, down with it. Upgrade if you are on an earlier 3.x.
+
 ## How it works
 
 ```mermaid
