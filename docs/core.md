@@ -95,8 +95,14 @@ discount, no double charge).
 
 **Register a price for a model the snapshot doesn't know.** An Azure/Foundry *deployment* name, a
 fine-tune, a Bedrock marketplace id or a local model is unpriced — cost comes back `None`/`null`
-and a **USD** cap silently never binds (a token cap still does). One line fixes it, and the
-registration survives `refresh()`:
+and a **USD** cap silently never binds (a token cap still does). Two ways in, and the common one
+first: **name the model the deployment serves**, or supply the rates yourself. Both survive
+`refresh()`.
+
+**Deployment name → the base model's rates.** On Azure and Azure AI Foundry the id a call reports is
+the *deployment* name you chose, not a model id, so it is in no price table on earth. You always know
+which model sits behind it; `register_deployment` says so once, instead of making you find and
+re-type a rate card:
 
 <!-- tabs: lang -->
 <!-- tab: Python -->
@@ -104,8 +110,8 @@ registration survives `refresh()`:
 ```python
 from cendor.core import prices
 
-prices.register_model_price("my-deployment", input=2.50, output=10.00)   # USD per 1M tokens
-prices.register("my-deployment", {"input": "0.0000025", "output": "0.00001"})  # or per-token
+prices.register_deployment("prod-chat", like="gpt-4o")             # since core 1.16.0
+prices.estimate("prod-chat", 1_000, output_tokens=500)             # → Decimal('0.007500000')
 ```
 
 <!-- tab: TypeScript -->
@@ -113,15 +119,56 @@ prices.register("my-deployment", {"input": "0.0000025", "output": "0.00001"})  #
 ```ts
 import { prices } from '@cendor/core';
 
-prices.register('my-deployment', { input: '0.0000025', output: '0.00001' }); // per-token Decimal
+prices.registerDeployment('prod-chat', { like: 'gpt-4o' });        // since @cendor/core 3.2.0
+prices.estimate('prod-chat', 1_000, { outputTokens: 500 });        // → 0.0075
+```
+
+<!-- /tabs -->
+
+It is an **explicit** mapping you supply — deliberately not `-preview`/`-latest` alias guessing,
+which was considered and rejected (a confidently wrong price is worse than an honest `None`), and
+nothing is inferred from the deployment's name. `like` goes through the same lookup reduction a real
+call does, so a dated or Bedrock-decorated base id works (`like="gpt-4o-2024-08-06"`). **Every** rate
+key is copied, cached and cache-write rates included. Three properties worth knowing, all
+deliberate:
+
+- **An unknown `like` raises `UnknownModelError`.** Registering nothing and leaving the deployment
+  quietly unpriced would reproduce the exact silence this function exists to remove.
+- **Copy-at-registration, not a live alias.** The base's rates are read *now*. A later `refresh()`
+  that reprices `gpt-4o` does **not** reprice `prod-chat` — call it again. The alternative would make
+  a deployment's cost depend on whether its base still exists in whatever table was last fetched.
+- Like every registration, it overrides a snapshot entry with the same id and survives `refresh()`.
+
+**Or supply the rates directly**, when you have the exact numbers and no base model to copy — a
+fine-tune, a negotiated rate, a local model:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import prices
+
+prices.register_model_price("my-finetune", input=2.50, output=10.00)   # USD per 1M tokens
+prices.register("my-finetune", {"input": "0.0000025", "output": "0.00001"})  # or per-token
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { prices } from '@cendor/core';
+
+prices.register('my-finetune', { input: '0.0000025', output: '0.00001' }); // per-token Decimal
 // per-1M convenience: `registerModelPrice` from @cendor/sdk
 ```
 
 <!-- /tabs -->
 
-Since **core 1.15.0** this lives in `cendor-core` on the Python side too — a libraries-door user no
-longer needs the SDK distribution to price a deployment. `cendor.sdk.register_model_price` is now a
-thin re-export of `prices.register_model_price`, so existing code is unaffected.
+Since **core 1.15.0** the per-1M form lives in `cendor-core` on the Python side too — a
+libraries-door user no longer needs the SDK distribution to price a model.
+`cendor.sdk.register_model_price` is now a thin re-export of `prices.register_model_price`, so
+existing code is unaffected. In TypeScript the per-1M convenience is still `@cendor/sdk`'s;
+`prices.register` (per-token `Decimal`) and `prices.registerDeployment` are both on the libraries
+door.
 
 ### Cost provenance: reported vs estimated
 When a response carries a real billed cost (e.g. a gateway's `usage.cost`), `instrument()`
@@ -326,7 +373,8 @@ per provider and the [streaming](#streaming) note below.
 ```python
 prices.estimate("gpt-4o", input_tokens=1000, output_tokens=300, cached_tokens=200)  # -> Money
 prices.refresh(source="litellm")       # or "openrouter" | "azure" | a static-JSON URL
-prices.register_model_price("my-deployment", input=2.50, output=10.00)  # USD per 1M tokens
+prices.register_deployment("prod-chat", like="gpt-4o")                  # a deployment name
+prices.register_model_price("my-finetune", input=2.50, output=10.00)     # USD per 1M tokens
 ```
 
 <!-- tab: TypeScript -->
@@ -334,6 +382,7 @@ prices.register_model_price("my-deployment", input=2.50, output=10.00)  # USD pe
 ```ts
 prices.estimate('gpt-4o', 1000, { outputTokens: 300, cachedTokens: 200 });  // -> Money
 await prices.refresh(undefined, { source: 'litellm' });  // or 'openrouter' | 'azure' | a URL
+prices.registerDeployment('prod-chat', { like: 'gpt-4o' });              // a deployment name
 ```
 
 <!-- /tabs -->
@@ -343,6 +392,7 @@ await prices.refresh(undefined, { source: 'litellm' });  // or 'openrouter' | 'a
 | `estimate(model, input_tokens=, output_tokens=, cached_tokens=)` | `Money` | Price a call from the active table (Decimal, never float). |
 | `refresh(source=… \| url \| url, mapper=)` | — | Pull live rates from a no-auth JSON source; falls back silently to the last-good table. |
 | `register(model, rates)` | — | Register **per-token** rates for a model the snapshot doesn't know. Survives `refresh()`. (TS: `prices.register`.) |
+| `register_deployment(deployment, like=)` | `dict` | Price an Azure/Foundry **deployment name** by copying the rates of the base model it serves. Raises `UnknownModelError` if `like` isn't in the table. Copy-at-registration, not a live alias. Since core 1.16.0 / `@cendor/core` 3.2.0. (TS: `registerDeployment(deployment, { like })`.) |
 | `register_model_price(model, input=, output=, cached=, cache_write=, per="1M")` | `dict` | The per-1M/1K convenience over `register`. Python only; TS's twin is `registerModelPrice` in `@cendor/sdk`. |
 | `models()` · `snapshot_date()` · `source()` | — | Introspect the active table. |
 | `age_days()` · `is_stale(max_age_days=30)` | — | Freshness signals. |
