@@ -30,9 +30,9 @@ graph TD
     B -->|"chat callable"| OLL["ollama"]
     B -->|"none of the above"| NOOP["returned untouched"]
 
-    MSF["Microsoft Foundry deployment
-    (any model: GPT, DeepSeek, Grok, Llama…)"] -->|"standard OpenAI client
-    on /openai/v1/"| A
+    OAI --> MSF["Microsoft Foundry deployments land here —
+    ANY model: GPT, DeepSeek, Grok, Llama, Mistral, Phi…
+    standard OpenAI client on /openai/v1/"]
 
     classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
     classDef note fill:#EFF6FF,color:#1E3A8A,stroke:#93C5FD;
@@ -42,9 +42,9 @@ graph TD
 
 **Microsoft Foundry is not a separate branch, and that is the point of shape-based detection.** Every
 Foundry deployment — an OpenAI model or a non-OpenAI one (DeepSeek, Grok, Llama, Mistral, Phi, MAI) —
-is consumed with the standard `openai` client pointed at the v1 GA endpoint, so it *enters* the graph
-at the top and lands on the `openai` node. The model's maker never changes the client's shape, so
-capture is identical for all of them and nothing is special-cased. See
+is consumed with the standard `openai` client pointed at the v1 GA endpoint, so every one of them
+lands on the `openai` node. The model's maker never changes the client's shape, so capture is
+identical for all of them and nothing is special-cased. See
 [Microsoft Foundry](#microsoft-foundry-models-via-the-openai-sdk).
 
 An OpenAI client exposes both `chat.completions.create` and `responses.create` (plus their `parse`
