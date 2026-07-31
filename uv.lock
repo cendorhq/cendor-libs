@@ -293,7 +293,7 @@ provides-extras = ["embeddings"]
 
 [[package]]
 name = "cendor-contextkit"
-version = "1.0.3"
+version = "1.1.0"
 source = { editable = "packages/cendor-contextkit" }
 dependencies = [
     { name = "cendor-core" },
@@ -313,7 +313,7 @@ provides-extras = ["squeeze"]
 
 [[package]]
 name = "cendor-core"
-version = "1.16.0"
+version = "1.17.0"
 source = { editable = "packages/cendor-core" }
 dependencies = [
     { name = "tiktoken" },

@@ -1040,14 +1040,26 @@ published, `prompt_guard` is described only as a *prompt-injection classifier ad
   (`with_raw_response.create(…)` — Microsoft Agent Framework's shape and `langchain-openai`'s) is
   gated too from `cendor-guardrails` 1.6.1 with `cendor-core` ≥ 1.14.2; below those versions the
   extractor saw only the envelope and the stage silently skipped, so banned text was delivered.
-- ⚠️ **Known gap (TypeScript): a response consumed through an SDK *helper method* escapes the
-  standalone output stage.** `openai-node`'s `responses.parse` / `chat.completions.parse` are built
-  as `create(...)._thenUnwrap(...)`; measured, the same response that is **blocked** when awaited
-  directly **resolves** when reached that way — so a `withStructuredOutput()` call can deliver
-  banned text. Reproducer and status:
-  `plan/evidence-ripple-followup-2026-07-27/probe_n6_guardrail_helper.mjs`. Until it is closed, gate
-  structured-output responses with the SDK's in-loop output stage, or evaluate the parsed value
-  yourself with `apply(...)`. Python is unaffected.
+- **FIXED (TypeScript, needs `@cendor/core` ≥ 3.3.0): a response consumed through an SDK *helper
+  method* used to escape the standalone output stage.** `openai-node`'s `responses.parse` /
+  `chat.completions.parse` are built as `create(...)._thenUnwrap(...)`, and measured, the same
+  response that was **blocked** when awaited directly **resolved** when reached that way — so a
+  `withStructuredOutput()` call delivered banned text.
+
+  The mechanism turned out not to be the one first assumed, which is why an earlier attempt had not
+  closed it: the gate **did** run and **did** decide `block` (a `GuardrailDecision`
+  `keyword_deny:block` was on the bus every time), and its exception rejected core's capture chain —
+  which core deliberately marks handled so a `withResponse()`-only caller gets no noisy
+  unhandled-rejection warning. But `_thenUnwrap` derives a new promise from the **SDK's own** object,
+  so the promise the caller awaited had never touched that chain. Core now gates the derived promise,
+  so a block reaches whoever awaits it, while the SDK's own extras (`asResponse()`, a nested
+  `_thenUnwrap`) stay reachable. Evidence:
+  `plan/evidence-gapclose-2026-07-31/s3_probe_output_gate_helper.mjs`. Python was never affected —
+  there `parse` POSTs its own request, so it is its own instrumented target and sits on the one chain
+  the caller's value returns through (regression-pinned in
+  `cendor-guardrails/tests/test_output_gate_parse_helper.py`). On `@cendor/core` below 3.3.0 the
+  old advice still applies: gate structured-output responses with the SDK's in-loop output stage, or
+  evaluate the parsed value yourself with `apply(...)`.
 - **PII/secret detection isn't a built-in here** — one detection engine, kept in `acttrace`. Bridge
   it with `rules.custom` + `acttrace.scan`/`redact`, or use the SDK's ready-made `rules.pii()` /
   `secrets()` / `entropy()`. Coverage is exactly acttrace's catalogue (measured per-category on a

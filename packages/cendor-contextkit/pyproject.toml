@@ -1,6 +1,6 @@
 [project]
 name = "cendor-contextkit"
-version = "1.0.3"
+version = "1.1.0"
 description = "Fit a prompt into the model's token budget — add your messages and context, pin what must stay, and the least-important parts are dropped to make it fit."
 requires-python = ">=3.11"
 license = "Apache-2.0"

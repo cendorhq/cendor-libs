@@ -15,16 +15,46 @@ equals ``core.tokens.count(assemble(), model)`` for text content — what the mo
 from __future__ import annotations
 
 import inspect
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from cendor.core import bus, protocols, tokens
 
-__all__ = ["Block", "Context", "AssemblyReport", "BlockDecision", "BudgetError", "use_compressor"]
+__all__ = [
+    "AssemblyReport",
+    "Block",
+    "BlockDecision",
+    "BudgetError",
+    "Context",
+    "MissingCompressorError",
+    "MissingCompressorWarning",
+    "use_compressor",
+]
 
 # Built-in string strategies; ``Block.evict`` also accepts any core EvictionStrategy object.
 EvictStrategy = Literal["drop_oldest", "truncate", "summarize", "compress"]
+
+#: What ``Context`` does when a block asks for ``evict="compress"`` and no compressor is available.
+#: The block is TRUNCATED in that case — lossy and not reversible, unlike a compression — so this
+#: chooses how visible that substitution is. ``"note"`` is the historical behaviour (recorded on the
+#: block's ``BlockDecision``, and nothing else); ``"warn"`` also emits a
+#: :class:`MissingCompressorWarning`; ``"error"`` raises :class:`MissingCompressorError` instead of
+#: quietly truncating. Default ``"note"`` — this is additive, and no existing assembly changes.
+MissingCompressorMode = Literal["note", "warn", "error"]
+_MISSING_COMPRESSOR_MODES = ("note", "warn", "error")
+
+
+class MissingCompressorWarning(UserWarning):
+    """Emitted (only under ``on_missing_compressor="warn"``) when a ``compress`` block is truncated
+    because no compressor is available."""
+
+
+class MissingCompressorError(RuntimeError):
+    """Raised (only under ``on_missing_compressor="error"``) instead of truncating a ``compress``
+    block for which no compressor is available."""
+
 
 # Optional process-wide default compressor for evict="compress" blocks. contextkit doesn't care
 # *who* compresses — only that it matches core's Compressor protocol by shape. By default it
@@ -247,14 +277,21 @@ class Context:
         compressor: Any = None,
         order: OrderMode = "default",
         image_tokens: int | Callable[[dict], int] = 0,
+        on_missing_compressor: MissingCompressorMode = "note",
     ) -> None:
         if order not in _ORDERS:
             raise ValueError(f"order must be one of {_ORDERS}, got {order!r}")
+        if on_missing_compressor not in _MISSING_COMPRESSOR_MODES:
+            raise ValueError(
+                f"on_missing_compressor must be one of {_MISSING_COMPRESSOR_MODES}, "
+                f"got {on_missing_compressor!r}"
+            )
         self.budget_tokens = budget_tokens
         self.model = model
         self.reserve_output = reserve_output
         self._compressor = compressor
         self.order = order
+        self.on_missing_compressor = on_missing_compressor
         # Token cost per image part in multimodal blocks: a flat int, or a callable
         # (part_dict -> tokens) for resolution-aware estimates.
         self.image_tokens = image_tokens
@@ -707,10 +744,33 @@ class Context:
                 if tokens.count(small, self.model) > content_budget:
                     small = _truncate_to_tokens(small, content_budget, self.model, keep=block.keep)
                 return small, "compressed", "", handle
+            # No compressor: the block is TRUNCATED instead — content is discarded, not compressed,
+            # and the difference is not reversible. The note has always been recorded here, but a
+            # note lives in the AssemblyReport and nothing obliges a caller to read one, so a
+            # forgotten `contextkit[squeeze]` extra silently degraded every compress block in
+            # production. `on_missing_compressor` lets a caller pick how loud that is; the default
+            # is the historical "note", so nothing changes unless you ask for it.
+            note = "squeeze not installed; fell back to truncate"
+            if self.on_missing_compressor == "error":
+                raise MissingCompressorError(
+                    f"a {block.role!r} block asked for evict='compress' but no compressor is "
+                    "available, so its content would be TRUNCATED (lossy, and not reversible the "
+                    "way a compression is). Install the contextkit[squeeze] extra, pass "
+                    "Context(compressor=...), call use_compressor(...), or set "
+                    "on_missing_compressor='note' to accept truncation."
+                )
+            if self.on_missing_compressor == "warn":
+                warnings.warn(
+                    f"contextkit: a {block.role!r} block asked for evict='compress' but no "
+                    "compressor is available; its content was TRUNCATED instead. Install the "
+                    "contextkit[squeeze] extra or pass compressor=.",
+                    MissingCompressorWarning,
+                    stacklevel=2,
+                )
             return (
                 _truncate_to_tokens(text, content_budget, self.model, keep=block.keep),
                 "truncated",
-                "squeeze not installed; fell back to truncate",
+                note,
                 None,
             )
 

@@ -153,13 +153,47 @@ def remove_interceptor(fn: Callable[[Any], Any]) -> None:
             _interceptors.remove(fn)
 
 
-def _intercept(event: Any) -> Any:
+def _intercept(event: Any, kwargs: dict | None = None, provider: str = "") -> Any:
+    """Run the interceptor chain for one outgoing call.
+
+    **Ordering contract (core 1.17.0).** Two of the things an interceptor can return end the chain
+    differently, because they mean different things:
+
+    * a **response** (``cassette``'s replay) genuinely short-circuits — the provider is never
+      called, so nothing is left for a later interceptor to rewrite. The chain stops.
+    * a :class:`Reroute` does **not**. The call still goes to the provider, so every remaining
+      interceptor is still consulted — **against the rerouted call**, so each one sees the request
+      as it will actually be sent.
+
+    Before 1.17.0 a ``Reroute`` also stopped the chain, and what you lost was silent and in the
+    dangerous direction. Measured in
+    ``plan/evidence-gapclose-2026-07-31/s6_probe_interceptor_chain.py``: with a tokenguard clamp
+    registered before an ``acttrace.guard()``, the clamp fired and the PII went to the provider
+    **unredacted**; registered the other way round, the guard fired and the token cap **silently
+    never bound**. Which one you lost depended on registration order, which a user cannot see.
+
+    Reroutes compose in registration order and are applied as they arrive, so the second
+    interceptor's view of ``call.messages`` / ``call.model`` is the first one's output; when two
+    rewrite the same field, the later one wins. ``kwargs`` is ``None`` on the tool path — a
+    ``ToolCall`` has no provider request to rewrite, so a ``Reroute`` there keeps its old
+    short-circuit meaning rather than being silently dropped.
+    """
     with _interceptors_lock:
         interceptors = list(_interceptors)
     for fn in interceptors:
         result = fn(event)
-        if result is not MISS:
-            return result
+        if result is MISS:
+            continue
+        if isinstance(result, Reroute):
+            if kwargs is None:
+                return result  # tool path: no request kwargs to rewrite (see above)
+            _apply_reroute(event, kwargs, result, provider)
+            continue
+        return result  # a recorded response — the provider is not called at all
+    # Any reroutes are already applied to ``kwargs``, so the caller simply makes the real call.
+    # Returning MISS rather than a combined Reroute keeps the wrapper single-pathed: there is no
+    # longer a "rerouted" branch that re-applies anything, and ``call.metadata["rerouted"]`` still
+    # records that it happened.
     return MISS
 
 
@@ -366,7 +400,26 @@ def _find_targets(client: Any) -> list[tuple[Any, str, str]]:
         return targets  # an OpenAI-shaped client; don't also match the fallbacks below
     messages = getattr(client, "messages", None)
     if messages is not None and callable(getattr(messages, "create", None)):
-        return [(messages, "create", "anthropic")]
+        anthropic: list[tuple[Any, str, str]] = [(messages, "create", "anthropic")]
+        # `messages.stream(...)` — the streaming helper. In **Python** it is not built on `create`:
+        # it builds its own `partial(self._post, "/v1/messages", …, stream=True)` and hands that to
+        # a MessageStreamManager, so wrapping `create` saw nothing at all. Measured on
+        # anthropic 0.120.2: 0 LLMCalls through every consumption path (iteration, `.text_stream`,
+        # `.get_final_message()`) while the POST plainly happened. It needs its own target, and it
+        # is a *stream-manager* target — the value it returns is a context manager that issues the
+        # request on `__enter__`, not an iterable (see :class:`_ProxyStreamManager`).
+        # In **TypeScript** the same helper *is* built on `create({stream:true}).withResponse()`,
+        # so `@cendor/core` captures it through `create` already and a target there would
+        # double-count — the same asymmetry openai's `parse` has, for the same codegen reason.
+        if callable(getattr(messages, "stream", None)):
+            anthropic.append((messages, "stream", "anthropic_stream"))
+        # `messages.parse(...)` — the structured-output helper, and the Anthropic twin of the openai
+        # `responses.parse` / `chat.completions.parse` gaps closed in 1.14.1 / 1.14.2. It POSTs its
+        # own request rather than delegating to `create` (measured: 0 LLMCalls before this), so
+        # wrapping both cannot double-count. `callable()`-gated for SDKs that predate it.
+        if callable(getattr(messages, "parse", None)):
+            anthropic.append((messages, "parse", "anthropic"))
+        return anthropic
     if callable(getattr(client, "converse", None)):  # AWS Bedrock Converse API
         bedrock: list[tuple[Any, str, str]] = [(client, "converse", "bedrock")]
         # A Bedrock client also exposes converse_stream (L3): no stream= kwarg, and the iterable
@@ -406,6 +459,7 @@ _PUBLIC_PROVIDER = {
     "openai_embeddings": "openai",
     "bedrock_stream": "bedrock",
     "google_stream": "google",
+    "anthropic_stream": "anthropic",
 }
 
 #: Internal tags whose request shape is Gemini's (``contents``, not ``messages``).
@@ -418,19 +472,72 @@ def _public_provider(provider: str) -> str:
 
 
 #: Detection tags whose target is *always* streaming (no ``stream=True`` kwarg to key off) — the
-#: iterable arrives from a dedicated method. Bedrock's ``converse_stream`` and google-genai's
-#: ``generate_content_stream`` are the two.
-_ALWAYS_STREAM = frozenset({"bedrock_stream", "google_stream"})
+#: iterable arrives from a dedicated method. Bedrock's ``converse_stream``, google-genai's
+#: ``generate_content_stream`` and Anthropic's ``messages.stream`` are the three.
+_ALWAYS_STREAM = frozenset({"bedrock_stream", "google_stream", "anthropic_stream"})
+
+#: Always-stream tags whose method returns a **stream manager** rather than an iterable: the request
+#: is issued by the manager's ``__enter__``/``__aenter__``, which then builds the SDK's own helper
+#: object around it. Anthropic's ``messages.stream`` is the only one — see
+#: :class:`_ProxyStreamManager` for why the raw stream underneath is the counting seam.
+_STREAM_MANAGER = frozenset({"anthropic_stream"})
 
 #: Internal tag → the provider the streaming extractors (:func:`_stream_text`/:func:`_stream_usage`)
-#: should use for a wrapped stream. ``bedrock_stream`` reuses the plain ``bedrock`` branches and
-#: ``google_stream`` the ``google`` ones; ``openai_responses`` keeps its own (distinct stream event
-#: shape), so it is deliberately absent.
-_STREAM_PROVIDER = {"bedrock_stream": "bedrock", "google_stream": "google"}
+#: should use for a wrapped stream. ``bedrock_stream`` reuses the plain ``bedrock`` branches,
+#: ``google_stream`` the ``google`` ones and ``anthropic_stream`` the ``anthropic`` ones;
+#: ``openai_responses`` keeps its own (distinct stream event shape), so it is deliberately absent.
+_STREAM_PROVIDER = {
+    "bedrock_stream": "bedrock",
+    "google_stream": "google",
+    "anthropic_stream": "anthropic",
+}
 
 
 def _stream_provider(provider: str) -> str:
     return _STREAM_PROVIDER.get(provider, provider)
+
+
+#: True while a stream-manager wrapper is issuing its own request, so a helper that internally rides
+#: the **wrapped** ``create`` is accounted once (by the enclosing wrapper) instead of twice.
+#:
+#: Measured on anthropic 0.120.2: Python's ``messages.stream`` POSTs its own request and never
+#: touches ``create``, so nothing is suppressed today. The guard exists because the reverse *is*
+#: true in TypeScript — the same helper there is built on ``create({stream:true})`` — and a Python
+#: SDK adopting that shape would otherwise double-charge every budget and emit two ``LLMCall``s for
+#: one HTTP request. Task-local, so a concurrent call in another task is unaffected; the only code
+#: that ever runs inside the window is the provider SDK's own method and its manager's entry.
+_in_stream_manager: ContextVar[bool] = ContextVar("cendor_in_stream_manager", default=False)
+
+
+@contextmanager
+def _stream_manager_scope() -> Iterator[None]:
+    token = _in_stream_manager.set(True)
+    try:
+        yield
+    finally:
+        _in_stream_manager.reset(token)
+
+
+def _invoke(fn: Any, args: tuple, kwargs: dict, guarded: bool) -> Any:
+    """Call the wrapped method, holding the reentrancy guard when the target is a stream manager.
+
+    A helper that issues its request at *call* time rather than on manager entry (which is exactly
+    what the TypeScript ``MessageStream.createMessage`` does) would otherwise reach the wrapped
+    ``create`` outside the guard and be accounted twice. One extra frame per request — the per-chunk
+    hot path is untouched.
+    """
+    if not guarded:
+        return fn(*args, **kwargs)
+    with _stream_manager_scope():
+        return fn(*args, **kwargs)
+
+
+async def _ainvoke(fn: Any, args: tuple, kwargs: dict, guarded: bool) -> Any:
+    """Async counterpart of :func:`_invoke`."""
+    if not guarded:
+        return await fn(*args, **kwargs)
+    with _stream_manager_scope():
+        return await fn(*args, **kwargs)
 
 
 def _accepts_stream_options(fn: Any) -> bool:
@@ -467,6 +574,9 @@ def _returns_awaitable(fn: Any) -> bool:
 
 def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
     always_stream = provider in _ALWAYS_STREAM
+    # A stream-manager target returns a context manager, not an iterable — the plain stream proxies
+    # would wrap the wrong object (and iterating a manager raises), so it gets its own pair.
+    stream_manager = provider in _STREAM_MANAGER
     # L1: inject stream_options={"include_usage": True} for OpenAI always; for HF only when the
     # installed hub's chat_completion explicitly accepts it (signature-gated — never blind).
     inject_usage = provider == "openai" or (
@@ -477,21 +587,26 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
 
         @functools.wraps(fn)
         async def awrapper(*args: Any, **kwargs: Any) -> Any:
+            if _in_stream_manager.get() and not stream_manager:
+                return await fn(*args, **kwargs)  # the enclosing stream-manager wrapper accounts it
             call, start = _pre(provider, args, kwargs, model_default)
             _ensure_stream_usage_options(inject_usage, kwargs)
             streaming = bool(kwargs.get("stream")) or always_stream
-            directive = _intercept(call)
-            if isinstance(directive, Reroute):
-                _apply_reroute(call, kwargs, directive, provider)
-                response = await fn(*args, **kwargs)
-            elif directive is not MISS:
+            # `_intercept` applies any Reroute to `kwargs` itself and keeps running the chain; only
+            # a recorded response short-circuits. See its docstring for the ordering contract.
+            directive = _intercept(call, kwargs, provider)
+            if directive is not MISS:
                 call.metadata["replayed"] = True
+                if stream_manager:
+                    return _ReplayStreamManager(call, directive, provider, start)
                 if streaming:
                     return _areplay_stream(call, directive, provider, start)
                 _post(call, directive, provider, start)
                 return directive
             else:
-                response = await fn(*args, **kwargs)
+                response = await _ainvoke(fn, args, kwargs, stream_manager)
+            if stream_manager:
+                return _ProxyStreamManager(call, response, provider, start)
             if streaming:
                 return _aproxy_stream(call, response, provider, start)
             _post(call, response, provider, start)
@@ -508,20 +623,23 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if _in_stream_manager.get() and not stream_manager:
+            return fn(*args, **kwargs)  # the enclosing stream-manager wrapper accounts it
         call, start = _pre(provider, args, kwargs, model_default)
         _ensure_stream_usage_options(inject_usage, kwargs)
         streaming = bool(kwargs.get("stream")) or always_stream
-        directive = _intercept(call)
-        if isinstance(directive, Reroute):
-            _apply_reroute(call, kwargs, directive, provider)
-            response = fn(*args, **kwargs)
-        elif directive is not MISS:
+        directive = _intercept(call, kwargs, provider)
+        if directive is not MISS:
             call.metadata["replayed"] = True
             # An interceptor short-circuited the call (``cassette`` replay). The recorded value
             # is plain data, so it must be handed back through the *contract of the method it
             # stands in for*: on an async client `await …create(...)` has to work, and a replayed
             # stream has to be ``async for``-able. Without this a replay raised
             # "object … can't be used in 'await' expression" on the two most common clients.
+            if stream_manager:
+                # An async client's `stream()` is itself a *sync* method returning an async manager,
+                # so one replay manager satisfies both `with` and `async with` (it implements both).
+                return _ReplayStreamManager(call, directive, provider, start)
             if awaitable_target[0]:
                 return _async_replay(call, directive, provider, start, streaming)
             if streaming:
@@ -529,11 +647,16 @@ def _wrap(fn: Any, provider: str, model_default: str = "") -> Any:
             _post(call, directive, provider, start)
             return directive
         else:
-            response = fn(*args, **kwargs)
+            response = _invoke(fn, args, kwargs, stream_manager)
         # L5: a sync-looking method that actually returns an awaitable is a misdetected async client
         # (``iscoroutinefunction()`` was False — decorated/partial/duck-typed method). A truly sync
         # client never returns an awaitable, so continuing on the awaited value is a zero-false-
         # positive repair: usage is captured instead of silently lost on the un-awaited coroutine.
+        if stream_manager:
+            # Both the sync and the async client hand back a manager here (`AsyncMessages.stream` is
+            # a plain `def`), and the proxy implements both protocols — so this one branch covers
+            # `with` and `async with` alike, before the isawaitable/streaming checks below.
+            return _ProxyStreamManager(call, response, provider, start)
         if inspect.isawaitable(response):
             awaitable_target[0] = True  # observed, not inferred: believe it for later replays
             return _async_continuation(call, response, provider, start, streaming)
@@ -578,6 +701,18 @@ async def _async_replay(
 #: ``input``; Gemini uses ``contents`` — but Gemini also needs its own value *shape*, so
 #: :func:`_apply_reroute` routes ``google`` through :func:`_gemini_contents`, not this table).
 _MESSAGES_KWARG = {"openai_responses": "input", "google": "contents", "google_stream": "contents"}
+
+#: Per-provider kwarg carrying the **model**, so ``Reroute(model=…)`` (tokenguard's
+#: ``on_exceed="downgrade"``) rewrites the field the provider actually reads. Everyone takes
+#: ``model=`` except Bedrock's Converse API, which takes ``modelId=``.
+#:
+#: Measured 2026-07-31, and the reason this table exists: without it the rewrite landed on a generic
+#: ``model`` member that Converse does not have, so a **lenient** client sent the ORIGINAL
+#: (expensive) model while the ``LLMCall`` — and with it the budget ledger, the audit chain and
+#: every span — recorded the cheap one, and a **strict** client (real boto3) raised
+#: ``Unknown parameter in input: {'model'}`` and never made the call at all. Either way
+#: ``on_exceed="downgrade"`` did not downgrade on Bedrock, silently and in the expensive direction.
+_MODEL_KWARG = {"bedrock": "modelId", "bedrock_stream": "modelId"}
 
 _MISSING: Any = object()  # so ``Reroute(messages=[])`` (a valid empty rewrite) is still detected
 
@@ -627,9 +762,13 @@ def _gemini_contents(messages: Any, original: Any) -> Any:
 def _apply_reroute(call: LLMCall, kwargs: dict, directive: Reroute, provider: str = "") -> None:
     updates = dict(directive.updates)
     messages = updates.pop("messages", _MISSING)
-    kwargs.update(updates)  # generic updates (model, max_tokens, …)
-    if "model" in updates:
-        call.model = updates["model"]
+    # `model` is mapped to the provider's own kwarg rather than assigned generically — see
+    # _MODEL_KWARG for what a generic assignment did to Bedrock.
+    model = updates.pop("model", _MISSING)
+    kwargs.update(updates)  # generic updates (max_tokens, temperature, …)
+    if model is not _MISSING:
+        kwargs[_MODEL_KWARG.get(provider, "model")] = model
+        call.model = model
     if messages is not _MISSING:
         # Rewrite the provider's own messages kwarg and keep the emitted event consistent with what
         # is actually sent. (If a Gemini caller passed contents positionally, set the kwarg form.)
@@ -1046,6 +1185,131 @@ class _AProxyStream:
         if name == "_stream":
             raise AttributeError(name)
         return getattr(self._stream, name)
+
+
+class _ProxyStreamManager:
+    """Wrap a provider's **stream manager** — a context manager that issues the request on entry.
+
+    Anthropic's ``messages.stream()`` does not return an iterable; it returns a
+    ``MessageStreamManager`` whose ``__enter__`` performs the HTTP request and builds the SDK's own
+    ``MessageStream`` helper around the raw SSE stream. That helper is the value the caller wants
+    (it owns ``.text_stream``, ``.get_final_message()``, ``.until_done()``, the event callbacks), so
+    this proxy hands back the **genuine SDK object** and instead substitutes the one thing
+    underneath it that every consumption path funnels through: ``_raw_stream``.
+
+    Measured on anthropic 0.120.2 — ``MessageStream.__iter__``, ``.text_stream`` and
+    ``.get_final_message()`` all resolve to ``self._raw_stream``, and the generators that do so are
+    lazy (they read the attribute on first ``next()``, i.e. after ``__enter__`` returned). So one
+    substitution counts the stream exactly once whichever path the caller takes, and none of the
+    helper's surface has to be re-implemented or forwarded.
+
+    Both protocols are implemented on one class deliberately: an **async** client's ``stream()`` is
+    itself a plain ``def`` returning an async manager, so the wrap site cannot tell the two apart —
+    the entered manager does, and ``__aenter__`` attaches the async proxy.
+
+    **Honest limit:** if a future SDK stops exposing that attribute, the proxy degrades to wrapping
+    the helper object itself — plain iteration is still counted and the call is still *visible*
+    (with an estimate flag when the caller consumed it another way) rather than silently invisible.
+    """
+
+    def __init__(self, call: LLMCall, manager: Any, provider: str, start: float) -> None:
+        self._manager = manager
+        self._call = call
+        self._provider = provider
+        self._start = start
+        self._proxy: Any = None
+
+    def __enter__(self) -> Any:
+        # The request is issued HERE, not at `stream()` — hold the reentrancy guard across it so a
+        # helper built on the wrapped `create` is accounted by this wrapper alone.
+        with _stream_manager_scope():
+            stream = self._manager.__enter__()
+        return self._attach(stream, _ProxyStream)
+
+    def __exit__(self, *exc: object) -> Literal[False]:
+        try:
+            self._manager.__exit__(*exc)
+        finally:
+            self._finalize()
+        return False
+
+    async def __aenter__(self) -> Any:
+        with _stream_manager_scope():
+            stream = await self._manager.__aenter__()
+        return self._attach(stream, _AProxyStream)
+
+    async def __aexit__(self, *exc: object) -> Literal[False]:
+        try:
+            await self._manager.__aexit__(*exc)
+        finally:
+            self._finalize()
+        return False
+
+    def _attach(self, stream: Any, proxy_cls: Any) -> Any:
+        """Substitute a counting proxy for the helper's raw stream and return the helper itself."""
+        raw = getattr(stream, "_raw_stream", _MISSING)
+        if raw is not _MISSING and not isinstance(raw, _ProxyStream | _AProxyStream):
+            proxy = proxy_cls(self._call, raw, _stream_provider(self._provider), self._start)
+            try:
+                stream._raw_stream = proxy
+            except Exception:  # noqa: BLE001 - a frozen/slotted helper must not break the call
+                pass
+            else:
+                self._proxy = proxy
+                return stream
+        # Degraded path (the raw stream is not substitutable): wrap the helper so at least plain
+        # iteration is counted and the call is still emitted, rather than silently uncaptured.
+        self._proxy = proxy_cls(self._call, stream, _stream_provider(self._provider), self._start)
+        return self._proxy
+
+    def _finalize(self) -> None:
+        # Idempotent by _ProxyStream's own flag; the SDK's manager exit already closes the helper,
+        # which closes our proxy — this only covers a manager that never did.
+        if self._proxy is not None:
+            self._proxy._finalize()
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_manager":
+            raise AttributeError(name)
+        return getattr(self._manager, name)
+
+
+class _ReplayStreamManager:
+    """A **replayed** stream-manager call: ``__enter__`` hands back the recorded chunk sequence.
+
+    A cassette replay has to satisfy the contract of the method it stands in for, so
+    ``with client.messages.stream(...) as s:`` must still work off recorded data. Implements both
+    protocols for the same reason :class:`_ProxyStreamManager` does.
+    """
+
+    def __init__(self, call: LLMCall, recorded: Any, provider: str, start: float) -> None:
+        self._call = call
+        self._recorded = recorded
+        self._provider = provider
+        self._start = start
+        self._proxy: Any = None
+
+    def __enter__(self) -> Any:
+        self._proxy = _replay_stream(self._call, self._recorded, self._provider, self._start)
+        return self._proxy
+
+    def __exit__(self, *exc: object) -> Literal[False]:
+        self._close()
+        return False
+
+    async def __aenter__(self) -> Any:
+        self._proxy = _areplay_stream(self._call, self._recorded, self._provider, self._start)
+        return self._proxy
+
+    async def __aexit__(self, *exc: object) -> Literal[False]:
+        self._close()
+        return False
+
+    def _close(self) -> None:
+        # Account the recording even if the caller entered the block and never iterated — matching
+        # _replay_stream's documented "finalize accounts for the full recording" behaviour.
+        if self._proxy is not None:
+            self._proxy._finalize()
 
 
 async def _aiter_list(items: list) -> Any:

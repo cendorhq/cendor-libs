@@ -2,6 +2,67 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.17.0] — 2026-07-31
+
+Two silent Anthropic bypasses closed, and the interceptor chain's ordering contract corrected.
+
+### Added
+- **`client.messages.stream(...)` is captured.** It was a documented silent bypass and the gap was
+  total: measured on `anthropic` 0.120.2, it emitted **zero** `LLMCall`s through every one of its
+  three consumption paths — iteration, `.text_stream`, and `.get_final_message()` — while the HTTP
+  POST plainly happened. Reachability was never theoretical: Semantic Kernel's Anthropic connector
+  streams through this helper. The cause is that `Messages.stream` does not delegate to
+  `messages.create`; it builds its own `partial(self._post, "/v1/messages", …, stream=True)` and
+  hands it to a `MessageStreamManager`, so the wrapped `create` had nothing to observe. It is now its
+  own instrument target, and a *stream-manager* one: the request is issued by the manager's
+  `__enter__`, so that is where the counting attaches. A `messages.stream()` call now runs pre-flight
+  interceptors before the request (a budget block issues **zero** HTTP requests; a `guard()` sends the
+  provider redacted messages), emits exactly one `LLMCall` on drain with the provider's own usage and
+  a TTFT, and joins `trace()` / cassette like the other always-stream targets. You still get the
+  SDK's genuine `MessageStream` back — core substitutes the one raw stream underneath it that every
+  consumption path funnels through, rather than re-implementing the helper's surface.
+- **`client.messages.parse(...)` is captured**, for the same reason: it POSTs its own request too, so
+  Anthropic structured output emitted nothing at all before. This is the Anthropic twin of the openai
+  `responses.parse` / `chat.completions.parse` gaps closed in 1.14.1 / 1.14.2.
+- **`on_missing_compressor`** on `contextkit.Context` — see that package's changelog.
+
+### Changed
+- **A `Reroute` no longer ends the interceptor chain; only a returned *response* does.** The two
+  return values mean different things: a recorded response (cassette's replay) means the provider is
+  never called, so nothing is left to rewrite and stopping is correct — while a `Reroute` still goes
+  to the provider, so every remaining interceptor must still be consulted, and against the rerouted
+  call. Before this, `_intercept` returned the first non-MISS result and a `Reroute` is one, so **the
+  first interceptor that rewrote a request silently skipped every one after it.** What that cost was
+  silent and in the dangerous direction, measured: with a `tokenguard` clamp registered before an
+  `acttrace.guard()`, the clamp fired and the PII went to the provider **unredacted**; registered the
+  other way round, the guard fired and the token cap **silently never bound**. Which one you lost
+  depended on registration order — something a user has no way to observe. Reroutes now compose in
+  registration order (later wins on the same field), each interceptor sees the request as it will
+  actually be sent, and a raise still stops everything. If you had code relying on one library
+  shadowing another, stop registering the one you did not want.
+
+### Fixed
+- **`Reroute(model=…)` now lands on the provider's own model kwarg — `modelId` on Bedrock's Converse
+  API.** It was assigned generically, so on Bedrock the rewrite went to a `model` member Converse
+  does not have: measured, a lenient client sent the **original, expensive** model while the
+  `LLMCall`, the budget ledger and the audit chain all recorded the cheap one, and real boto3 raised
+  `Unknown parameter in input: {'model'}` and never made the call. Either way `on_exceed="downgrade"`
+  did not downgrade on Bedrock. Found while analysing the ripple of the aws-sdk-v3 work, not from a
+  report.
+
+### Honest limits
+- The `o200k` proxy's Claude undercount is now **measured** rather than quoted, and it is worse than
+  Anthropic's own "~30%" wording suggests: against `messages.count_tokens` over 27 samples
+  (prose/code/JSON × 3 sizes, message-level on both sides), Opus 4.7 / Sonnet 5 / Fable 5 come out at
+  **1.49×** the proxy (range 1.32–1.66) and older ids such as Sonnet 4.5 / Haiku 4.5 at **1.14×**
+  (1.03–1.22) — so the older ids are not exempt either. **No scaling factor is applied, deliberately:**
+  the ratio tracks the content (JSON ~1.33, prose ~1.66), so a single number would over-count JSON by
+  ~12% while under-counting prose by ~11%, and a confidently wrong count is worse than a documented
+  estimate. `tokens.method()` keeps reporting `bpe-estimate`. `docs/core.md` carries the table and a
+  verified `tokens.register("anthropic", …)` recipe for exact counts.
+- `tool_runner` is no longer listed as a bypass because it no longer exists: `anthropic` 0.120.2
+  exposes no such method on `client.messages`. The Batch APIs remain post-hoc only, by design.
+
 ## [1.16.0] — 2026-07-31
 
 ### Added

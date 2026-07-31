@@ -120,7 +120,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 | `prices.register()` / per-1M convenience | ✅ (≥ 1.15.0) | ✅ | **Now real in both.** Python core gained a public `prices.register(model, rates)` **and** `prices.register_model_price(model, input=…, output=…, per="1M")`; `cendor.sdk.register_model_price` is a thin re-export, so a libraries-door user no longer needs the SDK distribution to price a deployment. TS core has `prices.register` (per-token); its per-1M twin is `registerModelPrice` in `@cendor/sdk`. Registrations survive `refresh()` in both |
 | `prices.refresh(source="azure")` | ✅ (≥ 1.15.0) | ✅ | The Azure Retail Prices source had **never** worked in Python: the URL carried raw spaces in its `$filter` and `urllib` refuses those, which `refresh()`'s never-raise contract turned into a silent `False`. Encoded, it maps 95 models. TS was unaffected (`fetch` encodes) |
 | Token counting | ✅ | ✅ | `tiktoken` ↔ `js-tiktoken` — exact counts match |
-| `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | Bedrock auto-detects a boto-shaped `converse()` **and `converse_stream`** (an always-stream target — TS since `@cendor/core` 0.12.2, Python since core 1.10); aws-sdk-v3 `send(ConverseCommand)` rides the SDK provider |
+| `instrument()` providers | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | ✅ 6 (OpenAI, Anthropic, HuggingFace, google-genai, Bedrock, Ollama) | Bedrock auto-detects a boto-shaped `converse()` **and `converse_stream`** (an always-stream target — TS since `@cendor/core` 0.12.2, Python since core 1.10). **aws-sdk-v3 `send(ConverseCommand)` / `send(ConverseStreamCommand)` is detected directly in TypeScript since `@cendor/core` 3.3.0** — no SDK and no shim needed; Python reaches Bedrock through boto3, which exposes `converse()` already |
 | `instrument()` streaming / interceptors | ✅ | ✅ | |
 | `instrument()` **Gemini streaming** (`generate_content_stream` / `generateContentStream`) | ✅ (≥ 1.15.0) | ✅ (≥ 3.1.0) | google-genai streams through a **separate method**, not a `stream=True` flag — so it needs its own always-stream target (same machinery as Bedrock `converse_stream`). Below those versions a streamed Gemini call emitted **nothing at all** (measured live, both languages). Usage comes from the **last** chunk's `usage_metadata`/`usageMetadata` (Gemini reports running totals on every chunk), falling back to a flagged offline estimate; `budget(..., on_exceed="break")` cuts mid-stream |
 | `instrument()` structured output (`responses.parse`, `chat.completions.parse`) | ✅ (`responses.parse` ≥ 1.14.1, `chat.completions.parse` ≥ 1.14.2) | ✅ (≥ 0.16.2) | **Captured in both — by different mechanisms.** In Python both entrypoints POST their own request, so each is its own instrumented target; before those versions a structured-output call emitted **nothing at all**, which is how `langchain-openai`'s `with_structured_output()` went unseen. In TypeScript the same names are *helpers built on* `create` (`create(...)._thenUnwrap(...)`), so the wrapped `create` already captures them exactly once and making them targets would double-count — 0.16.1 briefly did, and the real SDK then threw `Body is unusable` because the derived promise re-read the body; 0.16.2 memoizes the SDK's parse step and drops the target |
@@ -213,11 +213,19 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 - **Versions are independent across languages.** Python and TypeScript release on their own
   cadence; this page — not matching version numbers — is the parity contract.
 - **A couple of surfaces remain Python-only** — cassette's bundled `local_embedding_scorer` (bring
-  your own `embedFn` in TS). AWS Bedrock auto-detection matches a boto-shaped `converse()`;
-  aws-sdk-v3's `send(ConverseCommand)` is captured via the SDK provider rather than `instrument()`.
+  your own `embedFn` in TS), and Presidio-class NER (see below). **The Bedrock detection asymmetry is
+  closed:** `@cendor/core` 3.3.0 detects an aws-sdk-v3 `BedrockRuntimeClient` and captures
+  `send(new ConverseCommand(…))` / `send(new ConverseStreamCommand(…))` at the libraries door, so a
+  libs-only TypeScript Bedrock app no longer needs the SDK or a hand-written `converse()` shim. Any
+  other AWS command through the same `send` passes through untouched and emits nothing.
   (The LangChain / LangGraph callback handler is now in both languages — TS via
   `@cendor/core/langchain`; keyless Entra-ID auth for Azure is in both too — TS via the
   `azureADTokenProvider` option.)
+- **Anthropic's `messages.stream()` / `messages.parse()` are captured in both languages — by
+  different mechanisms.** In Python each POSTs its own request and so needs its own `instrument()`
+  target (added in core 1.17.0; before that both emitted zero events). In TypeScript both are helpers
+  built on `create`, so the wrapped `create` already captures them exactly once and a target there
+  would double-count. Parity of behaviour, not of mechanism — the same shape as openai's `parse`.
 - **NER backends differ by language, and it's not parity.** Python uses Microsoft Presidio (spaCy
   models); TypeScript uses the optional `compromise` engine (`npm install compromise`) —
   synchronous (acttrace's tamper-evident append is sync, so an async transformer NER can't plug in),

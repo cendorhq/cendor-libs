@@ -2,6 +2,21 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.0] — 2026-07-31
+
+### Added
+- **`Context(on_missing_compressor="note" | "warn" | "error")`** — how loud it is when a block asks
+  for `evict="compress"` and no compressor is available. That block is **truncated** instead, and
+  truncation is a different operation, not a slightly worse one: it discards content and gives you no
+  `Handle` to `.expand()`. The substitution has always been recorded as a note on the block's
+  `BlockDecision`, but a note lives inside the `AssemblyReport` and nothing obliges a caller to read
+  one — so a forgotten `cendor-contextkit[squeeze]` extra quietly degraded every compress block while
+  the assembly still reported success. `"warn"` adds a `MissingCompressorWarning`; `"error"` raises
+  `MissingCompressorError` naming every way out. **The default is `"note"`, i.e. unchanged** — no
+  existing assembly behaves differently. It fires only when the compressor is genuinely missing: a
+  block that asked for `truncate`, or one that fitted the budget and was never evicted, is untouched
+  in every mode.
+
 ## [1.0.3] — 2026-07-11
 AI-assistant onboarding: inline Type Teach ships inside the package, plus the bundled integration guide. No runtime behavior change for correct code.
 

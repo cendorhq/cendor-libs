@@ -79,7 +79,7 @@ than dropping it wholesale:
 | `"drop_oldest"` | Single block → skip it (`dropped`). A `messages` block → peel oldest turns, keep the newest that fit (`truncated`, note `kept N of M turns`). |
 | `"truncate"` | Cut to the remaining budget, keeping `keep="head"`/`"tail"`, leaving a `…[truncated]` marker. |
 | `"summarize"` | Call the block's `summarizer` to target size (falls back to truncate if none; async via `aassemble()`). |
-| `"compress"` | Shrink via `squeeze` (falls back to truncate if `squeeze` isn't installed). |
+| `"compress"` | Shrink via `squeeze`, keeping a reversible `Handle`. Falls back to **truncation** if no compressor is available — see `on_missing_compressor` under Honest limits, because truncation is lossy and a `Handle` is not. |
 | an `EvictionStrategy` object | Call its `evict(content, remaining_tokens, model)`. |
 
 ### The receipt
@@ -248,5 +248,44 @@ self-hosted monitor — the receipt on your own screen.
   to the tokenizer's accuracy, so `reserve_output` gives you headroom.
 - **Image budget is charged into `used`** even though `core.tokens` can't see image parts, so
   once a block carries images `used` deliberately exceeds the text-only recount.
-- **`evict="compress"` needs `cendor-contextkit[squeeze]`** (or an injected `compressor=`);
-  otherwise it truncates with a note.
+- **`evict="compress"` needs `cendor-contextkit[squeeze]`** (or an injected `compressor=`, or a
+  process-wide `use_compressor(...)`). Without one the block is **truncated** instead — and that is a
+  different operation, not a slightly worse one: truncation discards content and cannot be undone,
+  while a squeeze compression hands back a `Handle` you can `.expand()`.
+
+  The substitution has always been recorded as a note on the block's `BlockDecision`, but a note
+  lives inside the report and nothing obliges a caller to read one — so a forgotten extra quietly
+  degraded every `compress` block while the assembly still reported success. Since **1.1.0 /
+  `@cendor/contextkit` 3.1.0** you choose how loud it is, and the default is unchanged:
+
+  | `on_missing_compressor` | what happens |
+  |---|---|
+  | `"note"` (default) | truncate, record the note — exactly as before |
+  | `"warn"` | truncate, and emit a `MissingCompressorWarning` (`console.warn` in TS) |
+  | `"error"` | raise `MissingCompressorError` instead of truncating |
+
+  It fires **only** when the compressor is genuinely missing: a block that asked for `truncate`, or
+  one that fitted the budget and was never evicted, is untouched in every mode.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+  ```python
+  from cendor.contextkit import Block, Context
+
+  ctx = Context(budget_tokens=8000, model="gpt-4o", on_missing_compressor="error")
+  ctx.add(Block(long_document, priority=1, evict="compress"))
+  ctx.assemble()   # raises MissingCompressorError rather than silently truncating
+  ```
+<!-- tab: TypeScript -->
+  ```ts
+  import { Block, Context } from '@cendor/contextkit';
+
+  const ctx = new Context({
+    budgetTokens: 8000,
+    model: 'gpt-4o',
+    onMissingCompressor: 'error',
+  });
+  ctx.add(new Block({ content: longDocument, priority: 1, evict: 'compress' }));
+  await ctx.assemble(); // throws MissingCompressorError rather than silently truncating
+  ```
+<!-- /tabs -->

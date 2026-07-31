@@ -140,12 +140,39 @@ actually sent, and so a rewrite works across providers:
 
 - `Reroute(model=…)` also updates `call.model` — the downgrade `tokenguard` uses for
   `on_exceed="downgrade"`.
+- `Reroute(model=…)` also updates `call.model`, and is mapped to the provider's own **model** kwarg —
+  `modelId` on Bedrock's Converse API, `model` everywhere else. Without that map the rewrite landed
+  on a `model` member Converse does not have, so (measured 2026-07-31) a lenient client sent the
+  ORIGINAL expensive model while the `LLMCall`, the budget ledger and the audit chain all recorded the
+  cheap one, and real boto3 raised `Unknown parameter in input: {'model'}` instead of downgrading.
+  Fixed in 1.17.0 / `@cendor/core` 3.3.0.
 - `Reroute(messages=…)` rewrites the outbound messages — mapped to the provider's own kwarg
   (`messages` for Chat Completions / Anthropic / Bedrock / Ollama, `input` for the OpenAI
   Responses API, `contents` for Gemini) — and updates `call.messages`. This is how `acttrace`'s
   `guard()` does **redact-before-send**: the scrubbed messages, not the originals, reach the
   provider. Applies uniformly to sync, async, and streaming calls (the rewrite happens before the
   real call runs).
+
+**Ordering contract — a `Reroute` does not end the chain; a returned response does.** (Since 1.17.0
+/ `@cendor/core` 3.3.0.) The two return values mean different things, so they compose differently:
+
+| an interceptor returns | the remaining interceptors | the provider |
+|---|---|---|
+| `MISS` | run | is called |
+| `Reroute(…)` | **run, against the rerouted call** | is called with every rewrite applied |
+| a response (cassette replay) | are skipped | is **not** called |
+| raises | are skipped | is not called |
+
+Reroutes compose in registration order and are applied as they arrive, so a later interceptor sees
+`call.messages` / `call.model` as they will actually be sent; when two rewrite the same field, the
+later one wins.
+
+⚠️ **Before 1.17.0 a `Reroute` also ended the chain, and what you lost was silent.** With a
+`tokenguard` clamp registered before an `acttrace.guard()`, the clamp fired and the PII went to the
+provider **unredacted**; registered the other way round, the guard fired and the token cap **silently
+never bound**. Which one you lost depended on registration order — something a user has no way to
+observe. If you have code that relied on one library shadowing another, the fix is to stop
+registering the one you did not want.
 
 ### Ambient metadata providers
 Run context — *which* agent, *which* conversation, *which* audit decision — has to be captured at the
@@ -622,24 +649,95 @@ default).
   o-series, and earlier) — `tiktoken` is a required dependency, so a normal install counts those
   exactly (no opt-in). **The gpt-5.x line has no upstream `tiktoken` mapping yet**, so gpt-5.x ids
   count via the `o200k` BPE proxy (`tokens.method()` reports `bpe-estimate`, and upgrades to
-  `exact` automatically once tiktoken ships a mapping). Claude/Gemini use the same `o200k` proxy
-  (not their native tokenizer) — note Anthropic states its newest models (Opus 4.7+, Fable 5,
-  Mythos 5, Sonnet 5) use a new tokenizer producing **~30% more tokens** for the same text, so the
-  proxy systematically under-counts for that family. `register()` a precise counter to override
-  any family. Money is always exact (`Decimal`).
+  `exact` automatically once tiktoken ships a mapping). Money is always exact (`Decimal`).
+- **For Claude, the `o200k` proxy under-counts — and by more than Anthropic's own figure suggests.**
+  Claude and Gemini count through the same `o200k` proxy, not their native tokenizer. Anthropic
+  states its newest models (Opus 4.7+, Fable 5, Mythos 5, Sonnet 5) use a new tokenizer producing
+  "~30% more tokens" for the same text. **Measured** against Anthropic's own
+  `messages.count_tokens` endpoint — 27 samples, prose/code/JSON at three sizes each, message-level
+  on both sides so the comparison is like-for-like (2026-07-31, `anthropic` 0.120.2):
+
+  | ids | mean official ÷ proxy | range | so a cap of N binds at |
+  |---|---|---|---|
+  | Opus 4.7 / Sonnet 5 / Fable 5 | **1.49** | 1.32 – 1.66 | ≈ N ÷ 1.49 of Anthropic's tokens |
+  | Sonnet 4.5 / Haiku 4.5 | **1.14** | 1.03 – 1.22 | ≈ N ÷ 1.14 |
+
+  Three things follow, and all three are corrections to what this page said before. The undercount
+  for the new family is **~49%, not ~30%**. The older ids are **not** exempt — they under-count by
+  ~14%, so this is not only a new-tokenizer story. And **no single scaling factor is honest**,
+  because the ratio tracks the *content*: JSON lands at ~1.32–1.35, prose at ~1.49–1.66. A 1.49
+  factor would over-count JSON by ~12% and under-count prose by ~11%, which is why one is
+  deliberately not applied — a confidently wrong count is worse than a documented estimate.
+  `tokens.method()` keeps reporting `bpe-estimate` for these ids rather than pretending otherwise.
+
+  **What to do about it.** Set token caps with the ratio above in mind, or make the count exact for
+  your own workload with `tokens.register()` — including by delegating to Anthropic's endpoint,
+  which is authoritative because it is what the API bills against (it is a network call per count,
+  so it is a deliberate opt-in, not a default core could adopt without breaking local-first):
+
+  ```python
+  import anthropic
+  from cendor.core import tokens
+
+  client = anthropic.Anthropic()
+
+  def claude_exact(text_or_messages, model):
+      msgs = (
+          text_or_messages
+          if isinstance(text_or_messages, list)
+          else [{"role": "user", "content": text_or_messages}]
+      )
+      # The counter receives the id as it was CALLED. On Bedrock that is prefixed
+      # (`anthropic.claude-sonnet-5`), which Anthropic's own API rejects with a 404 — strip it.
+      return client.messages.count_tokens(
+          model=model.split(".", 1)[-1], messages=msgs
+      ).input_tokens
+
+  # register() takes the tokenizer FAMILY, not a model id, so one call covers every Claude id.
+  tokens.register("anthropic", claude_exact)
+  ```
+
+  Verified live: `tokens.method("claude-sonnet-5")` goes from `bpe-estimate` to `registered`, and a
+  short prose sample the proxy counted as 79 goes to 145. Registering the `anthropic` family leaves
+  every other family alone — `tokens.method("gpt-4o")` stays `exact`.
+
+  One caveat when you compare numbers yourself: `count_tokens` prices a whole **request**, so it
+  includes the per-message framing, while `tokens.count("…")` on a bare string does not. Compare
+  like for like — `tokens.count([{"role": "user", "content": text}], model)` — or short samples will
+  look worse than the tokenizer difference alone (that 79 → 145 is 1.84×; message-level it is
+  1.69×). The table above is message-level on both sides.
 - **Capture is best-effort, not a billing guarantee.** A call that *raises* before returning
   emits no `usage`/`cost`; a streamed response whose provider reports no usage is priced from
   an offline estimate (flagged `usage_estimated`). Bedrock's `converse_stream` entrypoint **is**
   captured — it is detected as an always-stream target and its usage rides the trailing `metadata`
   event (Python since core 1.10; TypeScript since `@cendor/core` 0.12.2).
-- **Some provider entrypoints bypass `instrument()` entirely (silent — no bus event):** Anthropic's
-  `messages.stream()` helper and `tool_runner`, and the Batch APIs, are **not wrapped** — calls
-  through them never reach the bus, so budgets/audit/tests don't see them. Call the wrapped
-  entrypoints (`chat.completions.create`, `responses.create`, `messages.create`, or Anthropic
-  `messages.create(stream=True)`) when you need governed calls. Reachability, measured: Semantic
-  Kernel's **Anthropic** connector streams through `messages.stream()`; nothing in Microsoft Agent
-  Framework, Semantic Kernel's OpenAI path, LangChain or the OpenAI Agents SDK touches `tool_runner`
-  or the Batch APIs.
+- **Anthropic's `messages.stream()` and `messages.parse()` are captured now — since 1.17.0 in
+  Python, and always in TypeScript.** They were both silent bypasses in Python: measured on
+  `anthropic` 0.120.2, `messages.stream()` emitted **zero** bus events through every one of its three
+  consumption paths (iteration, `.text_stream`, `.get_final_message()`) and `messages.parse()`
+  emitted zero too, while the HTTP POST plainly happened. Reachability was never theoretical —
+  Semantic Kernel's Anthropic connector streams through `messages.stream()`.
+
+  The cause is a **codegen difference, and it runs the opposite way in the two languages.** In
+  Python both helpers build their own `self._post("/v1/messages", …)`, so wrapping
+  `messages.create` saw nothing and each needs its own target. In **TypeScript** the same two are
+  helpers built *on* `create` (`create({…, stream: true}).withResponse()` and
+  `create(...).then(parseMessage)`), so the wrapped `create` already captures them exactly once and
+  adding targets there would **double-count** — which is why they are deliberately not targets in
+  `@cendor/core`. Same asymmetry, same reason, as openai's `parse`.
+
+  A `messages.stream()` call now fires pre-flight interceptors before the request (a budget blocks
+  with zero HTTP requests issued; a `guard()` redaction reaches the wire), emits exactly one
+  `LLMCall` on drain with the provider's own usage, and joins `trace()`/cassette like the other
+  always-stream targets. You still get the SDK's genuine `MessageStream` back, so `.text_stream`,
+  `.get_final_message()` and the event callbacks are unchanged.
+
+- **`tool_runner` no longer exists to bypass.** Earlier versions of this page listed it beside
+  `messages.stream()`; `anthropic` 0.120.2 exposes no `tool_runner` on `client.messages` at all
+  (`['batches', 'count_tokens', 'create', 'parse', 'stream', 'with_raw_response',
+  'with_streaming_response']`), so there is nothing there to wrap or to warn about. **The Batch APIs
+  are still post-hoc only** and by design: a batch is submitted now and settled later, so there is no
+  call to gate — reconcile it from the batch results.
   (Since 1.6.0 / 0.6.0, openai-shaped `embeddings.create` **is** wrapped — embedding calls emit an
   `LLMCall` with `metadata["embedding"] = True`, pre-flight budgets/guards apply, and the snapshot
   prices the `text-embedding-*` ids; embeddings on non-openai-shaped clients remain uncaptured.)
