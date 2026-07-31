@@ -397,7 +397,8 @@ async def on_message(context, state):
 ```ts
 // Not typechecked by `check:docs`: it imports the Microsoft host SDK, which is deliberately not a
 // dependency of any cendor package. The cendor call shapes below are executed instead — the
-// cookbook's `m365-custom-engine-js` recipe runs this handler end-to-end in CI on Node 20 and 22.
+// TypeScript cookbook's `m365-custom-engine-js` recipe runs this handler end-to-end in CI on Node
+// 20 and 22.
 import { Decimal, trace } from '@cendor/core';   // core re-exports decimal.js's Decimal
 import { GuardrailTripped, evaluateAsync } from '@cendor/guardrails';
 import { BudgetExceeded, track, withBudget } from '@cendor/tokenguard';
@@ -552,7 +553,9 @@ export async function replayTheWholeAgent(
 
 One scope per server lifetime also matters because the recorder writes the file on scope **exit** — a
 per-turn scope would leave only the last turn in it. Copy-paste versions of all of this, runnable
-offline: the cookbook's `agents/m365-custom-engine-py` and `agents/m365-custom-engine-js` recipes.
+offline: `agents/m365-custom-engine-py` in the [Python cookbook](https://github.com/cendorhq/cendor-cookbook)
+and `agents/m365-custom-engine-js` in the [TypeScript cookbook](https://github.com/cendorhq/cendor-cookbook-js)
+(one repo per toolchain; the recipe folder names are unchanged).
 
 #### Honest limits for this topology
 
