@@ -219,7 +219,7 @@ after its originating scope. A libs-only app (no SDK) surfaces the same attribut
 `gen_ai.agent.name`.
 
 **Agent names from a third-party framework.** When your app runs under LangChain, the OpenAI Agents
-SDK, or Azure AI Foundry Agents, attach the matching [framework adapter](core.md#framework-adapters) —
+SDK, or Microsoft Foundry Agents, attach the matching [framework adapter](core.md#framework-adapters) —
 it relays the *framework's* agent name (openai-agents / langchain) or agent + conversation id (Foundry)
 onto the same `gen_ai.agent.name` / `gen_ai.conversation.id` attributes, with no extra wiring.
 
@@ -332,7 +332,7 @@ await openaiAssistantScope({ assistantId: 'asst_abc', threadId: 'thread_xyz' }, 
 ```
 <!-- /tabs -->
 
-Azure AI Foundry Agent Service has its own adapter (`foundry_agent_scope` / `foundryAgentScope`) and now
+Microsoft Foundry Agent Service has its own adapter (`foundry_agent_scope` / `foundryAgentScope`) and now
 maps `agent_id` onto `gen_ai.agent.id` as well as `gen_ai.agent.name`.
 
 **All of these are attribution-only.** They attribute the calls made inside them; they do **not** make a

@@ -194,7 +194,8 @@ def register_model_price(
 def register_deployment(deployment: str, *, like: str) -> dict[str, Decimal]:
     """Price a **deployment name** by copying the rates of the base model it serves.
 
-    On Azure and Azure AI Foundry the id a call reports is the *deployment* name you chose
+    On Microsoft Foundry (formerly Azure AI Foundry) the id a call reports is the *deployment*
+    name you chose
     (``prod-gpt4o-eastus``), not a model id — so it is absent from every price table, its cost is
     ``None``, and a USD ``budget(...)`` silently never binds. You already know which model it
     serves; this says so once:

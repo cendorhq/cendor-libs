@@ -4,9 +4,10 @@
 provider work the day they ship. It supports six providers directly — **OpenAI, Anthropic, Hugging
 Face, Google Gemini, AWS Bedrock, and Ollama** — an OpenTelemetry ingestion path for managed
 runtimes, and a callback handler for **LangChain / LangGraph** (see
-[Frameworks](#frameworks-langchain--langgraph)). **Azure OpenAI and Azure AI Foundry models need no
-seventh provider**: they are the OpenAI client shape, so they are detected as `openai`. Per-provider
-setup ends with the case where your agent runs inside somebody else's **host process** — a
+[Frameworks](#frameworks-langchain--langgraph)). **Microsoft Foundry (formerly Azure AI Foundry)
+needs no seventh provider** — *every* model in it, OpenAI-made or not, is called through the OpenAI
+client shape, so all of them are detected as `openai`. Per-provider setup ends with the case where
+your agent runs inside somebody else's **host process** — a
 [Microsoft 365 Agents SDK custom engine agent](#microsoft-365-agents-sdk-custom-engine-agent).
 
 ## How detection works
@@ -29,19 +30,22 @@ graph TD
     B -->|"chat callable"| OLL["ollama"]
     B -->|"none of the above"| NOOP["returned untouched"]
 
-    OAI --> AZ["Azure OpenAI + Azure AI Foundry
-    arrive here — same client shape"]
+    MSF["Microsoft Foundry deployment
+    (any model: GPT, DeepSeek, Grok, Llama…)"] -->|"standard OpenAI client
+    on /openai/v1/"| A
 
     classDef seam fill:#2563EB,color:#ffffff,stroke:#1E40AF;
     classDef note fill:#EFF6FF,color:#1E3A8A,stroke:#93C5FD;
     class A seam;
-    class AZ note;
+    class MSF note;
 ```
 
-**Azure and Azure AI Foundry are not separate branches** — that is the point of shape-based detection.
-Both are consumed with the standard `openai` client pointed at the v1 GA endpoint, so they land on the
-`openai` node and nothing about their capture is special-cased. See
-[Azure AI Foundry](#azure-ai-foundry-models-via-the-openai-sdk).
+**Microsoft Foundry is not a separate branch, and that is the point of shape-based detection.** Every
+Foundry deployment — an OpenAI model or a non-OpenAI one (DeepSeek, Grok, Llama, Mistral, Phi, MAI) —
+is consumed with the standard `openai` client pointed at the v1 GA endpoint, so it *enters* the graph
+at the top and lands on the `openai` node. The model's maker never changes the client's shape, so
+capture is identical for all of them and nothing is special-cased. See
+[Microsoft Foundry](#microsoft-foundry-models-via-the-openai-sdk).
 
 An OpenAI client exposes both `chat.completions.create` and `responses.create` (plus their `parse`
 twins and `embeddings.create`); a `google-genai` `Client` exposes `models.generate_content`,
@@ -67,7 +71,7 @@ without `instrument()` ever inspecting a client, and they are easy to confuse fo
 
 ⚠️ These are **two separate Microsoft integrations**, and picking the wrong one fails quietly:
 `FoundryAdapter` is not the M365 path, and driving the M365 path through it returns a valid-looking
-Activity and raises nothing. Azure AI Foundry *models* (the row above, via the OpenAI SDK) are a third
+Activity and raises nothing. Microsoft Foundry *models* (the row above, via the OpenAI SDK) are a third
 thing again, and those **are** detected.
 
 ## Per-provider setup
@@ -113,7 +117,7 @@ await client.embeddings.create({ model: 'text-embedding-3-small', input: '…' }
 
 Embedding calls (since core 1.6.0 / 0.6.0) emit an `LLMCall` with `metadata["embedding"] = True`,
 ride the same pre-flight interceptor pass (budgets can block, guards can redact-before-send), and
-are priced from the snapshot's `text-embedding-*` rows. Azure OpenAI shares the client shape, so
+are priced from the snapshot's `text-embedding-*` rows. Microsoft Foundry shares the client shape, so
 its embeddings are captured the same way.
 The Responses API (default for new OpenAI apps and the Agents SDK) reports `input_tokens`/
 `output_tokens`, with cached tokens under `input_tokens_details.cached_tokens` and reasoning under
@@ -141,11 +145,19 @@ await client.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 256, mess
 
 <!-- /tabs -->
 
-### Azure AI Foundry (models via the OpenAI SDK)
-Foundry deployments are consumed with the **standard `openai` client** pointed at the **v1 GA
-endpoint** — `base_url = <endpoint>/openai/v1/`, no `api-version`. That is Microsoft's current
-guidance, and it is also `instrument()`'s native detection target, so nothing about capture is
-special-cased. Call your **deployment name** as the model (Azure keys on deployment, not model).
+### Microsoft Foundry (models via the OpenAI SDK)
+**Microsoft Foundry** (formerly Azure AI Foundry) deployments are consumed with the **standard
+`openai` client** pointed at the **v1 GA endpoint** — `base_url = <endpoint>/openai/v1/`, no
+`api-version`. That is Microsoft's current guidance, and it is also `instrument()`'s native detection
+target, so nothing about capture is special-cased. Call your **deployment name** as the model (Foundry
+keys on deployment, not model).
+
+**This includes the non-OpenAI models.** DeepSeek, Grok, Llama, Mistral, Phi and MAI deployments go
+through the *same* OpenAI-shaped client and the same endpoint — Microsoft's own samples call
+`DeepSeek-V3.1` that way — so they are captured as `provider="openai"` with exact usage, exactly like
+a `gpt-4o` deployment. There is no per-model-family setup, and no such thing as a "DeepSeek provider"
+to look for. What *does* differ for them is **price**, not capture — see
+[Pricing a deployment name](#pricing-a-deployment-name).
 
 Three endpoint forms all work: `https://<res>.openai.azure.com` (Azure OpenAI models),
 `https://<res>.services.ai.azure.com` (Foundry Models — DeepSeek, Grok, Llama, …), and the
@@ -171,14 +183,6 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 token = get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")
 client = instrument(OpenAI(base_url=f"{endpoint}/openai/v1/", api_key=token))
 ```
-```python
-# Already building an AIProjectClient? Its OpenAI client is a plain `openai.OpenAI` on /openai/v1 —
-# hand it straight to instrument(). `azure-ai-projects` is YOUR dependency, never cendor's.
-from azure.ai.projects import AIProjectClient
-project = AIProjectClient(endpoint=os.environ["AZURE_PROJECT_ENDPOINT"],
-                          credential=DefaultAzureCredential())
-client = instrument(project.get_openai_client())
-```
 
 <!-- tab: TypeScript -->
 
@@ -191,16 +195,55 @@ const client = instrument(new OpenAI({
   apiKey: process.env.AZURE_OPENAI_API_KEY }));
 await client.chat.completions.create({ model: '<your-deployment-name>', messages: [/* ... */] });
 ```
+
+<!-- /tabs -->
+
+#### With the Foundry SDK (`azure-ai-projects` / `@azure/ai-projects`)
+
+If your app already builds an `AIProjectClient`, hand its OpenAI client straight to `instrument()`.
+`get_openai_client()` / `getOpenAIClient()` returns a **plain `OpenAI` client** on
+`<endpoint>/openai/v1`, so there is nothing Foundry-specific for cendor to know — and **zero cendor
+code was needed** to support this path, which is why it works for `responses.create` and every model
+in the project, not a blessed subset. Verified live in both languages.
+
+`azure-ai-projects` / `@azure/ai-projects` is **your** dependency; cendor never pulls it. The project
+endpoint is the one the portal shows,
+`https://<res>.services.ai.azure.com/api/projects/<project>`, and the client authenticates with
+Microsoft Entra ID (`DefaultAzureCredential` — `az login`, a managed identity, or a service
+principal). Do **not** reach for the `[foundry]` extra here: that is the *attribution adapter* for the
+Agent Service, a different integration.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+from cendor.core import instrument
+
+project = AIProjectClient(endpoint=os.environ["AZURE_PROJECT_ENDPOINT"],
+                          credential=DefaultAzureCredential())
+client = instrument(project.get_openai_client())
+client.responses.create(model="<your-deployment-name>", input="…")   # detected as openai
+```
+
+<!-- tab: TypeScript -->
+
 ```ts
-// Already building an AIProjectClient? Its OpenAI client is a plain `OpenAI` on /openai/v1 —
-// hand it straight to instrument(). `@azure/ai-projects` is YOUR dependency, never cendor's.
 import { AIProjectClient } from '@azure/ai-projects';
 import { DefaultAzureCredential } from '@azure/identity';
+import { instrument } from '@cendor/core';
+
 const project = new AIProjectClient(process.env.AZURE_PROJECT_ENDPOINT ?? '', new DefaultAzureCredential());
-const foundry = instrument(project.getOpenAIClient());
+const client = instrument(project.getOpenAIClient());
+await client.responses.create({ model: '<your-deployment-name>', input: '…' });
 ```
 
 <!-- /tabs -->
+
+One cross-language difference: the Python package documents an `api_key=` override on
+`get_openai_client(...)`, while the JS one always overwrites `apiKey` with its Entra token provider —
+so in TypeScript authentication goes through the constructor's credential.
 
 > **Legacy note — `AzureOpenAI` still works.** An older app builds `openai.AzureOpenAI` /
 > `new AzureOpenAI({...})` with an `api_version`. Detection is **structural**, so those clients are
@@ -214,6 +257,14 @@ const foundry = instrument(project.getOpenAIClient());
 > rejects `max_tokens` and names `max_completion_tokens` instead — a deployment name cannot tell you
 > which family it is, so read the error rather than guessing. (On the SDK door, `cendor-sdk` ≥ 1.21.0
 > / `@cendor/sdk` ≥ 3.1.0 does that for you.)
+
+> ⚠️ **`azure-ai-inference` is a different client, and it is captured by nothing.** The Azure AI
+> Inference beta SDK (`ChatCompletionsClient`, the `/models` route) is **not** an `instrument()`
+> detection target: hand one to `instrument()` and it is returned untouched, emitting **zero** events
+> — so budgets never bind, gates never fire, and the audit chain stays empty while your app looks
+> like it is working. Microsoft **deprecated it and retires it on 26 August 2026**, with the GA
+> `/openai/v1` API above as the replacement. If you are on it, that migration is the fix; there is no
+> cendor-side option.
 
 #### Pricing a deployment name
 
@@ -244,9 +295,51 @@ prices.registerDeployment('prod-gpt4o-eastus', { like: 'gpt-4o' });
 
 It copies `like`'s rates **at registration** and survives `prices.refresh()`; a later refresh that
 reprices `gpt-4o` does not reprice the deployment (call it again to pick that up), and an unknown
-`like` raises rather than leaving the deployment quietly unpriced. If you have the rate card instead,
-use `register_model_price(...)` / `registerModelPrice(...)`. Cendor never guesses a price from an id's
-shape — see [tokenguard → Unpriced models](tokenguard.md#unpriced-models--a-usd-blind-spot).
+`like` raises rather than leaving the deployment quietly unpriced. Cendor never guesses a price from an
+id's shape — see [tokenguard → Unpriced models](tokenguard.md#unpriced-models--a-usd-blind-spot).
+
+**When there is no base model to copy, give the rate card itself.** This is the normal case for the
+**non-OpenAI** Foundry models: the bundled snapshot has no DeepSeek, Mistral or Phi rows, so
+`register_deployment(..., like="DeepSeek-V3.1")` correctly **raises** instead of inventing a number.
+Type the two prices from your Foundry pricing page — they are quoted in **USD per 1M tokens**, which is
+exactly what this takes:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import prices
+
+prices.register_model_price("prod-deepseek", input=1.25, output=5.00)   # USD per 1M tokens
+prices.estimate("prod-deepseek", 1_000, output_tokens=500)              # → Decimal('0.00375')
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { prices } from '@cendor/core';
+
+prices.registerModelPrice('prod-deepseek', { input: 1.25, output: 5.0 });  // USD per 1M tokens
+prices.estimate('prod-deepseek', 1_000, { outputTokens: 500 });            // → 0.00375
+```
+
+<!-- /tabs -->
+
+$1.25 per 1M input × 1,000 tokens = $0.00125, plus $5.00 per 1M output × 500 = $0.0025 — so
+`$0.00375`, stored as exact per-token `Decimal`, never a float. `per="1K"` / `per: '1K'` (or
+`"token"`) if your card is quoted differently, and `cached=` / `cacheWrite=` when you have those
+rates too. `register_model_price` is in `cendor-core` since 1.15.0 and in `@cendor/core` since
+**3.4.0** (`@cendor/sdk`'s twin still works); `cendor.sdk.register_model_price` is a thin re-export.
+
+> **Honest limit — a `model-router` deployment cannot be priced this way.** With Foundry's model
+> router the id your call *reports* is `model-router`, while Foundry picks a different underlying model
+> per request and bills you at **that** model's rates. Tokens stay exact, but no single registration
+> can be right for every routed call, so USD attribution under model router is not something cendor
+> supports today. If a USD cap has to bind, restrict the router to a subset and register the **most
+> expensive** member — that over-estimates rather than under-estimates, which is the safe direction.
+> (Microsoft returns the model that actually served the call on the response, so per-call attribution
+> is possible in principle; making cendor read it is recorded as future work, not a shipped feature.
+> This page will say so when that changes.)
 
 ### Google Gemini
 Both SDKs are detected — the current `google-genai` (model from the kwarg) and the legacy

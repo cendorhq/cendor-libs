@@ -8,7 +8,7 @@ stable agent id, and Cendor was dropping all three on the floor (measured 2026-0
   → ``gen_ai.agent.id`` · ``gen_ai.conversation.id``
 * **OpenAI Assistants** — ``assistant_id`` and the thread id
   → ``gen_ai.agent.id`` · ``gen_ai.conversation.id``
-* **Azure AI Foundry Agent Service** — ``agent_id`` / ``thread_id``; see :mod:`cendor.core.foundry`
+* **Microsoft Foundry Agent Service** — ``agent_id`` / ``thread_id``; see :mod:`cendor.core.foundry`
 
 Each is an **adapter**, exactly like :mod:`cendor.core.foundry` and
 :mod:`cendor.core.openai_agents`: the framework owns the identity, the adapter forwards it, and

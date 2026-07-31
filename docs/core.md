@@ -99,7 +99,8 @@ and a **USD** cap silently never binds (a token cap still does). Two ways in, an
 first: **name the model the deployment serves**, or supply the rates yourself. Both survive
 `refresh()`.
 
-**Deployment name → the base model's rates.** On Azure and Azure AI Foundry the id a call reports is
+**Deployment name → the base model's rates.** On Microsoft Foundry (formerly Azure AI Foundry) the
+id a call reports is
 the *deployment* name you chose, not a model id, so it is in no price table on earth. You always know
 which model sits behind it; `register_deployment` says so once, instead of making you find and
 re-type a rate card:
@@ -277,7 +278,7 @@ nothing** (core's zero-provider fast path holds until you attach).
   `observeOpenAIAgents` (extra `[openai-agents]`). The agent's model calls ride the standard OpenAI
   client, so `instrument()` still captures **tokens, cost, and streaming** — the adapter supplies only
   the agent name, scoped per turn (set at start / handoff, cleared at end).
-- **Azure AI Foundry Agents** — `cendor.core.foundry` / `@cendor/core/foundry` (extra `[foundry]`).
+- **Microsoft Foundry Agent Service** — `cendor.core.foundry` / `@cendor/core/foundry` (extra `[foundry]`).
   Observes thread-run creation and stamps `agent` + `conversation_id`. **Attribution only** — the model
   runs server-side, so there is no per-step token/cost here (an honest limit).
 
@@ -293,7 +294,7 @@ from openai import AsyncOpenAI
 instrument(AsyncOpenAI())
 await Runner.run(Agent(name="Billing"), "refund my order", hooks=CendorAgentHooks())
 
-# Azure AI Foundry — attribution only (model runs server-side)
+# Microsoft Foundry Agent Service — attribution only (model runs server-side)
 from cendor.core.foundry import observe_foundry_agents
 observe_foundry_agents(client)                      # wraps client.runs.{create,create_and_process,stream}
 client.runs.create_and_process(thread.id, agent_id=agent.id)  # events carry agent + conversation_id
@@ -312,7 +313,7 @@ const runner = new Runner();
 observeOpenAIAgents(runner);
 await runner.run(new Agent({ name: 'Billing' }), 'refund my order');
 
-// Azure AI Foundry — attribution only (model runs server-side)
+// Microsoft Foundry Agent Service — attribution only (model runs server-side)
 import { observeFoundryAgents } from '@cendor/core/foundry';
 observeFoundryAgents(client);                        // wraps client.runs.{create,createAndPoll,createThreadAndRun}
 await client.runs.createAndPoll(thread.id, agent.id); // events carry agent + conversation_id

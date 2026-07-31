@@ -303,5 +303,5 @@ audit.export('evidence.jsonl', 'eu_ai_act');           // tamper-evident; verify
 ## Next steps
 
 - See how the pieces connect → [Architecture](architecture.md)
-- Use a specific provider (incl. Azure AI Foundry, Gemini, Bedrock, Ollama) → [Providers & Integration](providers.md)
+- Use a specific provider (incl. Microsoft Foundry, Gemini, Bedrock, Ollama) → [Providers & Integration](providers.md)
 - Per-library manuals → [core](core.md) · [contextkit](contextkit.md) · [squeeze](squeeze.md) · [tokenguard](tokenguard.md) · [guardrails](guardrails.md) · [cassette](cassette.md) · [acttrace](acttrace.md)
