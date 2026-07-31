@@ -191,6 +191,62 @@ def register_model_price(
     return rates
 
 
+def register_deployment(deployment: str, *, like: str) -> dict[str, Decimal]:
+    """Price a **deployment name** by copying the rates of the base model it serves.
+
+    On Azure and Azure AI Foundry the id a call reports is the *deployment* name you chose
+    (``prod-gpt4o-eastus``), not a model id — so it is absent from every price table, its cost is
+    ``None``, and a USD ``budget(...)`` silently never binds. You already know which model it
+    serves; this says so once:
+
+    ```python
+    from cendor.core import prices
+
+    prices.register_deployment("prod-gpt4o-eastus", like="gpt-4o")
+    prices.estimate("prod-gpt4o-eastus", 1000, output_tokens=500)   # priced like gpt-4o
+    ```
+
+    This is an **explicit** mapping you supply — deliberately not the automatic ``-preview`` /
+    ``-latest`` alias guessing that was considered and rejected (a confidently wrong price is worse
+    than an honest ``None``). Nothing is inferred from the deployment's name.
+
+    **Copy-at-registration, not a live alias.** ``like``'s rates are read *now* and stored as
+    ``deployment``'s own registration, exactly as if you had called :func:`register` with them. Two
+    consequences worth knowing, both deliberate:
+
+    * a later :func:`refresh` that reprices ``like`` does **not** reprice ``deployment`` — call this
+      again to pick the new rates up. (The alternative, a live alias, would make a deployment's cost
+      depend on whether a base model still exists in whatever table was last fetched, and would have
+      to invent an answer when it doesn't.)
+    * like every registration, it **survives** ``refresh()`` and overrides a snapshot entry with the
+      same id.
+
+    ``like`` goes through the same lookup reduction as a real call, so a dated or Bedrock-decorated
+    base id works (``like="gpt-4o-2024-08-06"``, ``like="us.anthropic.claude-sonnet-4-6-…-v1:0"``).
+
+    Args:
+        deployment: The exact id calls report — your Azure/Foundry deployment name.
+        like: A model id already in the price table whose rates the deployment should use.
+
+    Returns:
+        The stored per-token rate dict (a copy — mutating it does not change the table).
+
+    Raises:
+        UnknownModelError: If ``like`` is not in the active table, or its entry carries no ``input``
+            rate (which cannot price anything). Registering nothing and letting the deployment stay
+            unpriced would reproduce the exact silence this function exists to remove, so it raises.
+    """
+    # Copy EVERY rate key, not an enumerated few: a base entry may carry a key this function has
+    # never heard of (a future rate category, or a hand-written `register()` dict), and dropping it
+    # would silently under-price the deployment. `Decimal` is immutable, so sharing values is safe.
+    rates = dict(_rates(like))  # raises UnknownModelError — never register a silent nothing
+    if "input" not in rates:
+        # `estimate` would raise later — i.e. the silent-unpriced outcome. Fail at registration.
+        raise UnknownModelError(like)
+    register(deployment, rates)
+    return rates
+
+
 def _register(model: str, rates: dict) -> None:
     """Deprecated private alias of :func:`register`, kept for the pre-1.15 contractual write hook.
 
@@ -544,5 +600,11 @@ def __getattr__(name: str) -> object:  # PEP 562 — teach the common wrong gues
             "(per-1M rates) or cendor.core.prices.register(model, {'input': ..., 'output': ...}) "
             "(per-token); cendor.core.tokens.register(fam, counter) registers a token counter, "
             "not a price."
+        )
+    if name in ("register_alias", "alias", "map_deployment", "registerDeployment"):
+        raise AttributeError(
+            f"cendor.core.prices has no {name!r}. To price an Azure/Foundry deployment name like "
+            "the model it serves, use "
+            "cendor.core.prices.register_deployment(deployment, like='gpt-4o')."
         )
     raise AttributeError(f"module 'cendor.core.prices' has no attribute {name!r}")

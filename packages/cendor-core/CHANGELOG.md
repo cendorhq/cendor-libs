@@ -2,6 +2,35 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.16.0] — 2026-07-31
+
+### Added
+- **`prices.register_deployment(deployment, like="gpt-4o")`** — price an Azure / Azure AI Foundry
+  **deployment name** by copying the rates of the base model it serves. On Azure the id a call reports
+  is the deployment name *you* chose, not a model id, so it is in no price table: `cost` is `None`,
+  `tokenguard` records `$0`, and a USD `budget(...)` silently never binds. You already know which model
+  the deployment serves; this says so once, instead of making you find and re-type a rate card.
+
+  Deliberately **explicit**: this is not the `-preview` / `-latest` alias *guessing* that was
+  considered and rejected (a confidently wrong price is worse than an honest `None`) — nothing is
+  inferred from the deployment's name. **Copy-at-registration, not a live alias:** `like`'s rates are
+  read now and stored as the deployment's own registration, so a later `refresh()` that reprices the
+  base does *not* reprice the deployment (call it again to pick that up), and — like every
+  registration — it survives `refresh()` and overrides a snapshot row with the same id. `like` goes
+  through the same lookup reduction a real call does, so a dated or Bedrock-decorated base id works.
+  An unknown `like` (or one whose entry carries no `input` rate) **raises `UnknownModelError`** rather
+  than leaving the deployment quietly unpriced — which would reproduce the exact silence the function
+  exists to remove. Every rate key is copied, not an enumerated few, so a future rate category cannot
+  be silently dropped. Re-exported as `cendor.sdk.register_deployment`; TypeScript parity is
+  `prices.registerDeployment(deployment, { like })` in `@cendor/core` 3.2.0.
+- **`otel.span(model, …, tracer=…)`** — emit the `gen_ai` span on a `Tracer` you own instead of the
+  global provider. Omit it and nothing changes (still `trace.get_tracer("cendor.core")`); pass one for
+  the three cases the global provider is wrong for: a **test** asserting spans without installing a
+  process-global provider, a **multi-tenant host** with a provider per tenant, and a **second
+  pipeline** beside the app's own. Span name, attributes, and the without-OpenTelemetry no-op are
+  identical either way. Filed as a product improvement by the external black-box suite, whose keyless
+  tree had to install a global provider purely to observe these spans.
+
 ## [1.15.0] — 2026-07-31
 
 ### Added

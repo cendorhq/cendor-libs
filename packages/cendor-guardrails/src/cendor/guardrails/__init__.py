@@ -76,6 +76,7 @@ __all__ = [
     "install",
     "uninstall",
     "scoped",
+    "use_meter",
     # config-as-data
     "load_policy",
     "LoadedPolicy",
@@ -111,12 +112,43 @@ _decisions_counter: Any = None
 _decisions_counter_checked = False
 
 
+def use_meter(meter: Any) -> None:
+    """Create the ``cendor.guardrails.decisions`` counter on an explicit OpenTelemetry ``Meter``.
+
+    By default the counter comes from the **global** meter provider
+    (``metrics.get_meter("cendor.guardrails")``), lazily on the first decision. Call this to point
+    it at a meter you own instead: a test's in-memory reader, an isolated provider in a
+    multi-tenant host, or a second pipeline. The counter name and its bounded ``guardrail`` /
+    ``stage`` / ``action`` labels are identical either way, and this never changes whether a
+    decision is taken — the counter is observability, not a gate.
+
+    ``use_meter(None)`` restores the default (the global provider is re-read on the next decision).
+
+    ```python
+    from cendor import guardrails
+    guardrails.use_meter(my_provider.get_meter("cendor.guardrails"))  # or None to reset
+    ```
+
+    The seam exists because there was no way to read this counter without installing a
+    process-global meter provider; the external black-box suite filed it as a product improvement,
+    having had to install one to assert anything.
+    """
+    global _decisions_counter, _decisions_counter_checked
+    if meter is None:
+        _decisions_counter = None
+        _decisions_counter_checked = False  # re-read the global provider on the next decision
+        return
+    _decisions_counter = meter.create_counter("cendor.guardrails.decisions")
+    _decisions_counter_checked = True
+
+
 def _decisions_add(attrs: dict[str, Any]) -> None:
     """Increment the ``cendor.guardrails.decisions`` counter (no-op without OpenTelemetry).
 
     A lazily-created counter on a proxy meter binds to whatever ``MeterProvider`` the host app
     configures (before or after first use). Best-effort observability — it never gates the decision.
-    Labels are the bounded sets ``guardrail`` / ``stage`` / ``action``.
+    Labels are the bounded sets ``guardrail`` / ``stage`` / ``action``. :func:`use_meter` overrides
+    which meter it is created on.
     """
     global _decisions_counter, _decisions_counter_checked
     if not _decisions_counter_checked:
@@ -130,7 +162,15 @@ def _decisions_add(attrs: dict[str, Any]) -> None:
                 "cendor.guardrails.decisions"
             )
     if _decisions_counter is not None:
-        _decisions_counter.add(1, attrs)
+        # "Best-effort" has to be true in the code, not just the docstring. Measured 2026-07-31
+        # (GAPCLOSE S8): a counter whose `add` raised propagated out of `apply()` and took the
+        # GOVERNANCE DECISION with it — a metrics backend could fail a guardrail. A real OTel
+        # counter does not raise, so this only ever bit a custom or injected meter; it is guarded
+        # because the failure mode is exactly backwards for this library.
+        try:
+            _decisions_counter.add(1, attrs)
+        except Exception:  # noqa: BLE001 - observability must never gate a decision
+            pass
 
 
 def _applicable(guardrails: Guardrails, stage: str) -> list[Guardrail]:

@@ -24,21 +24,47 @@ from typing import Any, Literal
 
 
 @contextmanager
-def span(model: str, *, provider: str | None = None, **attributes: Any) -> Iterator[Any]:
+def span(
+    model: str,
+    *,
+    provider: str | None = None,
+    tracer: Any = None,
+    **attributes: Any,
+) -> Iterator[Any]:
     """Emit a ``gen_ai`` span around a call. Yields the span, or ``None`` if OTel is absent.
+
+    ```python
+    from cendor.core import otel
+    with otel.span("gpt-4o", provider="openai") as sp:  # sp is None without OpenTelemetry
+        ...
+    ```
 
     Args:
         model: Model id, recorded as ``gen_ai.request.model``.
         provider: Optional system name, recorded as ``gen_ai.system``.
-        **attributes: Extra span attributes to set verbatim.
-    """
-    try:
-        from opentelemetry import trace
-    except ImportError:
-        yield None
-        return
+        tracer: An explicit OpenTelemetry ``Tracer`` to emit on. Omit it — the default — and the
+            span goes to the **global** provider via ``trace.get_tracer("cendor.core")``, exactly
+            as before. Pass one to send spans somewhere the global provider isn't: a test's
+            in-memory exporter, an isolated provider in a multi-tenant host, or a second pipeline.
+            Nothing else changes — the span name, its attributes, and the no-OpenTelemetry no-op
+            are identical either way.
 
-    tracer = trace.get_tracer("cendor.core")
+            The seam exists because there was no way to observe these spans without installing a
+            process-global provider; the external black-box suite filed it as a product
+            improvement, having had to install one to assert anything. ``None`` means "use the
+            global one", so every existing caller is untouched.
+        **attributes: Extra span attributes to set verbatim. (An attribute literally named
+            ``tracer`` or ``provider`` is consumed as the parameter, not recorded — same as before
+            for ``provider``.)
+    """
+    if tracer is None:
+        try:
+            from opentelemetry import trace
+        except ImportError:
+            yield None
+            return
+        tracer = trace.get_tracer("cendor.core")
+
     with tracer.start_as_current_span(f"chat {model}") as current:
         current.set_attribute("gen_ai.request.model", model)
         if provider is not None:

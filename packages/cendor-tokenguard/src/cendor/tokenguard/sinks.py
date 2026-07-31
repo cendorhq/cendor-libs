@@ -185,16 +185,33 @@ class OTelSink:
     #: down when the user has already wired one themselves (no double-counted spend).
     _cendor_otel_spend = True
 
-    def __init__(self, *, tags: bool = True) -> None:
+    def __init__(self, *, tags: bool = True, meter: Any = None) -> None:
+        """
+        Args:
+            tags: Dimension the counters by the active ``track(...)`` tags as well as ``model``
+                (default). ``False`` emits ``model`` only — use it when tag values are
+                high-cardinality.
+            meter: An explicit OpenTelemetry ``Meter`` to create the counters on. Omit it — the
+                default — and they come from the **global** provider via
+                ``metrics.get_meter("cendor.tokenguard")``, exactly as before. Pass one to send
+                metrics somewhere the global provider isn't: a test's in-memory reader, an isolated
+                provider in a multi-tenant host, or a second pipeline. Counter names, attributes and
+                the no-OTel no-op are identical either way.
+
+                Injection exists because there was no way to read these counters without installing
+                a process-global meter provider — filed as a product improvement by the external
+                suite, which had to install one to assert anything.
+        """
         self._tokens: Any = None
         self._cost: Any = None
         self._reasoning: Any = None
         self._tags = tags
-        try:
-            from opentelemetry import metrics
-        except ImportError:
-            return
-        meter = metrics.get_meter("cendor.tokenguard")
+        if meter is None:
+            try:
+                from opentelemetry import metrics
+            except ImportError:
+                return
+            meter = metrics.get_meter("cendor.tokenguard")
         self._tokens = meter.create_counter("gen_ai.client.token.usage")
         self._cost = meter.create_counter("gen_ai.client.cost.usd")
         self._reasoning = meter.create_counter("gen_ai.client.reasoning.token.usage")

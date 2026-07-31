@@ -152,9 +152,40 @@ The honest contract (accept it before you use it):
 
 ### Unpriced models — a USD blind spot
 A call whose model has no price records `$0`, so a **USD** cap can't enforce against it.
-`tokenguard` warns once per model (`UnpricedModelWarning`) and counts these in
-`unpriced_calls()`. A **token** cap is unaffected — tokens are counted regardless of price — so
-prefer a `tokens=` cap (or add a rate via `core.prices`) for a model that isn't in the table.
+`tokenguard` warns once per model (`UnpricedModelWarning`) and counts these in `unpriced_calls()`.
+Four remedies, in the order they usually apply:
+
+| Remedy | When |
+|---|---|
+| `tokens=` cap on `budget(...)` | Always available — tokens are counted regardless of price, so a token cap binds on anything. |
+| `prices.register_deployment(name, like="gpt-4o")` | An Azure/Foundry **deployment name**: you know the model it serves but not its rate card. Copies that model's rates. |
+| `prices.register_model_price(id, input=…, output=…)` | You have a rate card — a fine-tune, a marketplace id, a self-hosted gateway. |
+| `configure(on_unpriced="raise")` | You would rather **fail closed** than record `$0`: an unpriced call under `on_exceed="block"` is rejected pre-flight. |
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import prices
+
+prices.register_deployment("prod-gpt4o-eastus", like="gpt-4o")   # deployment -> base model's rates
+prices.register_model_price("my-fine-tune", input=2.50, output=10.00)  # USD per 1M tokens
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { prices } from '@cendor/core';
+
+prices.registerDeployment('prod-gpt4o-eastus', { like: 'gpt-4o' }); // deployment -> base rates
+prices.register('my-fine-tune', { input: '0.0000025', output: '0.00001' }); // per-token
+```
+
+<!-- /tabs -->
+
+`register_deployment` is an **explicit** mapping you supply. Cendor deliberately does **not** guess a
+price from a model id's shape (`-preview` / `-latest` / a company suffix) — a confidently wrong price
+is worse than an honest `None`. See [core → Prices](core.md#prices).
 
 ## Functions & classes
 
@@ -275,6 +306,7 @@ from cendor.tokenguard.sinks import OTelSink
 
 use_sink(OTelSink())                 # spend -> your metrics backend, dimensioned by model + tags
 use_sink(OTelSink(tags=False))       # or: model-only counters (bound metric cardinality)
+use_sink(OTelSink(meter=my_meter))   # or: a meter YOU own, instead of the global provider
 ```
 
 <!-- tab: TypeScript -->
@@ -282,9 +314,12 @@ use_sink(OTelSink(tags=False))       # or: model-only counters (bound metric car
 ```ts
 import { useSink } from '@cendor/tokenguard';
 import { OTelSink } from '@cendor/tokenguard/sinks';
+import { metrics } from '@opentelemetry/api';
 
 useSink(new OTelSink());             // spend -> your metrics backend, dimensioned by model + tags
 useSink(new OTelSink({ tags: false })); // or: model-only counters (bound metric cardinality)
+// or: a meter YOU own, instead of the global provider
+useSink(new OTelSink({ meter: metrics.getMeter('my-app') }));
 ```
 
 <!-- /tabs -->
@@ -293,6 +328,15 @@ useSink(new OTelSink({ tags: false })); // or: model-only counters (bound metric
 > (`feature`, `tenant`, `env` — not a raw per-user id) or pass `tags=False`, so your backend's
 > time-series count stays bounded. For the full backend-wiring recipes (Azure Monitor, CloudWatch,
 > Datadog, OTLP), see [Observability](observability.md).
+
+**`meter=` — a metrics pipeline that isn't the global one.** By default the counters come from the
+global meter provider, which is right for an application: you configure OTel once and everything
+lands. It is wrong for three cases — a **test** that wants to assert the counters without polluting
+the process, a **multi-tenant host** that keeps one provider per tenant, and a **second pipeline**
+alongside the app's own. Pass a `Meter` and the counters are created on it instead; names, attributes,
+and the without-OpenTelemetry no-op are identical. In TypeScript an injected meter also skips the lazy
+re-acquisition (see the ordering trap in [Observability](observability.md)) — there is nothing to wait
+for when you already hold the meter.
 
 ### The budget-events counter
 
@@ -425,7 +469,9 @@ spend it attributed, on your own screen. Your own OTel backend stays the product
 - **Mid-stream/pre-flight estimates can't see hidden reasoning.** Visible thinking is counted (both in
   the streamed estimate and the `"break"` breaker); OpenAI-native and Gemini reasoning never reaches
   the wire, so those models are estimated on visible text only — `reasoning_reserve` is the only lever.
-- **Unpriced models are a USD blind spot** (they record `$0`) — prefer a `tokens=` cap or add a
-  rate. `tokenguard` warns once per model and counts them in `unpriced_calls()`.
+- **Unpriced models are a USD blind spot** (they record `$0`) — use a `tokens=` cap, register a rate
+  (`prices.register_model_price`, or `prices.register_deployment(name, like=…)` for an Azure
+  deployment), or `configure(on_unpriced="raise")` to fail closed. `tokenguard` warns once per model
+  and counts them in `unpriced_calls()`.
 - **State is in-process and module-global** — ideal for a single worker. For multi-process, put
   durable spend through a sink rather than the in-memory aggregate.

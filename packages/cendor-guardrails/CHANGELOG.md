@@ -2,6 +2,26 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.7.0] — 2026-07-31
+
+### Added
+- **`use_meter(meter)`** — create the `cendor.guardrails.decisions` counter on an OpenTelemetry
+  `Meter` you own instead of the global provider; `use_meter(None)` restores the default (the global
+  provider is re-read on the next decision). The counter name and its bounded `guardrail` / `stage` /
+  `action` labels are identical either way. Filed as a product improvement by the external black-box
+  suite, whose keyless tree had to install a global meter provider purely to read this counter.
+  TypeScript parity: `useMeter(meter)` in `@cendor/guardrails` 3.1.0.
+
+### Fixed
+- **The decisions counter can no longer fail a guardrail.** Its docstring has always said
+  "best-effort observability — it never gates the decision", and the code did not implement that: an
+  exception from the counter's `add` propagated straight out of `apply()` / the gate, so a broken
+  metrics backend took the **governance decision** with it. Measured 2026-07-31 while writing the
+  negative control for `use_meter`. A real OpenTelemetry counter does not raise, so only a custom or
+  injected meter was ever exposed — but the failure mode is exactly backwards for this library, so the
+  increment is now guarded and the decision is taken, emitted, and chained regardless. Same fix in
+  `@cendor/guardrails` 3.1.0.
+
 ## [1.6.1] — 2026-07-27
 **The standalone output stage no longer skips a raw-response call.**
 

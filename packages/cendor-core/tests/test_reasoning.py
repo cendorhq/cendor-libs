@@ -122,6 +122,81 @@ def test_anthropic_reasoning_stays_zero(events):
     assert events[0].usage.reasoning_tokens == 0
 
 
+def test_real_openai_sdk_usage_models_are_read_not_just_our_fakes(events):
+    """The same capture, driven by openai-python's OWN models — not a ``SimpleNamespace``.
+
+    Added 2026-07-31 (GAPCLOSE Q3). The guard above was green from the day it was written, and the
+    external report kept recurring anyway — because every test in this file builds the response out
+    of ``SimpleNamespace``, which proves the field *names* we chose are read and nothing about the
+    shapes the shipped SDK actually returns. A pydantic model with a renamed field, an alias, or a
+    ``None`` default would sail straight through a fake and fail in production.
+
+    Measured with this test's own shapes in
+    ``plan/evidence-gapclose-2026-07-31/q3_probe_reasoning_extraction.py``: extraction is correct in
+    both entrypoints, so the o3-mini report was never a library defect — the probe that raised it
+    could not tell "core failed to read the field" from "the model reported nothing to read", and
+    attributed the second to the library. Fixed on the testsuits side; pinned here.
+    """
+    from cendor.core.instrument import _extract_usage
+
+    completion_usage = pytest.importorskip("openai.types.completion_usage")
+    response_usage = pytest.importorskip("openai.types.responses.response_usage")
+
+    # --- Chat Completions: completion_tokens_details.reasoning_tokens ---
+    chat_usage = completion_usage.CompletionUsage(
+        prompt_tokens=21,
+        completion_tokens=100,
+        total_tokens=121,
+        completion_tokens_details=completion_usage.CompletionTokensDetails(
+            accepted_prediction_tokens=0,
+            audio_tokens=0,
+            reasoning_tokens=64,
+            rejected_prediction_tokens=0,
+        ),
+        prompt_tokens_details=completion_usage.PromptTokensDetails(audio_tokens=0, cached_tokens=8),
+    )
+    u = _extract_usage(SimpleNamespace(usage=chat_usage), "openai")
+    assert u == Usage(input_tokens=21, output_tokens=100, cached_tokens=8, reasoning_tokens=64)
+
+    # --- Responses API: output_tokens_details.reasoning_tokens ---
+    resp_usage = response_usage.ResponseUsage(
+        input_tokens=21,
+        output_tokens=100,
+        total_tokens=121,
+        input_tokens_details=response_usage.InputTokensDetails(cached_tokens=0),
+        output_tokens_details=response_usage.OutputTokensDetails(reasoning_tokens=64),
+    )
+    u = _extract_usage(SimpleNamespace(usage=resp_usage), "openai_responses")
+    assert u == Usage(input_tokens=21, output_tokens=100, reasoning_tokens=64)
+
+    # --- NEGATIVE CONTROL: a details block with NO reasoning_tokens must read 0, and must never
+    # pick up a neighbouring field (accepted_prediction / audio / rejected_prediction) instead.
+    odd = completion_usage.CompletionUsage(
+        prompt_tokens=21,
+        completion_tokens=100,
+        total_tokens=121,
+        completion_tokens_details=completion_usage.CompletionTokensDetails(
+            accepted_prediction_tokens=99, audio_tokens=7, rejected_prediction_tokens=5
+        ),
+    )
+    u = _extract_usage(SimpleNamespace(usage=odd), "openai")
+    assert u is not None
+    assert u.reasoning_tokens == 0, "a sibling details field was misread as reasoning"
+
+    # --- NEGATIVE CONTROL: a genuine zero from a reasoning model is 0, not a missing value. The
+    # documented convention is that `reasoning_tokens == 0` means "not reported separately" OR
+    # "reported as zero" — Usage.reasoning_tokens is an int by design, so these are one value.
+    zero = completion_usage.CompletionUsage(
+        prompt_tokens=21,
+        completion_tokens=5,
+        total_tokens=26,
+        completion_tokens_details=completion_usage.CompletionTokensDetails(reasoning_tokens=0),
+    )
+    u = _extract_usage(SimpleNamespace(usage=zero), "openai")
+    assert u is not None
+    assert u.reasoning_tokens == 0
+
+
 def test_openai_streaming_recovers_reasoning(events):
     # The final usage chunk (stream_options include_usage) carries completion_tokens_details.
     chunks = [

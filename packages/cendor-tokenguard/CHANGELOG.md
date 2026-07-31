@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.7.0] — 2026-07-31
+
+### Added
+- **`sinks.OTelSink(meter=…)`** — create the three spend counters on an OpenTelemetry `Meter` you own
+  instead of the global provider. Omit it and nothing changes (still
+  `metrics.get_meter("cendor.tokenguard")`); pass one for a test's in-memory reader, a per-tenant
+  provider in a multi-tenant host, or a second metrics pipeline. Counter names, their `model` + tag
+  attributes, and the without-OpenTelemetry no-op are identical either way, and `tags=False` behaves
+  the same on both paths. Filed as a product improvement by the external black-box suite, whose
+  keyless tree had to install a global meter provider purely to read these counters.
+  TypeScript parity: `new OTelSink({ meter })` in `@cendor/tokenguard` 3.1.0.
+
 ## [1.6.3] — 2026-07-31
 **Pinned: `on_exceed="break"` cuts a Gemini stream.**
 

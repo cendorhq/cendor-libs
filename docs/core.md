@@ -410,6 +410,8 @@ generic — it merges opaque metadata and defines no key meanings (the reserved 
 ```python
 with otel.span("gpt-4o", provider="openai"):   # gen_ai.* span if OTel installed, else no-op
     ...
+with otel.span("gpt-4o", tracer=my_tracer):    # or: a tracer YOU own, not the global provider
+    ...
 otel.ingest({"gen_ai.system": "azure_ai_foundry", "gen_ai.request.model": "gpt-4o",
              "gen_ai.usage.input_tokens": 1000, "gen_ai.usage.output_tokens": 500})  # -> bus event
 ```
@@ -418,15 +420,25 @@ otel.ingest({"gen_ai.system": "azure_ai_foundry", "gen_ai.request.model": "gpt-4
 
 ```ts
 import { otel } from '@cendor/core';
+import { trace } from '@opentelemetry/api';
 
 otel.span('gpt-4o', { provider: 'openai' }, (span) => {   // gen_ai.* span if OTel installed, else no-op
   // ... your model call; `span` is null when @opentelemetry/api isn't installed
 });
+// …or emit on a tracer YOU own, instead of the global provider:
+otel.span('gpt-4o', { tracer: trace.getTracer('my-app') }, (span) => { void span; });
 otel.ingest({ 'gen_ai.system': 'azure_ai_foundry', 'gen_ai.request.model': 'gpt-4o',
               'gen_ai.usage.input_tokens': 1000, 'gen_ai.usage.output_tokens': 500 });  // -> bus event
 ```
 
 <!-- /tabs -->
+
+**`tracer=` — a trace pipeline that isn't the global one.** Omit it and the span goes to the global
+provider, which is right for an application. Pass a `Tracer` for the three cases where the global one
+is wrong: a **test** asserting spans without installing a process-global provider, a **multi-tenant
+host** with a provider per tenant, and a **second pipeline** beside the app's own. The span name and
+attributes are identical either way, and without OpenTelemetry it is still a no-op. (An attribute
+literally named `tracer` or `provider` is consumed as the parameter, not recorded.)
 
 ### Types
 

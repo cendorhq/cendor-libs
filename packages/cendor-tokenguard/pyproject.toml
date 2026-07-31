@@ -1,6 +1,6 @@
 [project]
 name = "cendor-tokenguard"
-version = "1.6.3"
+version = "1.7.0"
 description = "Spending limits for LLM calls: stop a call before it runs if it would blow the budget, and see cost broken down per feature."
 requires-python = ">=3.11"
 license = "Apache-2.0"

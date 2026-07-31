@@ -183,6 +183,37 @@ installed — no setup, no sink to attach), dimensioned by the bounded label set
 chart block/flag **rates** per guardrail and stage — the aggregate view a raw decision stream can't
 give you. (Added in `cendor-guardrails 1.6` / `@cendor/guardrails 0.7`.)
 
+The counter is created on the **global** meter provider by default. `use_meter(meter)` /
+`useMeter(meter)` points it at a meter you own instead — a test's in-memory reader, a per-tenant
+provider, a second pipeline — and `use_meter(None)` restores the default. The counter name and its
+labels are identical either way.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor import guardrails
+
+guardrails.use_meter(my_provider.get_meter("cendor.guardrails"))
+guardrails.use_meter(None)   # back to the global provider
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { useMeter } from '@cendor/guardrails';
+
+useMeter(null); // back to the global provider
+```
+
+<!-- /tabs -->
+
+**The counter never gates a decision.** A metrics backend that raises on `add` is swallowed — the
+decision is taken, emitted on the bus, and chained to the audit log regardless. (This was true of the
+documentation before it was true of the code: until `cendor-guardrails 1.6.2` / `@cendor/guardrails
+3.0.3` an exception from the counter propagated out of the gate, so a broken meter could fail a
+guardrail. A real OTel counter does not raise, so only a custom or injected meter was ever exposed.)
+
 ### Timeouts & error policy
 A deterministic check can't fail — but a bring-your-own judge or a hosted rail can hang or error, so
 every guardrail carries two knobs (set them on `Guardrail`, the `@guardrail` decorator, or the

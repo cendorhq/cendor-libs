@@ -176,6 +176,39 @@ const foundry = instrument(project.getOpenAIClient());
 > which family it is, so read the error rather than guessing. (On the SDK door, `cendor-sdk` ≥ 1.21.0
 > / `@cendor/sdk` ≥ 3.1.0 does that for you.)
 
+#### Pricing a deployment name
+
+The same fact that makes the family unknowable makes the **price** unknowable: the id a call reports is
+the deployment name *you* chose, so it is in no price table, `cost` is `None`, and a USD
+[`budget(...)`](/docs/tokenguard) never binds on it. Say which model it serves, once:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import prices
+
+prices.register_deployment("prod-gpt4o-eastus", like="gpt-4o")
+# cost + USD budgets now work on calls that report "prod-gpt4o-eastus"
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { prices } from '@cendor/core';
+
+prices.registerDeployment('prod-gpt4o-eastus', { like: 'gpt-4o' });
+// cost + USD budgets now work on calls that report 'prod-gpt4o-eastus'
+```
+
+<!-- /tabs -->
+
+It copies `like`'s rates **at registration** and survives `prices.refresh()`; a later refresh that
+reprices `gpt-4o` does not reprice the deployment (call it again to pick that up), and an unknown
+`like` raises rather than leaving the deployment quietly unpriced. If you have the rate card instead,
+use `register_model_price(...)` / `registerModelPrice(...)`. Cendor never guesses a price from an id's
+shape — see [tokenguard → Unpriced models](tokenguard.md#unpriced-models--a-usd-blind-spot).
+
 ### Google Gemini
 Both SDKs are detected — the current `google-genai` (model from the kwarg) and the legacy
 `google-generativeai` (model read from the `GenerativeModel` object).
