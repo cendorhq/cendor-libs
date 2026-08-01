@@ -226,6 +226,13 @@ The `acttrace` `compression` payload uses the snake_case key names above (plus `
 `.store_kind` / `.handle_id` / `.kind`). Added in `cendor-squeeze 1.1` / `@cendor/squeeze 0.3` —
 additive; older consumers ignore the event (the duck-type test is new, not a change to existing ones).
 
+**Emission condition** (since `cendor-squeeze 1.1.2` / `@cendor/squeeze 3.1.0`): the event is built
+and emitted **only when the bus has at least one subscriber** (`bus.has_subscribers()` /
+`bus.hasSubscribers()`, core ≥ 1.18 / ≥ 3.5). Filling the token-count fields means tokenizing both
+texts — measured at ~93% of a large `compress()` — so with nothing subscribed the work is skipped;
+an event with no subscriber is unobservable, so no consumer can tell the difference. The field shape
+above is unchanged and remains canonical.
+
 ## Serialization notes for ports
 
 - These are in-memory event shapes; the **wire** formats that must interoperate are defined by the

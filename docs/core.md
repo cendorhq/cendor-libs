@@ -412,9 +412,10 @@ table swap.
 <!-- tab: Python -->
 
 ```python
-bus.subscribe(fn)     # idempotent; fn receives each emitted LLMCall / ToolCall
-bus.unsubscribe(fn)   # no error if absent
-bus.emit(event)       # synchronous dispatch to all subscribers
+bus.subscribe(fn)       # idempotent; fn receives each emitted LLMCall / ToolCall
+bus.unsubscribe(fn)     # no error if absent
+bus.emit(event)         # synchronous dispatch to all subscribers
+bus.has_subscribers()   # True when anything is registered (core ≥ 1.18)
 ```
 
 <!-- tab: TypeScript -->
@@ -422,12 +423,18 @@ bus.emit(event)       # synchronous dispatch to all subscribers
 ```ts
 import { bus } from '@cendor/core';
 
-bus.subscribe(fn);    // idempotent; fn receives each emitted LLMCall / ToolCall
-bus.unsubscribe(fn);  // no error if absent
-bus.emit(event);      // synchronous dispatch to all subscribers
+bus.subscribe(fn);      // idempotent; fn receives each emitted LLMCall / ToolCall
+bus.unsubscribe(fn);    // no error if absent
+bus.emit(event);        // synchronous dispatch to all subscribers
+bus.hasSubscribers();   // true when anything is registered (core ≥ 3.5)
 ```
 
 <!-- /tabs -->
+
+`has_subscribers()` / `hasSubscribers()` lets an emitter skip *building* an expensive event nobody
+would receive — squeeze gates its `CompressionEvent` token counts on it. It answers "is anyone on
+the bus", not "is anyone listening for this event type", and it is advisory: a subscriber registered
+concurrently between the check and the `emit` misses that one event.
 
 ### `add_ambient_provider()` / `remove_ambient_provider()`
 

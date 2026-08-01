@@ -60,6 +60,25 @@ def emit(event: Any) -> None:
         raise first_exc
 
 
+def has_subscribers() -> bool:
+    """``True`` when at least one subscriber is registered.
+
+    Lets an emitter skip *building* an expensive event nobody would receive — ``squeeze`` uses it
+    to skip the two ``tokens.count`` passes that fill its ``CompressionEvent`` when nothing is
+    listening (measured at ~93% of a large ``compress()``). Advisory by design: a subscriber
+    registered on another thread between this check and the ``emit`` misses that one event, which
+    is benign — the event predates its subscription. Note it answers "is anyone on the bus", not
+    "is anyone listening for *this* event type".
+
+    Example:
+        >>> from cendor.core import bus
+        >>> if bus.has_subscribers():
+        ...     bus.emit({"kind": "my.expensive.event"})
+    """
+    with _lock:
+        return bool(_subscribers)
+
+
 def _reset() -> None:
     """Test helper: clear all subscribers."""
     with _lock:

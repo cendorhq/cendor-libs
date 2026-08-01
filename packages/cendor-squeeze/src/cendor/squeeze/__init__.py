@@ -375,7 +375,15 @@ def compress(
 def _emit_compression(
     original: str, small: str, technique: str, kind: str, model: str, handle_id: str
 ) -> None:
-    """Emit the metadata-only :class:`CompressionEvent` on the bus (G21). Counts only — no text."""
+    """Emit the metadata-only :class:`CompressionEvent` on the bus (G21). Counts only — no text.
+
+    Skipped entirely when nothing is subscribed — including the two ``tokens.count`` passes that
+    fill it, which dominate a large ``compress()`` (measured ~93% on a 90 KB payload). An event
+    with no subscriber is unobservable by definition; anything attached (an ``AuditLog``, a
+    monitor exporter) makes the counts a bought cost rather than a wasted one.
+    """
+    if not bus.has_subscribers():
+        return
     before = tokens.count(original, model)
     after = tokens.count(small, model)
     bus.emit(

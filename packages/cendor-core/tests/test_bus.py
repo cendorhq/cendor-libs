@@ -21,6 +21,17 @@ def test_unsubscribe_stops_delivery():
     bus.unsubscribe(fn)  # idempotent — no error when already absent
 
 
+def test_has_subscribers_tracks_registration():
+    """Public accessor (not the `_subscriber_count` test helper): lets an emitter skip building an
+    expensive event nobody would receive — squeeze gates its CompressionEvent token counts on it."""
+    bus._reset()
+    assert bus.has_subscribers() is False
+    fn = bus.subscribe(lambda e: None)
+    assert bus.has_subscribers() is True
+    bus.unsubscribe(fn)
+    assert bus.has_subscribers() is False
+
+
 def test_emit_runs_every_subscriber_even_if_one_raises():
     # One tool's failure must not starve another (e.g. a logging bug skipping enforcement); the
     # first exception still propagates so intentional control flow (tokenguard) reaches the caller.

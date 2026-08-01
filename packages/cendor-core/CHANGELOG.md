@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.18.0] — 2026-08-01
+
+One additive bus accessor. Backward-compatible.
+
+### Added
+- **`bus.has_subscribers()`** — `True` when at least one subscriber is registered. It exists so an
+  emitter can skip *building* an expensive event nobody would receive: `cendor-squeeze` ≥ 1.1.2
+  gates the two `tokens.count()` passes that fill its `CompressionEvent` on it (measured at ~93% of
+  a large `compress()` with nothing listening). Advisory by design — a subscriber registered on
+  another thread between the check and the `emit` misses that one event, which is benign (the event
+  predates its subscription) — and it answers "is anyone on the bus", not "is anyone listening for
+  this event type". The private `_subscriber_count()` test helper is unchanged.
+
 ## [1.17.0] — 2026-07-31
 
 Two silent Anthropic bypasses closed, and the interceptor chain's ordering contract corrected.

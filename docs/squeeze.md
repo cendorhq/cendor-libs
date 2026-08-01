@@ -227,7 +227,11 @@ on strings/objects — identical across any SDK, never touching the client.
 
 **See it live.** squeeze emits a `CompressionEvent` on the bus (technique, before/after tokens, ratio
 — **metadata only, never text**); it renders on the squeeze proof page in [Cendor Monitor](monitor.md),
-Cendor's optional self-hosted monitor, so you can see the tokens compression saved.
+Cendor's optional self-hosted monitor, so you can see the tokens compression saved. The event is
+computed **only when the bus has a subscriber** (`cendor-squeeze` ≥ 1.1.2 / `@cendor/squeeze` ≥ 3.1.0):
+filling it means token-counting the original and the compressed text, which dominates a large
+`compress()` — so with nothing attached the counting is skipped entirely, and with an audit log or a
+monitor attached it is the (paid-for) cost of visibility.
 
 ## Honest limits
 

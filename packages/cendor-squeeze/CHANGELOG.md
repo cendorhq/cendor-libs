@@ -2,6 +2,26 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.1.2] — 2026-08-01
+`compress()` stops paying for an event nobody is listening to. No API change; no event-shape change.
+
+### Fixed
+- **The `CompressionEvent` is now computed only when the bus has a subscriber.** Since 1.1.0 every
+  `compress()` ran `tokens.count()` twice — over the original *and* the compressed text — to fill
+  the metadata-only event **before** `bus.emit`, whether or not anything was subscribed. Measured on
+  a 90.1 KB JSON payload with zero subscribers: 20.29 ms/call with the event vs 1.42 ms without —
+  **93% of the call**, and tokenizing is linear in payload size, so every large compress paid it
+  (including `contextkit`'s `evict="compress"` path, per block). `_emit_compression` now returns
+  before any counting when `bus.has_subscribers()` (new in `cendor-core` 1.18.0) is false. An event
+  with no subscriber is unobservable, so nothing observable changes; with anything attached — an
+  acttrace `AuditLog`, a monitor exporter — the event is emitted exactly as before, same fields,
+  same counts, same duck-typed `compression` audit entry. Honest limit: the check is "is anyone on
+  the bus", so an app with, say, tokenguard armed still computes the counts — that is the cost of
+  visibility, now paid only when something can see it.
+
+### Changed
+- `cendor-core` floor raised to `>=1.18` (for `bus.has_subscribers()`).
+
 ## [1.1.1] — 2026-07-24
 Package-level store exports. Backward-compatible.
 
