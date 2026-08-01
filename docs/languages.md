@@ -115,7 +115,7 @@ Legend: ✅ ported · 🚧 partial/scoped · **Py-only** deliberately not ported
 |---|---|---|---|
 | `Money` (decimal, never float) | ✅ | ✅ | `Decimal` ↔ `decimal.js`; value-equal across langs |
 | `Usage` / `LLMCall` / `ToolCall` | ✅ | ✅ | snake_case ↔ camelCase fields; type names identical |
-| Event bus | ✅ | ✅ | subscribe/emit/unsubscribe; error isolation |
+| Event bus | ✅ | ✅ | subscribe/emit/unsubscribe/has_subscribers; error isolation |
 | Price table + `estimate()` | ✅ | ✅ | same bundled snapshot; `refresh()` async in TS |
 | `prices.register()` / per-1M convenience | ✅ (≥ 1.15.0) | ✅ | **Now real in both.** Python core gained a public `prices.register(model, rates)` **and** `prices.register_model_price(model, input=…, output=…, per="1M")`; `cendor.sdk.register_model_price` is a thin re-export, so a libraries-door user no longer needs the SDK distribution to price a deployment. TS core has both too: `prices.register` (per-token) and, since **`@cendor/core` 3.4.0**, `prices.registerModelPrice(model, { input, output })` (per-1M) — closing the last pricing asymmetry, since before that a libs-only TS app could not reach the per-1M form at all (`@cendor/sdk`'s twin still works). Registrations survive `refresh()` in both |
 | `prices.refresh(source="azure")` | ✅ (≥ 1.15.0) | ✅ | The Azure Retail Prices source had **never** worked in Python: the URL carried raw spaces in its `$filter` and `urllib` refuses those, which `refresh()`'s never-raise contract turned into a silent `False`. Encoded, it maps 95 models. TS was unaffected (`fetch` encodes) |
