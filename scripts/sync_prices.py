@@ -191,7 +191,11 @@ def main() -> int:
     prov = {k: v for k, v in (feed.get("_provenance") or {}).items() if k in kept}
     updated = str(feed.get("_updated") or date.today().isoformat())
     text = render(kept, updated, prov)
-    SNAPSHOT.write_text(text, encoding="utf-8")
+    # An explicit LF newline: Python's text mode writes os.linesep, so on Windows this file
+    # would land with CRLF while every other source file in the repo is LF — and the
+    # TypeScript snapshot, which embeds this content VERBATIM, would carry that CRLF into a
+    # biome-formatted source file. Measured 2026-08-02.
+    SNAPSHOT.write_text(text, encoding="utf-8", newline="\n")
     print(
         f"wrote {SNAPSHOT.relative_to(REPO)}: {len(kept)} rows "
         f"(feed had {len(models)}), _updated={updated}"
