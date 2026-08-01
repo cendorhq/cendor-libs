@@ -759,8 +759,10 @@ and `agents/m365-custom-engine-js` in the [TypeScript cookbook](https://github.c
   on one real turn), so it can refuse while the ledger still shows headroom. Both refusals are correct
   and zero-spend; word them differently.
 - **`channelData.cendor` is for the channel or your back end.** Whether a *client* surfaces it is
-  client-specific, and the M365 Agents Playground projects `channelData` away in its UI — it is still
-  on the wire, but don't tell people to look for it there. Assert it in a test, or log it.
+  client-specific. The M365 Agents Playground's **chat pane** projects `channelData` away — but its
+  **Log Panel does not**: clicking the outbound activity (`message 201`) shows the whole Activity
+  JSON, envelope included (measured on Playground 0.2.28). So it *is* inspectable there; just don't
+  build on any particular client rendering it. Assert it in a test, or log it.
 - **Evidence in a long-lived server.** Reopening one chain file after a restart **resumes** the chain
   and `verify()` stays green. What acttrace refuses is two *live* `AuditLog`s on one file at once — the
   second raises at construction. Rotate per process only if you have concurrent writers.
