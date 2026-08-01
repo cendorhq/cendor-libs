@@ -14,12 +14,15 @@ same shape.
 ```jsonc
 {
   "_note": "…",            // string, informational only
-  "_updated": "2026-06-26",// string, ISO date (YYYY-MM-DD) — the snapshot's as-of date (staleness signal)
+  "_updated": "2026-06-26",// string, ISO date (YYYY-MM-DD) — the table's as-of date (staleness signal)
   "models": {
     "gpt-4o":            { "input": 0.0000025,  "output": 0.00001,   "cached": 0.00000125 },
     "claude-opus-4-8":   { "input": 0.000005,   "output": 0.000025,  "cached": 0.0000005, "cache_write": 0.00000625 },
     "gemini-2.0-flash":  { "input": 0.0000001,  "output": 0.0000004 },
-    "llama3":            { "input": 0.0,        "output": 0.0 }
+    "text-embedding-3-small": { "input": 0.00000002, "output": 0.0 }
+  },
+  "_provenance": {         // OPTIONAL, additive — see below. A reader may ignore it entirely.
+    "gpt-4o": { "src": "azure", "asof": "2026-07-01" }
   }
 }
 ```
@@ -33,8 +36,17 @@ same shape.
   - `cache_write` — optional. Price per cache-**write** token (a separate category). If absent, it
     defaults to `1.25 × input`.
 - **Unit is per token**, not per 1K or 1M. e.g. `gpt-4o` `input: 0.0000025` = **$2.50 per 1M tokens**.
-- **No schema-version field.** `_updated` is the as-of date; the *format* version is this spec
-  (`prices/1`), pinned out of band.
+- **No schema-version field is required.** `_updated` is the as-of date; the *format* version is this
+  spec (`prices/1`), pinned out of band. A table MAY carry `"_schema": "prices/1"` for readers that
+  want it; implementations MUST NOT require it.
+- ⚠️ **A zero `input` rate is not publishable.** It is indistinguishable from "we do not know", and a
+  consumer cannot tell the difference: `estimate()` returns `$0.00` as a *fact* and a USD budget cap
+  silently never binds on that model. A model with no known input price MUST be **absent** — the
+  honest `None` + warning path — not present at zero. A zero `output` rate is fine and real:
+  embeddings have one. (Applied to the reference snapshot 2026-08-02; `llama3` at `0.0/0.0` was the
+  row that made exactly one local model report a fabricated `$0.00` while every other reported
+  `None`. To price a local model at zero, the *user* says so with `prices.register`.)
+- **Unknown top-level keys MUST be ignored.** That is what makes `_provenance` additive.
 
 ## Decimal rule (mandatory in every language)
 
@@ -83,10 +95,38 @@ Key points a port must replicate exactly:
   `reasoning_tokens ⊆ output` (reasoning is already billed inside output, so it is **not** a separate
   term here).
 
+## `_provenance` (optional, additive)
+
+A table MAY carry a top-level `_provenance` object mapping the **same model ids** as `models` to
+`{ "src": string, "asof": "YYYY-MM-DD" | null }` — which source that specific rate came from, and
+that source's own as-of date (never the day it was fetched).
+
+It is a **parallel map, deliberately not a field inside the rate object**. Rate objects stay pure
+numbers, so a `prices/1` reader that walks `models[id]` and multiplies never meets a string, and no
+provenance value can reach a decimal coercion. A reader that ignores unknown top-level keys — which
+this spec requires — is unaffected, which is what makes the key additive rather than a version bump.
+
+`asof` MAY be `null`: some sources publish no date at all, and a table MUST NOT invent one. An
+undatable rate is undatable, not fresh.
+
 ## Refresh sources (informative)
 
-`refresh()` can replace the table at runtime from public, no-auth sources — the bundled snapshot URL
-(`raw.githubusercontent.com/cendorhq/cendor-libs/main/…/prices.json`), LiteLLM, OpenRouter, or Azure
-retail prices — each normalized back into the `{ "models": { … } }` schema above. A provider- or
-gateway-reported cost is always preferred over an estimate when available (labeled `cost_reported` vs
-`cost_estimated`); this dataset is the fallback estimator, and its shape is the contract.
+`refresh()` can replace the table at runtime from public, no-auth sources — each normalized back into
+the `{ "models": { … } }` schema above:
+
+| Name | What | Dated |
+|---|---|---|
+| *(default)* | the **cendor-prices feed** (`raw.githubusercontent.com/cendorhq/cendor-prices/main/prices.json`) — the sources below, reconciled, with `_provenance` | yes |
+| `azure` | Microsoft Azure Retail Prices, Foundry Models meters, one region | yes |
+| `aws` | AWS Bedrock public price files, one region, both offer codes | yes |
+| `modelsdev` | models.dev (MIT) | yes, per row |
+| `litellm` | LiteLLM (MIT) | no |
+| `openrouter` | OpenRouter — gateway **resale** prices | no |
+| `vercel` | Vercel AI Gateway — gateway **resale** prices | no |
+
+An implementation MUST NOT stamp `_updated` with "today" for a source that publishes no date: a
+faked date defeats the staleness signal the field exists to provide.
+
+A provider- or gateway-reported cost is always preferred over an estimate when available (labeled
+`cost_reported` vs `cost_estimated`); this dataset is the fallback estimator, and its shape is the
+contract. A **user registration** outranks any table and survives every refresh.

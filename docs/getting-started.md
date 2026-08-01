@@ -136,9 +136,12 @@ console.log(n, cost.toString());   // e.g. 13  0.005065 USD
 
 <!-- /tabs -->
 
-The price table is offline-first but **refreshable**: `prices.refresh(source="litellm"|"openrouter"|"azure")`
-pulls live rates from no-auth sources (no extra deps). `prices.age_days()` / `prices.is_stale()` tell
-you when the bundled snapshot is getting old.
+The price table is offline-first but **refreshable**: `prices.refresh()` (async in TypeScript) pulls a
+dated, per-row-provenanced table from the [cendor-prices feed](https://github.com/cendorhq/cendor-prices),
+or `refresh(source="azure"|"aws"|"modelsdev"|"litellm"|"openrouter"|"vercel")` goes straight to one
+source — all unauthenticated, no extra deps. `prices.explain(model)` says where a rate came from and
+when; `prices.age_days()` / `prices.is_stale()` cover the table as a whole. These are **dated list
+prices**, not a billing guarantee — and your own `prices.register*` always wins over any of them.
 
 ## 4. A first real call, with a budget and attribution
 

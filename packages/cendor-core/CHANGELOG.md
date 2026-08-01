@@ -2,6 +2,71 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.19.0] — 2026-08-02
+
+Live pricing: three new first-party/aggregator sources, a rewritten Azure source, and the
+visibility layer that makes any rate explain itself. Additive and backward-compatible.
+
+### Added
+- **`prices.refresh(source="aws")`** — the AWS Bedrock **public price files**, Amazon's own billing
+  catalog. Keyless, dated from `publicationDate`, one region (`region=`, default `us-east-1`).
+  ⚠️ It unions **both** offer codes, and that is not defensive coding: measured 2026-08-01,
+  `AmazonBedrock` alone carries only Claude 2.0/2.1/3-Haiku/3-Sonnet/Instant — `Claude Sonnet 4` and
+  `4.5` exist **only** in `AmazonBedrockService`, so a single-offer client silently misses every
+  current Claude rate. Rate keys come from `usagetype`, not `inferenceType`, because Sonnet 4 carries
+  `"Input tokens"` on both the standard meter ($3/MTok) and the half-price batch one.
+- **`prices.refresh(source="modelsdev")`** — models.dev (MIT), the widest keyless catalog found
+  (177 providers / 5,935 models). Per-1M rates converted exactly; per-row `last_updated` carried
+  through as real provenance. ⚠️ Restricted to a first-party provider allowlist: the same model id
+  appears under many providers at different prices (`gpt-5.1` under 11, from $1.07 to $1.25/MTok)
+  and the providers with the most rows are all resellers.
+- **`prices.refresh(source="vercel")`** — Vercel AI Gateway. Gateway **resale** prices, like
+  OpenRouter's; base rates only (its tiered pricing is out of scope); undatable.
+- **`prices.explain(model)` → `PriceExplanation`** — the resolved id, *how* it resolved
+  (exact / normalized / registered / unpriced), the rates, the table's and the **row's** provenance,
+  the age, and honest notes (a registration in effect, a resale source, an undatable table, an
+  unpriced model). `.summary()` is one line for a log. Never raises.
+- **`prices.save(path)` / `prices.load(path)`** — explicit, opt-in persistence of the active table
+  across processes, carrying provenance and `_updated` through so `explain()` and `age_days()` stay
+  honest after a load. `source()` then reports `"loaded"`. There is deliberately **no implicit
+  cache**: a hidden one is how prices go invisibly stale.
+- **`refresh(..., required=True)`** — raises the new `PriceRefreshError` instead of returning
+  `False`. Never the default; `refresh()` stays contractually never-raise.
+- **`prices.azure_url(region)`** and `region=` on `refresh()` for the `azure` / `aws` sources.
+
+### Changed
+- **`prices.refresh(source="azure")` is rewritten.** The filter is now
+  `serviceName eq 'Foundry Models'` with a **mandatory region** and pagination. The pre-rename
+  `productName eq 'Azure OpenAI'` still returned rows — which is exactly why the coverage loss was
+  invisible — but saw 462 of eastus2's 1,526 meters and **no GPT-5, DeepSeek, Grok, Mistral, Llama,
+  Phi, Kimi, Qwen or Cohere meter at all**. Measured end to end: **104 mapped models where the old
+  filter mapped 23**. Two further fixes inside it: `opt` is read as **output** (141 rows spell it
+  that way, so every GPT-5.x family previously had an input rate and no output rate), and batch /
+  fine-tune / provisioned / long-context / media meters are excluded rather than winning a
+  cheapest-rate comparison. The region term is not an optimisation — unregioned, the same query is
+  more than 25,000 rows and still paging after ~28 s.
+- **`SNAPSHOT_URL` points at the cendor-prices feed.** A bare `refresh()` now fetches a dated,
+  per-row-provenanced table reconciled daily behind validation gates
+  (`github.com/cendorhq/cendor-prices`), not this repo's own snapshot. Same schema; a freshness win.
+- **The bundled `prices.json` is GENERATED, not hand-typed** (`scripts/sync_prices.py`), from that
+  feed plus its reviewed curation policy. **44 hand-fed rows → 861 rows**, each carrying
+  `_provenance`. The hand-feeding drift goes with it: `gpt-5.6-luna` was **5× off** every other
+  source and `gpt-5.6-terra` 1.25×. A release gate now refuses a snapshot older than 30 days.
+- **A zero input rate is never published.** `llama3` (0/0, inherited from litellm) leaves the
+  snapshot: it made exactly one local model report a fabricated `$0.00` while every other reported
+  `None`, and `estimate()` returning `$0.00` as a *fact* means a USD cap silently never binds. To
+  price a local model at zero, say so — `prices.register("llama3", {"input": 0, "output": 0})`.
+- Rates are coerced to `Decimal` once at the table swap, so `explain()` hands callers real
+  `Decimal`s even for a pass-through `refresh(url=…)` against a table that quotes its rates.
+- A litellm key namespaced to a **host** no longer overwrites the bare id. Measured:
+  `vertex_ai/claude-3-5-haiku` is Vertex's $1/$5, not Anthropic's $0.80/$4.
+
+### Docs
+- `docs/core.md` §Prices rewritten: the precedence contract, the source table, `explain`,
+  `save`/`load`, the staleness signal, and the honest "dated list prices" line.
+- `docs/specs/price-dataset.md`: optional `_provenance` (additive, `prices/1`-compatible), the
+  refresh-source table, and the zero-input-rate rule.
+
 ## [1.18.0] — 2026-08-01
 
 One additive bus accessor. Backward-compatible.

@@ -2,6 +2,24 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.8.0] — 2026-08-02
+
+One new signal. Additive and backward-compatible.
+
+### Added
+- **`StalePriceTableWarning`** — warned **once per process** when a USD budget estimates from a
+  price table older than 45 days. A USD cap is only as right as the rates behind it, and the
+  direction matters: after a price *cut* a stale table over-estimates and the cap binds early
+  (conservative); after a price *rise* it under-estimates and **the cap binds late, so you
+  overspend**. That second case is why this exists.
+- **`configure(on_stale_prices=…, stale_prices_after_days=…)`** — `"warn"` (default) or
+  `"ignore"`, mirroring `on_unpriced`'s shape; the threshold defaults to 45 days.
+
+Nothing is blocked and nothing is re-estimated — it is a signal, not a behaviour change. An
+**undatable** table is never called stale: litellm, openrouter and vercel publish no as-of date at
+all, and inventing an age for them would defeat the signal. Fix it properly with
+`cendor.core.prices.refresh()`.
+
 ## [1.7.0] — 2026-07-31
 
 ### Added

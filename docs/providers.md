@@ -895,23 +895,48 @@ directly** and `instrument()` it.
 
 ## Live pricing
 
-Cost is computed from a price table. Which providers actually let you refresh it live varies. The bundled snapshot works offline; `prices.refresh(source=…)`
-pulls live rates. But the **direct model labs publish no pricing API** — their model-list endpoints
-return ids only — so "ask the provider for today's price" only works for gateways, cloud catalogs,
-and aggregators.
+Cost is computed from a price table. Which providers actually let you refresh it live varies. The
+bundled snapshot works offline; `prices.refresh(source=…)` pulls live rates. But the **direct model
+labs publish no pricing API** — their model-list endpoints return ids only — so "ask the provider
+for today's price" only works for the **cloud catalogs**, the gateways and the aggregators.
+
+> **"Live" honestly means *fetch the current list price on demand*.** Nothing on earth is a price
+> ticker; every source, first-party included, is a catalog updated on change. Negotiated and
+> enterprise rates differ from every published list.
 
 | Source | Live pricing API? | Auth | Built-in adapter |
 |---|---|---|---|
-| OpenAI / Anthropic (direct) | ❌ — `/v1/models` lists ids, no rates | — | use LiteLLM instead |
-| **LiteLLM** `model_prices_and_context_window.json` | ✅ static JSON, ~daily, all providers | none | `refresh(source="litellm")` |
-| **OpenRouter** `/api/v1/models` | ✅ per-token JSON | none | `refresh(source="openrouter")` |
-| **Azure Retail Prices** | ✅ `retailPrice`/`unitOfMeasure` | none | `refresh(source="azure")` |
-| AWS Bedrock / GCP Vertex | ✅ Price List / Billing Catalog | creds/SDK | bring your own `mapper=` |
+| **cendor-prices feed** | ✅ all of the below, reconciled, dated, per-row provenance | none | `refresh()` — **the default** |
+| **Azure Retail Prices** (Foundry Models) | ✅ Microsoft's own billing catalog | none | `refresh(source="azure", region="eastus2")` |
+| **AWS Bedrock price files** | ✅ Amazon's own billing catalog | none | `refresh(source="aws", region="us-east-1")` |
+| **models.dev** `api.json` | ✅ MIT, widest keyless catalog, per-row dates | none | `refresh(source="modelsdev")` |
+| **LiteLLM** `model_prices_and_context_window.json` | ✅ MIT, ~daily, all providers | none | `refresh(source="litellm")` |
+| **OpenRouter** `/api/v1/models` | ✅ per-token JSON — ⚠️ **resale** prices | none | `refresh(source="openrouter")` |
+| **Vercel AI Gateway** `/v1/models` | ✅ per-token JSON — ⚠️ **resale** prices | none | `refresh(source="vercel")` |
+| OpenAI / Anthropic (direct) | ❌ — `/v1/models` lists ids, no rates | — | use the feed |
+| GCP Vertex Billing Catalog | ✅ per-SKU with `effectiveTime` | free API key | bring your own `mapper=` |
 
-The three built-in adapters are all **unauthenticated HTTPS GETs** — no credentials, no SDKs, no new
-dependencies. AWS/GCP need credentials and SKU/region mapping, so they're intentionally out of core.
-All refreshes are offline-safe and fall back to the last-good table silently. See
-[core → Prices](core.md#prices).
+Every built-in adapter is an **unauthenticated HTTPS GET** — no credentials, no SDKs, no new
+dependencies. Google's catalog needs a key, so it stays out of core (a built-in source is
+contractually keyless) and feeds the aggregated table instead. All refreshes are offline-safe and
+fall back to the last-good table silently. See [core → Prices](core.md#prices-offline-first-refreshable).
+
+**The two clouds are the only first-party rates that exist**, and they are the reason `azure` and
+`aws` outrank the aggregators inside the feed. Two things to know about each:
+
+- **Azure** reads **one region** (`region=`, default `eastus2` — the largest Foundry catalog) at the
+  cheapest available tier. That is not an optimisation: unregioned, the same query is more than
+  25,000 rows and still paging after ~28 s, which is not something a library may do inside one
+  `refresh()`. Microsoft's meter names are prose (`GPT 5.1 opt Gl`, `4.3 Inp Glbl`), so the SKU→id
+  mapping is **imperfect by design** — a few rows land under an id nothing will look up. They are
+  inert, never wrong.
+- **AWS** reads one region (`region=`, default `us-east-1`) and unions **both** Bedrock offer codes.
+  Its model names are display names (`Claude Sonnet 4.5`), so an id carrying a suffix the display
+  name lacks (`llama3-3-70b-instruct`) will not match — and is never guessed at.
+
+**OpenRouter and Vercel are gateways quoting what *they* charge you**, which may differ from the
+lab's own rate. `prices.explain(model)` says so in `notes` when one of them is the active table,
+rather than leaving it in the docs for you to remember.
 
 A gateway that returns the **actual billed cost** on the response (e.g. OpenRouter's `usage.cost`) is
 better than any table: `instrument()` uses that figure directly and labels the call `cost_reported`

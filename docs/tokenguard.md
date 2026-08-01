@@ -162,6 +162,45 @@ Four remedies, in the order they usually apply:
 | `prices.register_model_price(id, input=…, output=…)` | You have a rate card — a fine-tune, a marketplace id, a self-hosted gateway. |
 | `configure(on_unpriced="raise")` | You would rather **fail closed** than record `$0`: an unpriced call under `on_exceed="block"` is rejected pre-flight. |
 
+### A priced model, an OLD price
+
+The other way a USD cap goes quietly wrong: the model *is* priced, but from a table that has aged.
+The direction depends on which way the price moved — after a **cut** the estimate is high and the cap
+binds early (conservative); after a **rise** it is low and **the cap binds late, so you overspend**.
+
+`tokenguard` warns **once per process** (`StalePriceTableWarning`) when a USD budget estimates from a
+table older than 45 days. It is a signal, not a behaviour change: nothing is blocked, nothing is
+re-estimated.
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import prices
+from cendor import tokenguard
+
+prices.refresh()                                        # the real fix — refresh at startup
+tokenguard.configure(on_stale_prices="warn",            # "warn" (default) | "ignore"
+                     stale_prices_after_days=45)
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { prices } from '@cendor/core';
+import { configure, onStalePricesWarning } from '@cendor/tokenguard';
+
+await prices.refresh(); // the real fix — refresh at startup
+configure({ onStalePrices: 'warn', stalePricesAfterDays: 45 });
+onStalePricesWarning((w) => console.warn(w.message)); // or re-throw to escalate
+```
+
+<!-- /tabs -->
+
+An **undatable** table is never called stale. `litellm`, `openrouter` and `vercel` publish no as-of
+date at all, and inventing an age for them would defeat the signal — they surface through
+`prices.source_name()` and `prices.explain()` instead.
+
 <!-- tabs: lang -->
 <!-- tab: Python -->
 
@@ -275,7 +314,7 @@ calls had no price. `report().assert_under(usd=…, **tags)` turns cost into a t
 | `downgrades()` | `downgrades()` | The pre-flight reroutes performed (`{from, to, tags}`). |
 | `clamps()` | `clamps()` | The pre-flight token clamps applied (`{model, kwarg, limit, tags}`). |
 | `use_sink(sink)` | `use_sink(sink)` | Also persist each spend row to a sink; built-ins `sinks.SQLiteSink(path)`, `sinks.OTelSink()`, `sinks.QueueSink(inner)` (any `write(row)` object works). |
-| `configure(...)` | `configure(max_records=100_000, on_unpriced="warn")` | Tune runtime behavior (defaults shown). `max_records` FIFO-bounds the in-memory buffer (`None` disables); `on_unpriced` `"warn"`/`"raise"`. |
+| `configure(...)` | `configure(max_records=100_000, on_unpriced="warn", on_stale_prices="warn", stale_prices_after_days=45)` | Tune runtime behavior (defaults shown). `max_records` FIFO-bounds the in-memory buffer (`None` disables); `on_unpriced` `"warn"`/`"raise"`; `on_stale_prices` `"warn"`/`"ignore"` controls the once-per-process `StalePriceTableWarning`. |
 | `dropped()` | `dropped()` | Count of spend rows evicted by the `max_records` cap since the last `reset()`. |
 | `unpriced_calls()` | `unpriced_calls()` | Count of recorded calls with no price (a USD blind spot). |
 | `reset()` | `reset()` | Clear recorded spend + active context and restore defaults (handy between tests). |
@@ -487,5 +526,10 @@ spend it attributed, on your own screen. Your own OTel backend stays the product
   (`prices.register_model_price`, or `prices.register_deployment(name, like=…)` for an Azure
   deployment), or `configure(on_unpriced="raise")` to fail closed. `tokenguard` warns once per model
   and counts them in `unpriced_calls()`.
+- **A stale price table is a quieter blind spot.** A USD cap is only as right as the rates behind it,
+  and after a price *rise* a stale table makes the cap bind late. `StalePriceTableWarning` fires once
+  per process past 45 days; an undatable table (no as-of date published) is never called stale,
+  because unmeasurable is not the same as fresh. `prices.refresh()` is the fix, not a bigger
+  threshold.
 - **State is in-process and module-global** — ideal for a single worker. For multi-process, put
   durable spend through a sink rather than the in-memory aggregate.

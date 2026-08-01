@@ -88,10 +88,159 @@ default. Money is always `Decimal` (rates are parsed with `parse_float=Decimal`,
 round-trip through `float`). What a snapshot can't know is whether its rates are still current,
 so `refresh()` pulls live rates and `age_days()`/`is_stale()` surface staleness.
 
+> **Dated list prices, not live prices.** There is no real-time LLM pricing anywhere — every source
+> on earth, first-party included, is a *catalog updated on change*, not a ticker. These are **list**
+> rates as of a date. Negotiated, committed-use and enterprise rates differ, and a
+> provider-**reported** cost always beats an estimate.
+
 Because `cached_tokens ⊆ input_tokens` (normalized across providers), `estimate()` bills the
 cached portion **once** — `input_rate*(input − cached) + cached_rate*cached` — never at both
 rates. A model with no published cached rate falls back to the input rate for cache reads (no
 discount, no double charge).
+
+#### Where a rate comes from, in order
+
+The precedence contract, exactly as the code behaves. Nothing in it guesses:
+
+1. **A provider- or gateway-reported real cost** (`metadata["cost_reported"]`). Always wins.
+2. **Your own registration** — `register` / `register_model_price` / `register_deployment`.
+   Overrides every table and **survives every `refresh()`**. *This is the "if the price is wrong, I
+   set my own" answer, and it has always been shipped.*
+3. **A refreshed table** — whatever `refresh(...)` you invoked, in memory, this process only.
+4. **The bundled snapshot** — the offline floor.
+5. **`None` + a warn-once.** Never a guess. An honest gap beats a confident wrong number.
+
+`prices.explain(model)` reports which of these answered, and why.
+
+#### The bundled snapshot is generated, not hand-typed
+
+The wheel's and the package's snapshot is generated from
+[`cendorhq/cendor-prices`](https://github.com/cendorhq/cendor-prices) — a public **data** repo (no
+server, no account) that reconciles the cloud catalogs and the MIT aggregators daily behind
+validation gates, dates the result, and records **per-row provenance**. A bare `refresh()` fetches
+that same feed. Cendor operates nothing here: it is a static file on GitHub's CDN, so no Cendor
+outage can exist to break your cost estimation.
+
+#### Live sources
+
+Every built-in source is an unauthenticated HTTPS GET of a static JSON resource — never a running
+service, never a key.
+
+| `source=` | What it is | Dated? | Note |
+|---|---|---|---|
+| *(none — the default)* | The **cendor-prices feed**: the sources below, reconciled, with per-row provenance | yes | First-party rates without fetching five sources |
+| `azure` | **Microsoft's own** Retail Prices catalog, Foundry Models meters | yes (`effectiveStartDate`) | One region (`region=`, default `eastus2`), cheapest tier. Meter names are prose, so the id mapping is imperfect by design |
+| `aws` | **Amazon's own** Bedrock public price files | yes (`publicationDate`) | One region (`region=`, default `us-east-1`); unions both Bedrock offer codes |
+| `modelsdev` | models.dev — MIT, the widest keyless catalog | yes (per row) | First-party providers only; a reseller never outranks the lab |
+| `litellm` | LiteLLM — MIT, broad coverage | **no** | Undatable, so `is_stale()` reports unknown, not fresh |
+| `openrouter` | OpenRouter's catalog | **no** | ⚠️ Gateway **resale** prices — what OpenRouter charges you |
+| `vercel` | Vercel AI Gateway's catalog | **no** | ⚠️ Same resale caveat; base rates only (no tiered pricing) |
+
+OpenAI and Anthropic publish **no pricing API** — their model-list endpoints carry ids only. That is
+why the two clouds and the aggregators are the sources, and why the feed exists.
+
+#### Show me where this number came from
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import prices
+
+prices.refresh()                       # the cendor-prices feed
+e = prices.explain("gpt-4o")
+print(e.summary())
+# gpt-4o: cached=0.00000125 input=0.0000025 output=0.00001 — exact, from azure as of 2026-07-01
+e.registered        # is one of MY registrations in effect?
+e.row_source        # which source that specific rate came from
+e.row_asof          # that source's own as-of date — not the day it was fetched
+e.notes             # honest caveats: a resale source, an undatable table, an unpriced model
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { prices } from '@cendor/core';
+
+await prices.refresh(); // the cendor-prices feed
+const e = prices.explain('gpt-4o');
+console.log(e.summary());
+e.registered; // is one of MY registrations in effect?
+e.rowSource; //  which source that specific rate came from
+e.rowAsof; //   that source's own as-of date — not the day it was fetched
+e.notes; //     honest caveats: a resale source, an undatable table, an unpriced model
+```
+
+<!-- /tabs -->
+
+`explain()` never raises: an unpriced model is an answer (`how == "unpriced"`), not an error.
+
+#### When a stale table would be worse than no table
+
+`refresh()` is contractually **never-raise**: it returns `False`/`false` and leaves the last-good
+table active, so a CDN blip cannot take your app down at import. When that trade is the wrong one —
+a billing job, a cost gate in CI — ask for the loud version:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+prices.refresh(required=True)          # raises PriceRefreshError instead of returning False
+prices.refresh(source="aws", region="eu-west-1")
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+await prices.refresh(undefined, { required: true }); // throws PriceRefreshError
+await prices.refresh(undefined, { source: 'aws', region: 'eu-west-1' });
+```
+
+<!-- /tabs -->
+
+`tokenguard` warns **once per process** (`StalePriceTableWarning`) when a **USD** budget estimates
+from a table older than 45 days. The direction matters: after a price *cut* a stale table
+over-estimates and the cap binds early (conservative); after a price *rise* it under-estimates and
+**the cap binds late — you overspend**. Silence it with
+`tokenguard.configure(on_stale_prices="ignore")` / `configure({ onStalePrices: 'ignore' })`, or move
+the threshold with `stale_prices_after_days=` / `stalePricesAfterDays`. An *undatable* table
+(litellm / openrouter / vercel publish no as-of date) is **never** called stale — unmeasurable is
+not fresh, and inventing an age would be the exact dishonesty this design avoids.
+
+#### Reusing a fetched table across processes
+
+`refresh()` is **in-memory only, per process** — nothing is written to disk, so a short-lived or
+serverless worker starts at the bundled snapshot every time. There is deliberately **no implicit
+cache**: a library quietly writing price files is a side effect, and a hidden cache is exactly how
+prices go *invisibly* stale. The explicit escape hatch is a path you choose:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+prices.refresh()
+prices.save(".cache/cendor-prices.json")     # in your deploy step — sync
+
+# ... a later process:
+if not prices.load(".cache/cendor-prices.json"):
+    prices.refresh()                          # nothing saved yet, or unreadable
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+await prices.refresh();
+await prices.save('.cache/cendor-prices.json'); // in your deploy step — async, Node only
+
+// ... a later process:
+if (!(await prices.load('.cache/cendor-prices.json'))) await prices.refresh();
+```
+
+<!-- /tabs -->
+
+Provenance rides along, so `explain()` and `age_days()` after a `load()` describe where the rates
+*came from*, not where they were read from; `source()` then reports `"loaded"`. Registrations are
+re-applied on load exactly as they are after a refresh.
 
 **Register a price for a model the snapshot doesn't know.** An Azure/Foundry *deployment* name, a
 fine-tune, a Bedrock marketplace id or a local model is unpriced — cost comes back `None`/`null`
@@ -373,7 +522,9 @@ per provider and the [streaming](#streaming) note below.
 
 ```python
 prices.estimate("gpt-4o", input_tokens=1000, output_tokens=300, cached_tokens=200)  # -> Money
-prices.refresh(source="litellm")       # or "openrouter" | "azure" | a static-JSON URL
+prices.refresh()                       # the cendor-prices feed (the default)
+prices.refresh(source="azure")         # or "aws"|"modelsdev"|"litellm"|"openrouter"|"vercel"|url=
+prices.explain("gpt-4o")               # where did that rate come from, and when?
 prices.register_deployment("prod-chat", like="gpt-4o")                  # a deployment name
 prices.register_model_price("my-finetune", input=2.50, output=10.00)     # USD per 1M tokens
 ```
@@ -381,9 +532,11 @@ prices.register_model_price("my-finetune", input=2.50, output=10.00)     # USD p
 <!-- tab: TypeScript -->
 
 ```ts
-prices.estimate('gpt-4o', 1000, { outputTokens: 300, cachedTokens: 200 });  // -> Money
-await prices.refresh(undefined, { source: 'litellm' });  // or 'openrouter' | 'azure' | a URL
-prices.registerDeployment('prod-chat', { like: 'gpt-4o' });              // a deployment name
+prices.estimate('gpt-4o', 1000, { outputTokens: 300, cachedTokens: 200 }); // -> Money
+await prices.refresh(); // the cendor-prices feed (the default)
+await prices.refresh(undefined, { source: 'azure' }); // or aws|modelsdev|litellm|openrouter|vercel
+prices.explain('gpt-4o'); // where did that rate come from, and when?
+prices.registerDeployment('prod-chat', { like: 'gpt-4o' }); // a deployment name
 ```
 
 <!-- /tabs -->
@@ -391,18 +544,21 @@ prices.registerDeployment('prod-chat', { like: 'gpt-4o' });              // a de
 | Call | Returns | What it does |
 |---|---|---|
 | `estimate(model, input_tokens=, output_tokens=, cached_tokens=)` | `Money` | Price a call from the active table (Decimal, never float). |
-| `refresh(source=… \| url \| url, mapper=)` | — | Pull live rates from a no-auth JSON source; falls back silently to the last-good table. |
+| `refresh(url=None, source=…, mapper=, timeout=, region=, required=False)` | `bool` | Pull live rates from a no-auth JSON source; falls back silently to the last-good table. No args = the **cendor-prices feed**. `region=` applies to `azure`/`aws`. `required=True` raises `PriceRefreshError` instead of returning `False`. |
+| `sources()` | `list[str]` | `["aws", "azure", "litellm", "modelsdev", "openrouter", "vercel"]`. |
+| `explain(model)` | `PriceExplanation` | Where this model's rates came from: resolved id, `how` (exact/normalized/registered/unpriced), the rates, table + per-row provenance, age, and honest notes. Never raises. |
+| `save(path)` · `load(path)` | `str` · `bool` | Explicit, opt-in persistence of the active table across processes. Provenance and `_updated` travel with it. Never an implicit cache. (TS: both `async`.) |
 | `register(model, rates)` | — | Register **per-token** rates for a model the snapshot doesn't know. Survives `refresh()`. (TS: `prices.register`.) |
 | `register_deployment(deployment, like=)` | `dict` | Price an Azure/Foundry **deployment name** by copying the rates of the base model it serves. Raises `UnknownModelError` if `like` isn't in the table. Copy-at-registration, not a live alias. Since core 1.16.0 / `@cendor/core` 3.2.0. (TS: `registerDeployment(deployment, { like })`.) |
 | `register_model_price(model, input=, output=, cached=, cache_write=, per="1M")` | `dict` | The per-1M/1K convenience over `register`. Python only; TS's twin is `registerModelPrice` in `@cendor/sdk`. |
-| `models()` · `snapshot_date()` · `source()` | — | Introspect the active table. |
+| `models()` · `snapshot_date()` · `source()` | — | Introspect the active table. `source()` is `"bundled"` \| `"refreshed"` \| `"loaded"`. |
 | `age_days()` · `is_stale(max_age_days=30)` | — | Freshness signals. |
 | `source_name()` · `source_url()` | — | Provenance of the active rates. |
 
 `refresh()` fetches a **static** resource over http(s) only (it rejects `file://` and other
-schemes), maps it to our schema **in memory** (nothing persisted), and normalizes source ids
-to bare keys (`openai/gpt-4o` → `gpt-4o`). See [Providers → Live pricing](providers.md#live-pricing)
-for which sources expose rates. Programmatic price registrations (`prices.register` in **both**
+schemes), maps it to our schema **in memory** (nothing persisted unless you call `save()`), and
+normalizes source ids to bare keys (`openai/gpt-4o` → `gpt-4o`). See
+[Providers → Live pricing](providers.md#live-pricing) for which sources expose rates. Programmatic price registrations (`prices.register` in **both**
 languages since core 1.15.0 / 0.6.0) **survive `refresh()`** — they are re-applied after every
 table swap.
 

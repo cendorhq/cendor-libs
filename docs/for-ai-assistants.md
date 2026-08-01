@@ -92,6 +92,8 @@ differ or where a plausible guess is wrong.
 | `evict="compress"` without squeeze | `Context(..., on_missing_compressor="error")` | `new Context({ ..., onMissingCompressor: 'error' })` | With no compressor available a `compress` block is **truncated**, which is lossy and gives you no `Handle` to `.expand()` — a different operation, not a slightly worse one. It was always recorded as a note on the `BlockDecision`, and a note nobody reads is how a forgotten `contextkit[squeeze]` degraded every compress block while the assembly still reported success. Since **1.1.0 / `@cendor/contextkit` 3.1.0**: `"note"` (default, unchanged) · `"warn"` · `"error"`. It fires only when the compressor is genuinely missing — a block that asked for `truncate`, or one that fitted, is untouched. |
 | **`azure-ai-inference` is captured by NOTHING** | not a detection target — migrate to `instrument(OpenAI(base_url=f"{endpoint}/openai/v1/", api_key=…))` | same — `instrument(new OpenAI({ baseURL: `${endpoint}/openai/v1/`, apiKey: … }))` | The Azure AI Inference beta SDK (`ChatCompletionsClient`, the `/models` route) is a **different client shape** from the `openai` SDK, and `instrument()` returns it **untouched**: zero `LLMCall`s, so budgets never bind, gates never fire and the audit chain stays empty — while the app looks like it works. Microsoft **deprecated it and retires it on 26 August 2026**; the GA `/openai/v1` API is the replacement. There is no cendor-side fix, and none is planned — migrating the client IS the fix. |
 | **A `model-router` deployment is not priceable** | tokens exact; `cost` is `None` — restrict the router pool and `prices.register_deployment("model-router", like=<priciest member>)` if a USD cap must bind | same via `prices.registerDeployment('model-router', { like })` | Foundry's **model router** picks a different underlying model per request and bills at **that** model's rates, but the id the call reports is the router's own deployment name — so **no single registration is correct for every call**. Usage stays exact; USD attribution under model router is **not supported today**. Registering the most expensive member of the pool **over**-estimates, which is the safe direction — never register the cheapest. Microsoft returns the serving model on the response, so per-call attribution is possible in principle; it is recorded as future work, not shipped. |
+| **Where a `refresh()` rate came from** | `prices.explain(model)` → `.how` / `.row_source` / `.row_asof` / `.registered` / `.notes` / `.summary()` | same, camelCase: `.rowSource` / `.rowAsof` | A bare `prices.refresh()` no longer fetches the cendor-libs snapshot — it fetches the **cendor-prices feed**, a dated table with per-row provenance reconciled from Azure Retail, the AWS Bedrock price files, models.dev, LiteLLM and genai-prices. Precedence, and it never guesses: **provider-reported cost > a user `register*` > a refreshed table > the bundled snapshot > `None` + a warn-once**. Do not tell a user their price is wrong and stop there — `explain()` names the source and its as-of date, and says in `.notes` when the active table is a **gateway resale** price (`openrouter`, `vercel` quote what *they* charge) or is **undatable** (no as-of date at all, so `is_stale()` reports unknown, not fresh). `sources()` is `aws · azure · litellm · modelsdev · openrouter · vercel`; `azure`/`aws` also take `region=`. |
+| **Prices live in memory — persisting them is explicit** | `prices.save(path)` then `prices.load(path)` in the next process; `prices.refresh(required=True)` raises instead of returning `False` | `await prices.save(path)` / `await prices.load(path)` (async — Node only); `refresh(undefined, { required: true })` | `refresh()` writes **nothing** to disk, so a serverless or short-lived process starts at the bundled snapshot every time and must opt in again. There is deliberately no implicit cache — a hidden one is how prices go *invisibly* stale — so do not invent `refresh(cache=…)` or `prices.cache`; both raise a teaching `AttributeError`. `save`/`load` carry the ORIGINAL source and `_updated` through, so `explain()` and `age_days()` after a load describe where the rates came from, not when the file was read. And `refresh()` is contractually never-raise: a failure returns `False` and leaves the **last-good** table active — it never reverts anything. `required=True` is for the case where running on stale rates is worse than not running. |
 
 A few cross-cutting rules that don't fit a row:
 
@@ -154,6 +156,41 @@ import { tokens, prices } from '@cendor/core';
 const n = tokens.count([{ role: 'user', content: 'Summarize this in 3 bullets.' }], 'claude-opus-4-8');
 const cost = prices.estimate('claude-opus-4-8', n, { outputTokens: 200 });
 console.log(n, cost.toString());   // e.g. 13  0.005065 USD
+```
+
+<!-- /tabs -->
+
+### Refresh prices, and show where a rate came from
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+
+```python
+from cendor.core import prices
+
+prices.refresh()                        # the cendor-prices feed (dated, per-row provenance)
+# or a provider's own catalog:  prices.refresh(source="azure", region="eastus2")
+# or, when stale rates are worse than none:  prices.refresh(required=True)
+
+e = prices.explain("gpt-4o")
+print(e.summary())     # gpt-4o: … — exact, from azure as of 2026-07-01
+print(e.registered)    # True if one of YOUR register* calls is overriding the table
+print(e.notes)         # resale source? undatable table? unpriced model?
+```
+
+<!-- tab: TypeScript -->
+
+```ts
+import { prices } from '@cendor/core';
+
+await prices.refresh(); // the cendor-prices feed (dated, per-row provenance)
+// or a provider's own catalog:  await prices.refresh(undefined, { source: 'azure', region: 'eastus2' });
+// or, when stale rates are worse than none:  await prices.refresh(undefined, { required: true });
+
+const e = prices.explain('gpt-4o');
+console.log(e.summary()); // gpt-4o: … — exact, from azure as of 2026-07-01
+console.log(e.registered); // true if one of YOUR register* calls is overriding the table
+console.log(e.notes); //     resale source? undatable table? unpriced model?
 ```
 
 <!-- /tabs -->

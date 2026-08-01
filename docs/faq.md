@@ -42,11 +42,31 @@ character/subword heuristic remains only as a defensive fallback if `tiktoken` e
 is always exact (`Decimal`, never float). Details in [core → Token counting](core.md#token-counting-three-tiers).
 
 ### Can I get live / up-to-date prices?
-Yes. A **dated snapshot ships bundled** so pricing works offline, and
-`prices.refresh(source="litellm" | "openrouter" | "azure")` pulls **live** rates from unauthenticated
-JSON sources (no key, no extra deps). `prices.age_days()` / `is_stale()` tell you how old your table
-is. The model labs themselves (OpenAI / Anthropic) expose **no pricing API** — only gateways,
-aggregators, and cloud catalogs do, which is why those are the sources. See [Providers → Live pricing](providers.md#live-pricing).
+Yes, with one honest caveat: **there is no real-time LLM pricing anywhere.** Every source on earth,
+first-party included, is a catalog updated on change — not a ticker. "Live" here means *fetch the
+current list price on demand*.
+
+A **dated snapshot ships bundled** so pricing works offline, and `prices.refresh()` fetches the
+[cendor-prices feed](https://github.com/cendorhq/cendor-prices) — a dated table with **per-row
+provenance**, reconciled daily behind validation gates from the cloud catalogs and the MIT
+aggregators. Or go straight to one source:
+`prices.refresh(source="azure" | "aws" | "modelsdev" | "litellm" | "openrouter" | "vercel")`, each an
+unauthenticated JSON GET (no key, no extra deps). `azure` and `aws` are the providers' **own** billing
+catalogs and take a `region=`.
+
+`prices.explain(model)` tells you which source a specific rate came from and its as-of date;
+`age_days()` / `is_stale()` cover the table as a whole, and `tokenguard` warns once per process when a
+USD budget estimates from a table older than 45 days. The model labs themselves (OpenAI / Anthropic)
+expose **no pricing API** — only the clouds, gateways and aggregators do, which is why those are the
+sources. See [Providers → Live pricing](providers.md#live-pricing).
+
+### The price you have for my model is wrong. Can I override it?
+Yes, and your override **wins over everything except the provider's own reported cost** — including
+after a `refresh()`. Use `prices.register_model_price(id, input=…, output=…)` when you have a rate
+card, `prices.register_deployment(name, like="gpt-4o")` for an Azure/Foundry deployment name, or
+`prices.register(id, rates)` for exact per-token values. `prices.explain(id).registered` confirms
+yours is the one in effect. If the *feed* is wrong rather than merely unusual for you, every number
+and its source are in git — open an issue on `cendorhq/cendor-prices`.
 
 ### Is the cost an estimate or the real bill?
 Both are surfaced, labelled honestly. When the provider or gateway reports an actual cost (e.g.
