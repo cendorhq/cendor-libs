@@ -1,5 +1,6 @@
 """Prices: exact Decimal estimates from the bundled snapshot + offline refresh fallback."""
 
+import re
 from decimal import Decimal
 
 import pytest
@@ -92,8 +93,17 @@ def test_bundled_snapshot_metadata():
     assert prices.source() == "bundled"
     assert prices.source_name() == "bundled"
     assert prices.source_url() is None
-    assert prices.snapshot_date() == "2026-07-13"
     assert "claude-opus-4-8" in prices.models()
+    # The snapshot is GENERATED from the cendor-prices feed by `scripts/sync_prices.py`, so its date
+    # moves on every regeneration. Asserting a literal here would turn every refresh into a red
+    # test and teach the next maintainer to edit the assertion rather than look at the data. Assert
+    # the CONTRACT instead: it is datable, parseable, and not from the future.
+    d = prices.snapshot_date()
+    assert d is not None and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d), d
+    age = prices.age_days()
+    assert age is not None and age >= 0, f"snapshot dated in the future: {d}"
+    # And it is a real generated table, not the old hand-fed 44-row one.
+    assert len(prices.models()) > 400
 
 
 def test_o1_family_is_priced():

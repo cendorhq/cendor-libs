@@ -63,7 +63,12 @@ def test_ollama_chat_instrumented(events):
     call = events[0]
     assert call.provider == "ollama"
     assert call.usage == Usage(input_tokens=7, output_tokens=5)
-    assert call.cost.amount == Decimal("0")  # local model priced at 0
+    # A local model has no LIST price, so cost is None — not $0.00.
+    # `llama3` used to sit in the hand-fed snapshot at 0/0 (inherited from litellm), which made
+    # exactly one local model report a fabricated $0.00 while every other one reported None. The
+    # generated snapshot publishes no zero input rate at all. If you want your local runs costed,
+    # say so explicitly: `prices.register("llama3", {"input": 0, "output": 0})`.
+    assert call.cost is None
 
 
 def test_family_detection_extended():
