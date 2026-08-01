@@ -130,7 +130,7 @@ def test_refresh_uses_default_snapshot_url(monkeypatch):
 
     @contextlib.contextmanager
     def fake_urlopen(url, timeout=5.0):
-        seen["url"] = url
+        seen["url"] = getattr(url, "full_url", url)
         yield io.BytesIO(payload.encode("utf-8"))
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
@@ -212,7 +212,7 @@ def _install_fetch(monkeypatch, raw_text: str):
 
     @contextlib.contextmanager
     def fake_urlopen(url, timeout=5.0):
-        seen["url"] = url
+        seen["url"] = getattr(url, "full_url", url)
         yield io.BytesIO(raw_text.encode("utf-8"))
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
@@ -220,7 +220,7 @@ def _install_fetch(monkeypatch, raw_text: str):
 
 
 def test_sources_lists_builtin_adapters():
-    assert prices.sources() == ["azure", "litellm", "openrouter"]
+    assert prices.sources() == ["aws", "azure", "litellm", "modelsdev", "openrouter", "vercel"]
 
 
 def test_normalize_model_id_strips_provider_prefix():
@@ -493,7 +493,8 @@ def test_builtin_source_urls_are_urllib_safe():
 
     from cendor.core.prices import _SOURCES
 
-    for name, (url, _mapper) in _SOURCES.items():
+    for name, entry in _SOURCES.items():
+        url = entry.url_for(None)
         assert " " not in url, f"{name} source URL carries a raw space: {url}"
         urllib.request.Request(url)  # constructs == urlopen will accept the URL
     # Teeth: the exact shape that shipped is rejected by the stdlib *before* any socket work
@@ -503,3 +504,683 @@ def test_builtin_source_urls_are_urllib_safe():
         urllib.request.urlopen(  # noqa: S310 - https only; raises on the raw space, never connects
             "https://cendor.invalid/x?$filter=productName eq 'Azure OpenAI'", timeout=0.001
         )
+
+
+# ======================================================================== live-pricing wave (W2)
+#
+# Every case below is anchored to something MEASURED on 2026-08-01 against the real endpoints; the
+# comments name the measurement so a future edit knows what it would be undoing. Raw traces:
+# cendorhq `plan/evidence-live-pricing-2026-08-01/`.
+
+
+def _install_multi(monkeypatch, bodies: dict[str, str]):
+    """Serve a different body per URL substring, and record every URL fetched (in order)."""
+    import contextlib
+    import io
+
+    seen: list[str] = []
+
+    @contextlib.contextmanager
+    def fake_urlopen(url, timeout=5.0):
+        full = getattr(url, "full_url", url)
+        seen.append(full)
+        for needle, body in bodies.items():
+            if needle in full:
+                yield io.BytesIO(body.encode("utf-8"))
+                return
+        raise AssertionError(f"unexpected fetch: {full}")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    return seen
+
+
+# ----------------------------------------------------------------------------- the azure rewrite
+
+
+def test_azure_url_is_the_foundry_filter_with_a_region():
+    """The pre-rename `productName eq 'Azure OpenAI'` filter still RETURNS ROWS — which is why the
+    coverage loss was invisible — but sees 462 of eastus2's 1,526 meters and no GPT-5 at all."""
+    url = prices.azure_url()
+    assert "serviceName" in url and "Foundry%20Models" in url
+    assert "productName" not in url
+    assert "armRegionName" in url and "eastus2" in url
+    assert " " not in url  # urllib refuses a raw space (the 2026-07-31 defect)
+    assert "westeurope" in prices.azure_url("westeurope")
+
+
+def test_azure_region_is_mandatory_not_cosmetic(monkeypatch):
+    """Measured: unregioned, the same query is >=25,000 rows and still paging after 28.5 s. The
+    region term is what makes one refresh() bounded, so it must reach the wire."""
+    seen = _install_multi(monkeypatch, {"prices.azure.com": '{"Items": []}'})
+    prices.refresh(source="azure", region="swedencentral")
+    assert "swedencentral" in seen[0]
+
+
+def test_azure_opt_means_output(monkeypatch):
+    """141 rows on 2026-08-01 spell output `opt`. The pre-fix parser looked only for
+    `outp`/`output`, so every GPT-5.x family had an input rate and NO output rate. Proven by price:
+    GPT-5.1 is published at $1.25 in / $10 out."""
+    raw = """
+    {"Items": [
+      {"skuName": "GPT 5.1 inp Gl", "retailPrice": 1.25, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "GPT 5.1 opt Gl", "retailPrice": 10.0, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"}
+    ]}
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh(source="azure") is True
+    # 1.25/1M in + 10/1M out
+    assert prices.estimate("gpt-5.1", 1_000_000, 1_000_000).amount == Decimal("11.25")
+
+
+def test_azure_skips_batch_and_fine_tune_and_long_context_meters(monkeypatch):
+    """A batch meter is half price and a long-context meter is double. Cheapest-wins across all of
+    them would publish the batch rate as the standard one."""
+    raw = """
+    {"Items": [
+      {"skuName": "GPT 5.1 inp Gl", "retailPrice": 1.25, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "GPT 5.1 Batch inp Gl", "retailPrice": 0.625, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "GPT 5.1 inp Gl L", "retailPrice": 0.5, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "4.1 ft training Dz", "retailPrice": 0.0275, "unitOfMeasure": "1K",
+       "productName": "Azure OpenAI", "type": "Consumption"}
+    ]}
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh(source="azure") is True
+    assert prices.estimate("gpt-5.1", 1_000_000).amount == Decimal("1.25")
+
+
+def test_azure_unit_is_read_per_row(monkeypatch):
+    """eastus2 mixes 905 `1K` meters with 479 `1M` ones in one response."""
+    raw = """
+    {"Items": [
+      {"skuName": "gpt-4o-0806-Inp-glbl", "retailPrice": 0.0025, "unitOfMeasure": "1K",
+       "productName": "Azure OpenAI", "type": "Consumption"},
+      {"skuName": "GPT 5 Inpt Glbl", "retailPrice": 1.25, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"}
+    ]}
+    """
+    _install_fetch(monkeypatch, raw)
+    prices.refresh(source="azure")
+    assert prices.estimate("gpt-4o", 1_000_000).amount == Decimal("2.5")
+    assert prices.estimate("gpt-5", 1_000_000).amount == Decimal("1.25")
+
+
+def test_azure_family_root_does_not_mangle_o1_o3(monkeypatch):
+    """A bare `4.3` under *Azure Grok Models* is grok-4.3; a bare `V4 Pro` under *Azure Deepseek
+    Models* is deepseek-v4-pro. Applying the root unconditionally turned `o1`/`o3`/`o4-mini` into
+    `gpt-o1`/`gpt-o3`/`gpt-o4-mini` — a regression against the pre-fix mapper."""
+    raw = """
+    {"Items": [
+      {"skuName": "o3 Inp glbl", "retailPrice": 0.002, "unitOfMeasure": "1K",
+       "productName": "Azure OpenAI Reasoning", "type": "Consumption"},
+      {"skuName": "4.3 Inp Glbl", "retailPrice": 0.00125, "unitOfMeasure": "1K",
+       "productName": "Azure Grok Models", "type": "Consumption"},
+      {"skuName": "V4 Pro Inp glbl", "retailPrice": 0.00174, "unitOfMeasure": "1K",
+       "productName": "Azure Deepseek Models", "type": "Consumption"},
+      {"skuName": "GPT 5.2 pro inp Gl", "retailPrice": 21.0, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"}
+    ]}
+    """
+    _install_fetch(monkeypatch, raw)
+    prices.refresh(source="azure")
+    known = prices.models()
+    assert "o3" in known and "gpt-o3" not in known
+    assert "grok-4.3" in known
+    assert "deepseek-v4-pro" in known
+    assert "gpt-5.2-pro" in known
+
+
+def test_azure_maps_cache_read(monkeypatch):
+    raw = """
+    {"Items": [
+      {"skuName": "GPT 5.1 inp Gl", "retailPrice": 1.25, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "GPT 5.1 cd inp Gl", "retailPrice": 0.125, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"}
+    ]}
+    """
+    _install_fetch(monkeypatch, raw)
+    prices.refresh(source="azure")
+    # all 1M tokens cached: billed at the cached rate, once
+    assert prices.estimate("gpt-5.1", 1_000_000, cached_tokens=1_000_000).amount == Decimal("0.125")
+
+
+def test_azure_paginates(monkeypatch):
+    """1,526 meters arrive over 2 pages. Reading page 1 only is what the shipped source did."""
+    page1 = (
+        '{"Items": [{"skuName": "gpt 4o Inp glbl", "retailPrice": 0.0025,'
+        ' "unitOfMeasure": "1K", "productName": "Azure OpenAI", "type": "Consumption"}],'
+        ' "NextPageLink": "https://prices.azure.com/next-page"}'
+    )
+    page2 = (
+        '{"Items": [{"skuName": "gpt 4o Outp glbl", "retailPrice": 0.01,'
+        ' "unitOfMeasure": "1K", "productName": "Azure OpenAI", "type": "Consumption"}]}'
+    )
+    seen = _install_multi(monkeypatch, {"next-page": page2, "%24filter": page1})
+    assert prices.refresh(source="azure") is True
+    assert len(seen) == 2, seen
+    assert prices.estimate("gpt-4o", 1000, 500).amount == Decimal("0.0075")  # both pages mapped
+
+
+def test_azure_wrong_filter_answers_200_with_zero_items(monkeypatch):
+    """NEGATIVE CONTROL. Measured: a wrong `serviceName` returns HTTP 200 and an empty Items list —
+    the status is meaningless. An empty map must leave the last-good table alone."""
+    _install_fetch(monkeypatch, '{"Items": []}')
+    assert prices.refresh(source="azure") is False
+    assert prices.source() == "bundled"
+    assert prices.estimate("gpt-4o", 1000).amount == Decimal("0.0025")
+
+
+# ----------------------------------------------------------------------------------- the aws source
+
+_AWS_INDEX = (
+    '{"regions": {"us-east-1": {"currentVersionUrl": "/offers/v1.0/aws/X/2/us-east-1/index.json"}}}'
+)
+
+
+def _aws_file(products, terms, published="2026-07-29T23:58:47Z"):
+    import json as _json
+
+    return _json.dumps(
+        {"publicationDate": published, "products": products, "terms": {"OnDemand": terms}}
+    )
+
+
+def test_aws_unions_both_offer_codes(monkeypatch):
+    """MEASURED, and the single most important AWS fact: `AmazonBedrock` alone carries only
+    Claude 2.0/2.1/3-Haiku/3-Sonnet/Instant. `Claude Sonnet 4` and `Claude Sonnet 4.5` live ONLY in
+    `AmazonBedrockService`. A single-offer client silently misses every current Claude rate."""
+    import contextlib
+    import io
+
+    main = _aws_file(
+        {
+            "A": {
+                "attributes": {
+                    "model": "Claude 2.1",
+                    "inferenceType": "Input tokens",
+                    "usagetype": "USE1-Claude2.1-input-tokens",
+                }
+            }
+        },
+        {
+            "A": {
+                "t": {
+                    "priceDimensions": {
+                        "d": {"unit": "1K tokens", "pricePerUnit": {"USD": "0.008"}}
+                    }
+                }
+            }
+        },
+    )
+    service = _aws_file(
+        {
+            "B": {
+                "attributes": {
+                    "model": "Claude Sonnet 4",
+                    "inferenceType": "Input tokens",
+                    "usagetype": "USE1-Claude4Sonnet-input-tokens-cross-region-global",
+                }
+            }
+        },
+        {
+            "B": {
+                "t": {
+                    "priceDimensions": {
+                        "d": {"unit": "1K tokens", "pricePerUnit": {"USD": "0.003"}}
+                    }
+                }
+            }
+        },
+    )
+    calls = {"n": 0}
+
+    @contextlib.contextmanager
+    def fake(url, timeout=5.0):
+        full = getattr(url, "full_url", url)
+        if "current/region_index.json" in full:
+            yield io.BytesIO(_AWS_INDEX.encode())
+            return
+        calls["n"] += 1
+        yield io.BytesIO((main if calls["n"] == 1 else service).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake)
+    assert prices.refresh(source="aws") is True
+    assert prices.source_name() == "aws"
+    known = prices.models()
+    assert "claude-2-1" in known
+    assert "claude-sonnet-4" in known, "the union is what makes the CURRENT Claude rate visible"
+    assert calls["n"] == 2, "both offer codes must be fetched, every time"
+    assert prices.snapshot_date() == "2026-07-29"  # publicationDate, not today
+
+
+def test_aws_batch_usagetype_never_becomes_the_base_rate(monkeypatch):
+    """MEASURED: `Claude Sonnet 4` carries `inferenceType: "Input tokens"` on BOTH
+    `...-cross-region-global` ($3/MTok) and `...-cross-region-global-batch` ($1.50/MTok).
+    Cheapest-wins over `inferenceType` publishes the batch price as the standard one — the
+    prototype did exactly that. `usagetype` is the discriminator."""
+    f = _aws_file(
+        {
+            "A": {
+                "attributes": {
+                    "model": "Claude Sonnet 4",
+                    "inferenceType": "Input tokens",
+                    "usagetype": "USE1-Claude4Sonnet-input-tokens-cross-region-global",
+                }
+            },
+            "B": {
+                "attributes": {
+                    "model": "Claude Sonnet 4",
+                    "inferenceType": "Input tokens",
+                    "usagetype": "USE1-Claude4Sonnet-input-tokens-cross-region-global-batch",
+                }
+            },
+        },
+        {
+            "A": {
+                "t": {
+                    "priceDimensions": {
+                        "d": {"unit": "1K tokens", "pricePerUnit": {"USD": "0.003"}}
+                    }
+                }
+            },
+            "B": {
+                "t": {
+                    "priceDimensions": {
+                        "d": {"unit": "1K tokens", "pricePerUnit": {"USD": "0.0015"}}
+                    }
+                }
+            },
+        },
+    )
+    _install_multi(
+        monkeypatch, {"current/region_index.json": _AWS_INDEX, "us-east-1/index.json": f}
+    )
+    assert prices.refresh(source="aws") is True
+    assert prices.estimate("claude-sonnet-4", 1_000_000).amount == Decimal("3")
+
+
+def test_aws_cache_rows_carry_a_null_inference_type(monkeypatch):
+    """MEASURED: the cache row's `inferenceType` is null; only the usagetype says what it is."""
+    f = _aws_file(
+        {
+            "A": {
+                "attributes": {
+                    "model": "Claude Sonnet 4",
+                    "inferenceType": "Input tokens",
+                    "usagetype": "USE1-Claude4Sonnet-input-tokens-cross-region-global",
+                }
+            },
+            "C": {
+                "attributes": {
+                    "model": "Claude Sonnet 4",
+                    "inferenceType": None,
+                    "usagetype": (
+                        "USE1-Claude4Sonnet-cache-read-input-token-count-cross-region-global"
+                    ),
+                }
+            },
+        },
+        {
+            "A": {
+                "t": {
+                    "priceDimensions": {
+                        "d": {"unit": "1K tokens", "pricePerUnit": {"USD": "0.003"}}
+                    }
+                }
+            },
+            "C": {
+                "t": {
+                    "priceDimensions": {
+                        "d": {"unit": "1K tokens", "pricePerUnit": {"USD": "0.0003"}}
+                    }
+                }
+            },
+        },
+    )
+    _install_multi(
+        monkeypatch, {"current/region_index.json": _AWS_INDEX, "us-east-1/index.json": f}
+    )
+    prices.refresh(source="aws")
+    assert prices.estimate("claude-sonnet-4", 1000, cached_tokens=1000).amount == Decimal("0.0003")
+
+
+def test_aws_ignores_non_token_units(monkeypatch):
+    """`1K TPM Hour` (a reserved-throughput commitment) and `image` are not per-token rates."""
+    f = _aws_file(
+        {
+            "A": {
+                "attributes": {
+                    "model": "Nova Canvas",
+                    "inferenceType": "T2I 1024 Standard",
+                    "usagetype": "USE1-NovaCanvas-input-tokens",
+                }
+            }
+        },
+        {
+            "A": {
+                "t": {"priceDimensions": {"d": {"unit": "image", "pricePerUnit": {"USD": "0.04"}}}}
+            }
+        },
+    )
+    _install_multi(
+        monkeypatch, {"current/region_index.json": _AWS_INDEX, "us-east-1/index.json": f}
+    )
+    assert prices.refresh(source="aws") is False  # nothing mappable -> keep the bundled table
+    assert prices.source() == "bundled"
+
+
+def test_aws_model_key_normalisation():
+    """AWS mixes display names with wire ids in the same file."""
+    k = prices._aws_model_key
+    assert k("Claude Sonnet 4.5") == "claude-sonnet-4-5"  # what _lookup_id yields from a wire id
+    assert k("Llama 3.3 70B") == "llama-3-3-70b"
+    assert k("gpt-oss-120b") == "gpt-oss-120b"
+    assert k("xai.grok-4.3") == "grok-4.3"
+    assert k("google.gemma-4-31b") == "gemma-4-31b"
+
+
+def test_aws_region_reaches_the_wire(monkeypatch):
+    idx = '{"regions": {"eu-west-1": {"currentVersionUrl": "https://p/eu.json"}}}'
+    f = _aws_file(
+        {
+            "A": {
+                "attributes": {
+                    "model": "Claude Sonnet 4",
+                    "inferenceType": "Input tokens",
+                    "usagetype": "USE1-Claude4Sonnet-input-tokens",
+                }
+            }
+        },
+        {
+            "A": {
+                "t": {
+                    "priceDimensions": {
+                        "d": {"unit": "1K tokens", "pricePerUnit": {"USD": "0.003"}}
+                    }
+                }
+            }
+        },
+    )
+    seen = _install_multi(monkeypatch, {"region_index.json": idx, "eu.json": f})
+    assert prices.refresh(source="aws", region="eu-west-1") is True
+    assert any("eu.json" in u for u in seen)
+
+
+# ------------------------------------------------------------------------------ modelsdev / vercel
+
+
+def test_modelsdev_allowlist_keeps_a_reseller_from_outranking_the_lab(monkeypatch):
+    """MEASURED: `gpt-5.1` appears under 11 models.dev providers between $1.07 and $1.25 per MTok,
+    and the providers with the most rows are all resellers (nano-gpt 617, kilo 346, openrouter
+    335). "Last one wins" hands you a random reseller's resale price as the model's rate."""
+    raw = """
+    {
+      "nano-gpt": {"models": {"gpt-5.1": {"cost": {"input": 9, "output": 9}}}},
+      "opencode": {"models": {"gpt-5.1": {"cost": {"input": 1.07, "output": 8.5}}}},
+      "openai":   {"models": {"gpt-5.1": {"cost": {"input": 1.25, "output": 10},
+                                          "last_updated": "2026-07-20"}}}
+    }
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh(source="modelsdev") is True
+    assert prices.source_name() == "modelsdev"
+    assert prices.estimate("gpt-5.1", 1_000_000).amount == Decimal("1.25")
+    assert prices.snapshot_date() == "2026-07-20"  # per-row last_updated, real provenance
+
+
+def test_modelsdev_ignores_providers_outside_the_allowlist(monkeypatch):
+    _install_fetch(monkeypatch, '{"nano-gpt": {"models": {"only-here": {"cost": {"input": 1}}}}}')
+    assert prices.refresh(source="modelsdev") is False  # nothing allowlisted -> no swap
+    assert prices.source() == "bundled"
+
+
+def test_modelsdev_converts_per_1m_exactly(monkeypatch):
+    raw = (
+        '{"openai": {"models": {"gpt-4o": {"cost": '
+        '{"input": 2.5, "output": 10, "cache_read": 1.25}}}}}'
+    )
+    _install_fetch(monkeypatch, raw)
+    prices.refresh(source="modelsdev")
+    assert prices.estimate("gpt-4o", 1000, 500, cached_tokens=200).amount == Decimal("0.00725")
+
+
+def test_vercel_maps_string_rates_and_language_models_only(monkeypatch):
+    raw = """
+    {"data": [
+      {"id": "openai/gpt-4o", "type": "language",
+       "pricing": {"input": "0.0000025", "output": "0.00001", "input_cache_read": "0.00000125"}},
+      {"id": "openai/dall-e-3", "type": "image", "pricing": {"input": "0.04"}}
+    ]}
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh(source="vercel") is True
+    assert prices.source_name() == "vercel"
+    assert "gpt-4o" in prices.models() and "dall-e-3" not in prices.models()
+    assert prices.snapshot_date() is None  # no catalog-wide date -> undatable, never faked as today
+
+
+def test_litellm_host_key_never_overwrites_the_bare_one(monkeypatch):
+    """MEASURED, and it published a wrong number in the feed before it was caught: litellm keys
+    `claude-3-5-haiku` under several hosts. `vertex_ai/claude-3-5-haiku` is VERTEX's $1/$5, not
+    Anthropic's $0.80/$4, and stripping the namespace collapsed it onto the bare id."""
+    raw = """
+    {
+      "claude-3-5-haiku": {"input_cost_per_token": 0.0000008, "output_cost_per_token": 0.000004},
+      "vertex_ai/claude-3-5-haiku": {"input_cost_per_token": 0.000001,
+                                     "output_cost_per_token": 0.000005},
+      "heroku/claude-3-5-haiku": {"input_cost_per_token": 0.000002,
+                                  "output_cost_per_token": 0.00001}
+    }
+    """
+    _install_fetch(monkeypatch, raw)
+    prices.refresh(source="litellm")
+    assert prices.estimate("claude-3-5-haiku", 1_000_000).amount == Decimal("0.8")
+
+
+def test_litellm_drops_a_zero_input_rate(monkeypatch):
+    """A $0 input rate makes estimate() report $0.00 as a FACT and a USD cap silently never bind —
+    the failure this whole wave removes. Absent, plus a warning, is the honest answer."""
+    raw = """
+    {"free-model": {"input_cost_per_token": 0, "output_cost_per_token": 0},
+     "gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001}}
+    """
+    _install_fetch(monkeypatch, raw)
+    prices.refresh(source="litellm")
+    assert "free-model" not in prices.models()
+    with pytest.raises(prices.UnknownModelError):
+        prices.estimate("free-model", 1000)
+
+
+# ------------------------------------------------------------------------------ refresh(required)
+
+
+def test_refresh_required_raises_instead_of_returning_false(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no network")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    assert prices.refresh() is False  # the default contract is unchanged: never raises
+    with pytest.raises(prices.PriceRefreshError, match="failed"):
+        prices.refresh(required=True)
+    assert prices.source() == "bundled"  # and it still did not revert anything
+
+
+def test_refresh_required_raises_on_an_empty_result(monkeypatch):
+    """A 200 that maps to nothing is the Azure-wrong-filter shape. `required=True` must not read it
+    as success just because the socket worked."""
+    _install_fetch(monkeypatch, '{"Items": []}')
+    with pytest.raises(prices.PriceRefreshError, match="no models"):
+        prices.refresh(source="azure", required=True)
+
+
+def test_refresh_required_raises_on_an_unknown_source():
+    with pytest.raises(prices.PriceRefreshError, match="unknown price source"):
+        prices.refresh(source="nope", required=True)
+
+
+def test_default_refresh_targets_the_cendor_prices_feed(monkeypatch):
+    seen = _install_multi(
+        monkeypatch, {"cendor-prices": '{"_updated": "2026-08-01", "models": {"x": {"input": 1}}}'}
+    )
+    assert prices.refresh() is True
+    assert seen[0] == prices.SNAPSHOT_URL
+    assert "cendorhq/cendor-prices" in prices.SNAPSHOT_URL
+    assert prices.source_name() == "feed"
+
+
+# ------------------------------------------------------------------------------------------ explain
+
+
+def test_explain_reports_exact_normalized_registered_and_unpriced():
+    assert prices.explain("gpt-4o").how == "exact"
+    # a Bedrock wire id reduces to its base row
+    e = prices.explain("us.anthropic.claude-sonnet-4-6-20260115-v1:0")
+    assert e.how == "normalized" and e.resolved == "claude-sonnet-4-6"
+    assert prices.explain("no-such-model").how == "unpriced"
+    prices.register_model_price("my-deployment", input=2.5, output=10)
+    e = prices.explain("my-deployment")
+    assert e.how == "registered" and e.registered is True
+    assert any("overrides every table" in n for n in e.notes)
+
+
+def test_explain_surfaces_per_row_provenance(monkeypatch):
+    """The feed carries `_provenance` as a PARALLEL top-level map, so rate objects stay pure
+    numbers and a `prices/1` reader that ignores unknown keys is unaffected."""
+    raw = """
+    {"_updated": "2026-08-01",
+     "models": {"gpt-4o": {"input": 0.0000025, "output": 0.00001}},
+     "_provenance": {"gpt-4o": {"src": "azure", "asof": "2026-07-01"}}}
+    """
+    _install_fetch(monkeypatch, raw)
+    prices.refresh()
+    e = prices.explain("gpt-4o")
+    assert e.row_source == "azure"
+    assert e.row_asof == "2026-07-01"
+    assert e.source_name == "feed"
+    assert e.table_origin == "refreshed"
+    assert "azure as of 2026-07-01" in e.summary()
+    # and no provenance string ever reaches a Decimal coercion
+    assert prices.estimate("gpt-4o", 1000).amount == Decimal("0.0025")
+
+
+def test_explain_flags_a_resale_source(monkeypatch):
+    raw = '{"data": [{"id": "gpt-4o", "type": "language", "pricing": {"input": "0.000003"}}]}'
+    _install_fetch(monkeypatch, raw)
+    prices.refresh(source="vercel")
+    assert any("RESALE" in n for n in prices.explain("gpt-4o").notes)
+
+
+def test_explain_flags_an_undatable_table(monkeypatch):
+    _install_fetch(monkeypatch, '{"gpt-4o": {"input_cost_per_token": 0.0000025}}')
+    prices.refresh(source="litellm")
+    assert any("no as-of date" in n for n in prices.explain("gpt-4o").notes)
+
+
+def test_explain_never_raises_on_anything():
+    for weird in ("", "  ", "a/b/c", "us.anthropic.", "gpt-4o-2026-01-01"):
+        assert prices.explain(weird).model == weird
+
+
+# ---------------------------------------------------------------------------------- save() / load()
+
+
+def test_save_load_round_trips_rates_and_provenance(tmp_path, monkeypatch):
+    raw = """
+    {"_updated": "2026-08-01",
+     "models": {"gpt-4o": {"input": 0.0000025, "output": 0.00001}},
+     "_provenance": {"gpt-4o": {"src": "azure", "asof": "2026-07-01"}}}
+    """
+    _install_fetch(monkeypatch, raw)
+    prices.refresh()
+    path = prices.save(str(tmp_path / "c" / "prices.json"))
+
+    prices._reset()
+    assert prices.source() == "bundled"
+    assert prices.load(path) is True
+    assert prices.source() == "loaded"
+    assert prices.source_name() == "feed", "the ORIGINAL source travels, not 'a file'"
+    assert prices.snapshot_date() == "2026-08-01", "age_days() must describe the data, not the read"
+    assert prices.estimate("gpt-4o", 1000).amount == Decimal("0.0025")
+    e = prices.explain("gpt-4o")
+    assert (e.row_source, e.row_asof, e.table_origin) == ("azure", "2026-07-01", "loaded")
+
+
+def test_save_writes_exact_decimals_not_floats(tmp_path, monkeypatch):
+    _install_fetch(monkeypatch, '{"models": {"m": {"input": 0.000000123456789012345}}}')
+    prices.refresh()
+    path = prices.save(str(tmp_path / "p.json"))
+    assert "0.000000123456789012345" in (tmp_path / "p.json").read_text(encoding="utf-8")
+    prices._reset()
+    prices.load(path)
+    assert prices.estimate("m", 1_000_000).amount == Decimal("0.123456789012345")
+
+
+def test_load_re_applies_registrations_exactly_as_refresh_does(tmp_path, monkeypatch):
+    _install_fetch(monkeypatch, '{"models": {"gpt-4o": {"input": 0.0000025}}}')
+    prices.refresh()
+    path = prices.save(str(tmp_path / "p.json"))
+    prices._reset()
+    prices.register_model_price("mine", input=2.5, output=10)
+    assert prices.load(path) is True
+    assert prices.estimate("mine", 1_000_000).amount == Decimal("2.5")  # survived the swap
+
+
+def test_load_of_a_missing_or_junk_file_keeps_the_last_good_table(tmp_path):
+    assert prices.load(str(tmp_path / "nope.json")) is False
+    assert prices.source() == "bundled"
+    junk = tmp_path / "junk.json"
+    junk.write_text("not json at all", encoding="utf-8")
+    assert prices.load(str(junk)) is False
+    empty = tmp_path / "empty.json"
+    empty.write_text('{"models": {}}', encoding="utf-8")
+    assert prices.load(str(empty)) is False
+    assert prices.estimate("gpt-4o", 1000).amount == Decimal("0.0025")
+
+
+def test_there_is_no_implicit_cache():
+    """`refresh()` is in-memory only, per process. A library that quietly writes price files is a
+    side effect, and a hidden cache is how prices go INVISIBLY stale."""
+    with pytest.raises(AttributeError, match=r"save\(path\)"):
+        _ = prices.cache
+    with pytest.raises(AttributeError, match=r"save\(path\)"):
+        _ = prices.persist
+
+
+def test_teach_hook_points_at_explain():
+    with pytest.raises(AttributeError, match="explain"):
+        _ = prices.why
+    with pytest.raises(AttributeError, match="SYNCHRONOUS"):
+        _ = prices.refresh_async
+
+
+def test_pass_through_string_rates_are_coerced_at_the_swap(monkeypatch):
+    """MEASURED 2026-08-01 by the live cross-language trace, not by any offline test: every unit
+    fixture used numeric rates, so nothing exercised a quoted one. A pass-through `refresh(url)`
+    hands the parsed rate objects straight to `estimate()`, and `parse_float=Decimal` leaves a JSON
+    *string* a string. `estimate` coerces on every read so Python survived it; the TS twin threw.
+    Both now coerce once at the swap, so `explain()` also hands callers real Decimals."""
+    raw = """
+    {"_updated": "2026-08-01",
+     "models": {"gpt-4o": {"input": "0.0000025", "output": "0.00001", "cached": "0.00000125"}}}
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh() is True
+    assert prices.estimate("gpt-4o", 1000, 500, cached_tokens=200).amount == Decimal("0.00725")
+    rates = prices.explain("gpt-4o").rates
+    assert rates is not None
+    assert all(isinstance(v, Decimal) for v in rates.values())
+
+
+def test_the_feed_schema_is_number_literals_and_stays_exact(monkeypatch):
+    """`prices/1` specifies JSON number literals; the cendor-prices feed emits them, and
+    `parse_float=Decimal` reads the token text verbatim, so a long decimal survives to the last
+    digit rather than going through a float."""
+    _install_fetch(monkeypatch, '{"models": {"m": {"input": 0.000000123456789012345}}}')
+    prices.refresh()
+    assert prices.estimate("m", 1_000_000).amount == Decimal("0.123456789012345")

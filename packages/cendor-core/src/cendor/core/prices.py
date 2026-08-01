@@ -2,12 +2,22 @@
 
 A dated ``prices.json`` ships in the wheel, so cost estimation works with no network. ``refresh()``
 optionally pulls rates from a *static* JSON file (GitHub raw / CDN) **or** a built-in live
-``source`` adapter (``litellm`` / ``openrouter`` / ``azure``) — each an unauthenticated HTTPS GET,
-never a running service — and falls back silently to the bundled snapshot if it can't.
+``source`` adapter — each an unauthenticated HTTPS GET, never a running service — and falls back
+silently to the bundled snapshot if it can't.
 
-The direct model labs (OpenAI / Anthropic) expose no pricing API; their model-list endpoints carry
-IDs only. The built-in sources are a community aggregator (LiteLLM), a gateway (OpenRouter) and a
-cloud catalog (Azure Retail Prices), all of which *do* publish per-model rates as plain JSON.
+The direct model labs (OpenAI / Anthropic) expose **no pricing API**; their model-list endpoints
+carry ids only. What does exist, and what the built-in sources are:
+
+* two **cloud catalogs** that publish their own billing meters keyless — Azure Retail Prices
+  (``azure``) and the AWS Bedrock public price files (``aws``). These are first-party facts.
+* three **aggregators / gateways** — ``modelsdev`` (MIT, the widest catalog), ``litellm`` (MIT) and
+  ``openrouter`` / ``vercel`` (gateway *resale* prices — see their notes).
+* the **cendor-prices feed** (the default): one dated, per-row-provenanced table reconciled from all
+  of the above by ``cendorhq/cendor-prices``, so a bare ``refresh()`` gets first-party rates without
+  fetching five sources.
+
+Nothing here is a guess. A model no source prices stays absent, ``estimate()`` raises
+:class:`UnknownModelError`, and tokenguard warns — an honest gap beats a confident wrong number.
 """
 
 from __future__ import annotations
@@ -16,8 +26,10 @@ import json
 import re
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from .types import Money
 
@@ -26,41 +38,100 @@ class UnknownModelError(KeyError):
     """Raised when a model id is not present in the price table."""
 
 
+class PriceRefreshError(RuntimeError):
+    """Raised by ``refresh(..., required=True)`` when the fetch/parse/map failed.
+
+    ``refresh()`` is contractually never-raise: it returns ``False`` and leaves the last-good table
+    active. Pass ``required=True`` when running on stale rates would be worse than not running —
+    then a failure is loud. Never the default. docs/core.md §7.
+    """
+
+
 _table: dict | None = None
-_source: str = "bundled"  # "bundled" | "refreshed" — coarse provenance (back-compat)
-_source_name: str = "bundled"  # finer: "bundled" | "litellm" | "openrouter" | "azure" | "custom"
+_source: str = "bundled"  # "bundled" | "refreshed" | "loaded" — coarse provenance (back-compat)
+#: Finer: "bundled" | "feed" | "litellm" | "openrouter" | "azure" | "aws" | "modelsdev" | "vercel"
+#: | "custom" | "default"
+_source_name: str = "bundled"
 _source_url: str | None = None
 _table_lock = threading.Lock()  # guards the lazy load + refresh() swap of the module-global table
 #: Programmatic registrations (see :func:`_register`) — re-applied on top of every loaded or
 #: refreshed table, so a ``refresh()`` never drops them.
 _registered: dict[str, dict] = {}
 
-#: Default static snapshot location used by ``refresh()`` when no URL or source is given. Points at
-#: the bundled ``prices.json`` on the repo's main branch; override by passing ``url=`` / ``source=``
-#: or reassigning this. Must resolve to a *public* static JSON (no auth, no running service).
-SNAPSHOT_URL: str = (
-    "https://raw.githubusercontent.com/cendorhq/cendor-libs/main/"
-    "packages/cendor-core/src/cendor/core/prices.json"
-)
+#: Default table used by ``refresh()`` when no URL or source is given: the **cendor-prices feed** —
+#: a dated, per-row-provenanced ``prices/1`` table rebuilt daily behind validation gates and served
+#: by GitHub's CDN. Cendor operates no server for this; it is a static file in a public repo, and a
+#: Cendor outage cannot exist to break your cost estimation. Override by passing ``url=`` /
+#: ``source=`` or reassigning this. Must resolve to a *public* static JSON.
+SNAPSHOT_URL: str = "https://raw.githubusercontent.com/cendorhq/cendor-prices/main/prices.json"
 
 #: Community-maintained, near-daily-updated cross-provider price table (broadest coverage).
 LITELLM_URL: str = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 )
-#: OpenRouter's public model catalog — per-token pricing as JSON strings, no auth.
+#: OpenRouter's public model catalog — per-token pricing as JSON strings, no auth. Gateway
+#: **resale** prices: what OpenRouter charges you, not what the lab charges.
 OPENROUTER_URL: str = "https://openrouter.ai/api/v1/models"
-#: Azure Retail Prices API filtered to Azure OpenAI meters — public, no auth.
-#: **Percent-encoded on purpose.** The readable form (``&$filter=productName eq 'Azure OpenAI'``)
-#: carries raw spaces, and ``urllib.request.urlopen`` refuses it outright
-#: (``InvalidURL: URL can't contain control characters``). Because :func:`refresh` swallows every
-#: exception, that surfaced as a plain ``False`` — indistinguishable from being offline — so
-#: ``refresh(source="azure")`` had never once worked in Python (measured 2026-07-31; the TS twin
-#: was unaffected because ``fetch`` encodes for us). Encoded, the same query returns 1000 items →
-#: 95 mapped models. Keep it encoded.
-AZURE_URL: str = (
-    "https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview"
-    "&%24filter=productName%20eq%20%27Azure%20OpenAI%27"
-)
+#: Vercel AI Gateway's public model catalog — same shape and the same resale caveat as OpenRouter.
+#: Base rates only; its tiered (long-context) and service-tier prices are out of scope.
+VERCEL_URL: str = "https://ai-gateway.vercel.sh/v1/models"
+#: models.dev — MIT, the widest keyless catalog found (177 providers / 5,935 models on 2026-08-01),
+#: per-**1M** rates with a per-row ``last_updated``.
+MODELSDEV_URL: str = "https://models.dev/api.json"
+
+#: Azure Retail Prices API endpoint and version. See :func:`azure_url`.
+AZURE_API: str = "https://prices.azure.com/api/retail/prices"
+AZURE_API_VERSION: str = "2023-01-01-preview"
+#: Region whose meters ``refresh(source="azure")`` reads. eastus2 carries the largest Foundry
+#: catalog (1,526 meters on 2026-08-01). Override with ``refresh(source="azure", region=...)``.
+AZURE_DEFAULT_REGION: str = "eastus2"
+#: AWS Price List public files — the Bedrock offers, and the region whose file ``aws`` reads.
+AWS_PRICING_HOST: str = "https://pricing.us-east-1.amazonaws.com"
+#: ⚠️ **Both** offer codes are required. Measured 2026-08-01: ``AmazonBedrock`` alone carries only
+#: Claude 2.0/2.1/3-Haiku/3-Sonnet/Instant — ``Claude Sonnet 4`` and ``Claude Sonnet 4.5`` exist
+#: **only** in ``AmazonBedrockService``, so a single-offer client silently misses every current
+#: Claude rate.
+AWS_OFFERS: tuple[str, ...] = ("AmazonBedrock", "AmazonBedrockService")
+AWS_DEFAULT_REGION: str = "us-east-1"
+
+
+def azure_url(region: str = AZURE_DEFAULT_REGION) -> str:
+    """The Azure Retail Prices query ``refresh(source="azure")`` issues, for one region.
+
+    ⚠️ **Percent-encoded on purpose.** The readable form (``&$filter=serviceName eq 'Foundry
+    Models'``) carries raw spaces and ``urllib.request.urlopen`` refuses it outright
+    (``InvalidURL: URL can't contain control characters``). Because :func:`refresh` swallows every
+    exception, that surfaced as a plain ``False`` — indistinguishable from being offline — so
+    ``refresh(source="azure")`` had never once worked in Python (measured 2026-07-31; the TS twin
+    was unaffected because ``fetch`` encodes for us). Keep it encoded in both languages so the two
+    URLs stay byte-identical and comparable.
+
+    ⚠️ **The region term is not an optimisation.** Measured 2026-08-01: with a region, this query is
+    1,526 meters over 2 pages in 0.7 s; without one it is **≥25,000 rows and still paging after
+    28.5 s** — not something a library may do inside one ``refresh()``.
+
+    ⚠️ ``serviceName eq 'Foundry Models'`` replaced the pre-rename ``productName eq 'Azure OpenAI'``.
+    The old filter still returns rows, which is why nothing looked broken — it just saw 462 of the
+    1,526 and **no GPT-5, DeepSeek, Grok, Mistral, Llama, Phi, Kimi, Qwen or Cohere meter at all**.
+    """
+    import urllib.parse
+
+    # `quote`, not `urlencode`: urlencode is form encoding and writes a space as `+`, which Azure
+    # accepts but which makes this URL differ from the TypeScript twin's `encodeURIComponent` form
+    # byte for byte. Two mappers that cannot be diffed is how the original Azure defect survived.
+    f = urllib.parse.quote(
+        f"serviceName eq 'Foundry Models' and armRegionName eq '{region}'", safe=""
+    )
+    return (
+        f"{AZURE_API}?api-version={AZURE_API_VERSION}&{urllib.parse.quote('$filter', safe='')}={f}"
+    )
+
+
+#: The URL ``refresh(source="azure")`` uses by default. Kept as a module constant for back-compat
+#: with anything that read it; :func:`azure_url` is the region-aware form.
+AZURE_URL: str = azure_url()
+#: The AWS region index the ``aws`` source resolves before fetching a region file.
+AWS_URL: str = f"{AWS_PRICING_HOST}/offers/v1.0/aws/{{offer}}/current/region_index.json"
 
 #: Optional explicit id aliases applied after prefix-stripping (extend as needed).
 _ALIASES: dict[str, str] = {}
@@ -351,13 +422,16 @@ def snapshot_date() -> str | None:
 
 
 def source() -> str:
-    """``"bundled"`` or ``"refreshed"`` — where the active table came from."""
+    """``"bundled"`` | ``"refreshed"`` | ``"loaded"`` — where the active table came from."""
     return _source
 
 
 def source_name() -> str:
-    """Finer provenance of the active table: ``"bundled"`` | ``"litellm"`` | ``"openrouter"`` |
-    ``"azure"`` | ``"custom"`` | ``"default"``."""
+    """Finer provenance of the active table: ``"bundled"`` | ``"feed"`` | ``"azure"`` | ``"aws"``
+    | ``"modelsdev"`` | ``"litellm"`` | ``"openrouter"`` | ``"vercel"`` | ``"custom"``.
+
+    ``"feed"`` is a bare ``refresh()`` — the cendor-prices table. Use :func:`explain` for the
+    per-row story."""
     return _source_name
 
 
@@ -412,17 +486,36 @@ def _dec(value: object) -> Decimal:
 
 
 def _map_litellm(raw: dict) -> dict:
-    """LiteLLM ``model_prices_and_context_window.json``: ``{id: {input_cost_per_token, ...}}``."""
+    """LiteLLM ``model_prices_and_context_window.json``: ``{id: {input_cost_per_token, ...}}``.
+
+    ⚠️ litellm keys the same model many times, once per host — ``claude-3-5-haiku`` arrives as
+    ``anthropic.claude-3-5-haiku-…`` ($0.80/$4, the lab rate), ``vertex_ai/claude-3-5-haiku``
+    ($1/$5, Vertex's) and ``replicate/anthropic/claude-3.5-haiku``. A **bare** key names the model;
+    a namespaced one names a host's listing of it, and must never overwrite the bare one (measured
+    2026-08-01 — it published Vertex's price as Anthropic's). See :func:`_is_host_id`.
+    """
     out: dict[str, dict] = {}
+    bare: set[str] = set()
     for mid, rec in raw.items():
         if not isinstance(rec, dict) or "input_cost_per_token" not in rec:
             continue  # skips non-model entries like "sample_spec"
+        if rec["input_cost_per_token"] is None:
+            continue
         rates: dict[str, Decimal] = {"input": _dec(rec["input_cost_per_token"])}
+        if rates["input"] <= 0:
+            continue  # a $0 input rate makes estimate() report $0.00 as a fact and a cap never bind
         if rec.get("output_cost_per_token") is not None:
             rates["output"] = _dec(rec["output_cost_per_token"])
         if rec.get("cache_read_input_token_cost") is not None:
             rates["cached"] = _dec(rec["cache_read_input_token_cost"])
-        out[_normalize_model_id(mid)] = rates
+        if rec.get("cache_creation_input_token_cost") is not None:
+            rates["cache_write"] = _dec(rec["cache_creation_input_token_cost"])
+        key = _normalize_model_id(mid)
+        if key in bare:
+            continue
+        if not _is_host_id(mid):
+            bare.add(key)
+        out[key] = rates
     # No global "as-of" date in the LiteLLM payload — omit `_updated` (undatable, not falsely
     # "today"), so is_stale() reports unknown instead of defeating itself. Provenance: source_name.
     return {"models": out}
@@ -447,8 +540,141 @@ def _map_openrouter(raw: dict) -> dict:
     return {"models": out}
 
 
+def _map_modelsdev(raw: dict) -> dict:
+    """models.dev ``api.json``: ``{provider: {models: {id: {cost: {...}}}}}``, rates per **1M**.
+
+    ⚠️ The payload is **provider → models**, and the same model id appears under many providers at
+    different prices: measured 2026-08-01, ``gpt-5.1`` appears 11 times between $1.07 and $1.25 per
+    MTok, and the providers with the most rows are all resellers (nano-gpt 617, kilo 346,
+    openrouter 335, vercel 312). "Last one wins" would hand you a random reseller's resale price as
+    the model's rate, so :data:`_MODELSDEV_PROVIDERS` is an allowlist with a fixed precedence, not a
+    tidy-up filter.
+    """
+    out: dict[str, dict] = {}
+    latest: str | None = None
+    bare: set[str] = set()
+    million = Decimal(1_000_000)
+    for pid in reversed(_MODELSDEV_PROVIDERS):  # walk in reverse so the top of the list wins
+        prov = raw.get(pid)
+        if not isinstance(prov, dict):
+            continue
+        for mid, rec in (prov.get("models") or {}).items():
+            cost = rec.get("cost") if isinstance(rec, dict) else None
+            if not isinstance(cost, dict) or cost.get("input") is None:
+                continue
+            rates: dict[str, Decimal] = {}
+            for src, dst in (
+                ("input", "input"),
+                ("output", "output"),
+                ("cache_read", "cached"),
+                ("cache_write", "cache_write"),
+            ):
+                if cost.get(src) is not None:
+                    rates[dst] = _dec(cost[src]) / million
+            if "input" not in rates or rates["input"] <= 0:
+                continue
+            key = _normalize_model_id(str(mid))
+            if key in bare:
+                continue  # a host listing must never overwrite a direct naming (see _is_host_id)
+            if not _is_host_id(str(mid)):
+                bare.add(key)
+            out[key] = rates
+            lu = str(rec.get("last_updated") or "")[:10]
+            if len(lu) == 10 and (latest is None or lu > latest):
+                latest = lu
+    result: dict = {"models": out}
+    if latest is not None:
+        result["_updated"] = latest
+    return result
+
+
+def _map_vercel(raw: dict) -> dict:
+    """Vercel AI Gateway ``/v1/models``: ``{"data": [{id, type, pricing: {input, output, ...}}]}``.
+
+    Per-token rates as JSON **strings**. Filtered to ``type == "language"``. Base rates only — the
+    catalog also carries ``input_tiers`` / ``service_tiers``, which are out of scope. Like
+    OpenRouter these are **gateway resale** prices: what Vercel charges you, not what the lab does.
+    No catalog-wide date ⇒ undatable, never stamped "today".
+    """
+    out: dict[str, dict] = {}
+    for rec in raw.get("data", []):
+        if not isinstance(rec, dict) or rec.get("type") != "language":
+            continue
+        pricing = rec.get("pricing") or {}
+        if pricing.get("input") is None:
+            continue
+        rates: dict[str, Decimal] = {}
+        for src, dst in (
+            ("input", "input"),
+            ("output", "output"),
+            ("input_cache_read", "cached"),
+            ("input_cache_write", "cache_write"),
+        ):
+            v = pricing.get(src)
+            if v is not None and _dec(v) > 0:
+                rates[dst] = _dec(v)
+        if "input" not in rates:
+            continue
+        out[_normalize_model_id(str(rec.get("id", "")))] = rates
+    return {"models": out}
+
+
+# --------------------------------------------------------------------------------- azure (Foundry)
+
+#: Azure writes one direction seven ways. ⚠️ **``opt`` means OUTPUT** — 141 rows on 2026-08-01, and
+#: the pre-fix parser looked only for ``outp``/``output``, so every GPT-5.x family would have had an
+#: input rate and no output rate. Proven by price: ``GPT 5.1 inp Gl`` 1.25/1M vs ``GPT 5.1 opt Gl``
+#: 10.0/1M = GPT-5.1's published $1.25/$10.
+_AZ_DIRECTION = {
+    "inp": "input", "inpt": "input", "input": "input", "in": "input",
+    "outp": "output", "outpt": "output", "output": "output", "out": "output", "opt": "output",
+}  # fmt: skip
+_AZ_CACHE_READ = {"cd", "cchd", "ccchd", "cached", "cache"}
+_AZ_CACHE_WRITE = {"wr"}
+#: Meters that are not a plain on-demand per-token inference rate: a different product, a different
+#: SLA, or not per-token at all. Pricing them as the base rate would be wrong, not approximate.
+#: (``l`` alone is the long-context tier — ``4.3 Inp Glbl L`` is 2x ``4.3 Inp Glbl``.)
+_AZ_NOT_INFERENCE = {
+    "batch", "ft", "finetuned", "training", "trng", "hosting", "pp", "ptu", "provisioned",
+    "grader", "grdr", "img", "image", "aud", "audio", "rt", "realtime", "tts", "trscb", "tcrb",
+    "transcribe", "ocr", "doc", "video", "speech", "shortco", "longco", "reservation",
+    "embedding", "l",
+}  # fmt: skip
+_AZ_TIER = {
+    "gl", "glbl", "global", "dz", "dzone", "datazone", "dzn", "regnl", "regional", "rgnl", "regn",
+    "std", "zone", "data", "mn",
+}  # fmt: skip
+_AZ_PRODUCT_SKIP = {
+    "Azure OpenAI Media", "Azure BFL Flux Models", "Managed Compute",
+    "Azure AI Foundry Provisioned Throughput Reservation", "Azure OpenAI PP FT GPT4s",
+    "Azure OpenAI Embedding",
+}  # fmt: skip
+#: ``productName`` → family root. A sku alone is ambiguous: ``4.3 Inp Glbl`` under *Azure Grok
+#: Models* is ``grok-4.3`` and ``V4 Pro Inp glbl`` under *Azure Deepseek Models* is
+#: ``deepseek-v4-pro``. ⚠️ Applied only when the parsed head does not already start with the root —
+#: prefixing unconditionally turned ``o1``/``o3``/``o4-mini`` into ``gpt-o1``/``gpt-o3``/
+#: ``gpt-o4-mini``, a regression against the pre-fix mapper. *Azure OpenAI* and *Azure OpenAI
+#: Reasoning* carry full ids already, so they get no root.
+_AZ_FAMILY_ROOT = {
+    "Azure OpenAI GPT5": "gpt",
+    "Azure Grok Models": "grok",
+    "Azure Deepseek Models": "deepseek",
+    "Azure Kimi": "kimi",
+    "Azure Llama Models": "llama",
+    "Azure Mistral Models": "mistral",
+    "Qwen models": "qwen",
+    "Azure Phi Models": "phi",
+    "MAI Models": "mai",
+    "Azure OpenAI OSS Models": "gpt-oss",
+}
+
+
 def _azure_unit_divisor(unit_of_measure: str) -> Decimal:
-    """Tokens per price unit for an Azure ``unitOfMeasure`` (``"1K"`` / ``"1M"`` / ``"1000"``)."""
+    """Tokens per price unit for an Azure ``unitOfMeasure`` (``"1K"`` / ``"1M"`` / ``"1000"``).
+
+    ⚠️ Read it **per row**: measured 2026-08-01, eastus2 mixes 905 ``1K`` meters with 479 ``1M``
+    ones in the same response.
+    """
     u = (unit_of_measure or "").upper().replace(" ", "")
     if "1M" in u or "1000000" in u:
         return Decimal(1_000_000)
@@ -456,47 +682,78 @@ def _azure_unit_divisor(unit_of_measure: str) -> Decimal:
 
 
 def _map_azure(raw: dict) -> dict:
-    """Azure Retail Prices ``{"Items": [{skuName, retailPrice, unitOfMeasure, ...}]}``.
+    """Azure Retail Prices ``{"Items": [{skuName, productName, retailPrice, unitOfMeasure, ...}]}``.
 
-    Parses the model + direction (input/output) + deployment tier out of ``skuName`` (e.g.
-    ``"gpt 4o 1120 Inp Global"``), keeps the cheapest (Global) tier, and converts the per-1K/1M
-    retail price to a per-token ``Decimal``. Best-effort over the first page; narrow the ``$filter``
-    for full coverage (the Retail API paginates). Imperfect SKU→id mapping is expected.
+    Parses the model + direction + cache role out of ``skuName``, drops every meter that is not a
+    plain on-demand per-token rate, converts per-1K/1M to per-token ``Decimal``, and keeps the
+    cheapest surviving rate per key (which resolves the Global / Data Zone / Regional tiers to
+    Global). Imperfect SKU→id mapping is expected and documented: Microsoft's meter names are prose,
+    so a few rows land under an id nothing will ever look up. Those are inert, not wrong.
     """
     by_model: dict[str, dict[str, Decimal]] = {}
     latest: str | None = None  # the newest source effectiveStartDate seen (real provenance date)
     for item in raw.get("Items", []):
+        if item.get("productName") in _AZ_PRODUCT_SKIP:
+            continue
+        # Real Retail rows always carry a `type`; treat a missing one as Consumption so a hand-
+        # written fixture stays valid. Only `Reservation` rows (6 of 1,526 in eastus2) are excluded
+        # — a committed capacity price is not a per-call rate.
+        if str(item.get("type") or "Consumption") != "Consumption":
+            continue
+        unit = str(item.get("unitOfMeasure", "")).strip().upper()
+        if unit not in ("1K", "1M"):
+            continue  # 1/Hour, 1 Second, 100, … are not token meters
+        price = item.get("retailPrice")
+        if price is None or _dec(price) <= 0:
+            continue
+        words = [w for w in re.split(r"[\s\-_]+", str(item.get("skuName", "")).lower()) if w]
+        if any(w in _AZ_NOT_INFERENCE for w in words):
+            continue
+
+        direction: str | None = None
+        cached = write = False
+        head: list[str] = []
+        for w in words:
+            if w in _AZ_DIRECTION:
+                direction = _AZ_DIRECTION[w]
+                continue
+            if w in _AZ_CACHE_READ:
+                cached = True
+                continue
+            if w in _AZ_CACHE_WRITE:
+                write = True
+                continue
+            if w in _AZ_TIER:
+                continue
+            if direction is None:
+                head.append(w)
+        if direction is None:
+            continue
+        if cached and direction == "input":
+            key = "cache_write" if write else "cached"
+        elif write:
+            continue  # a cache-write row we cannot place — skip rather than guess
+        else:
+            key = direction
+
+        while head and head[-1].isdigit() and len(head[-1]) in (3, 4, 8):
+            head.pop()  # trailing bare snapshot-date token: "gpt 4o 1120" -> "gpt 4o"
+        if not head:
+            continue
+        mid = "-".join(head)
+        root = _AZ_FAMILY_ROOT.get(str(item.get("productName")))
+        if root and not mid.startswith(root):
+            mid = f"{root}-{mid}"
+        mid = _normalize_model_id(mid)
+
+        per_token = _dec(price) / _azure_unit_divisor(str(item.get("unitOfMeasure", "")))
+        rates = by_model.setdefault(mid, {})
+        if key not in rates or per_token < rates[key]:
+            rates[key] = per_token
+
         eff = str(item.get("effectiveStartDate", ""))[:10]  # "2024-01-01T..." -> "2024-01-01"
         if len(eff) == 10 and (latest is None or eff > latest):
             latest = eff
-        sku = str(item.get("skuName", ""))
-        low = sku.lower()
-        if "input" in low or " inp" in low or low.endswith("inp"):
-            direction = "input"
-        elif "output" in low or "outp" in low:
-            direction = "output"
-        else:
-            continue
-        if "global" not in low and "regional" in low + " " + str(item.get("meterName", "")).lower():
-            continue  # prefer the Global (cheapest) tier when tiers are distinguishable
-        price = item.get("retailPrice")
-        if price is None:
-            continue
-        per_token = _dec(price) / _azure_unit_divisor(str(item.get("unitOfMeasure", "")))
-        # model id = sku up to the direction keyword, sans tier/version noise
-        head = low
-        for cut in (" inp", " input", " outp", " output"):
-            if cut in head:
-                head = head.split(cut, 1)[0]
-                break
-        words = head.strip().split()
-        while words and words[-1].isdigit() and len(words[-1]) in (3, 4):
-            words.pop()  # drop a trailing snapshot-date token, e.g. "gpt 4o 1120" -> "gpt 4o"
-        mid = _normalize_model_id("-".join(words))
-        rates = by_model.setdefault(mid, {})
-        # keep the lowest seen rate per direction (cheapest tier/region)
-        if direction not in rates or per_token < rates[direction]:
-            rates[direction] = per_token
     out = {mid: r for mid, r in by_model.items() if "input" in r}
     # Carry Azure's real effectiveStartDate when present (its genuine provenance), else undatable —
     # never fake "today", which would make a stale refresh look fresh to is_stale().
@@ -506,16 +763,236 @@ def _map_azure(raw: dict) -> dict:
     return result
 
 
-#: Built-in live sources: name -> (url, mapper). All unauthenticated HTTPS GET → JSON.
-_SOURCES: dict[str, tuple[str, Callable[[dict], dict]]] = {
-    "litellm": (LITELLM_URL, _map_litellm),
-    "openrouter": (OPENROUTER_URL, _map_openrouter),
-    "azure": (AZURE_URL, _map_azure),
+# ------------------------------------------------------------------------------------ aws (Bedrock)
+
+#: ⚠️ usagetype fragments marking a different SLA or commitment — never the on-demand base rate.
+#: Measured 2026-08-01: ``Claude Sonnet 4`` carries ``inferenceType: "Input tokens"`` on **both**
+#: ``…-input-tokens-cross-region-global`` ($3/MTok) and ``…-input-tokens-cross-region-global-batch``
+#: ($1.50/MTok), so a plain cheapest-wins over ``inferenceType`` publishes the batch price as the
+#: standard one.
+_AWS_NOT_ON_DEMAND = ("batch", "long-context", "reserved", "priority", "flex", "provisioned")
+_AWS_UNITS = {
+    "1k tokens": Decimal(1000),
+    "1k token": Decimal(1000),
+    "1m tokens": Decimal(1_000_000),
+    "1m token": Decimal(1_000_000),
+}
+
+
+def _aws_rate_key(usagetype: object, inference_type: object) -> str | None:
+    """Which rate a Bedrock price dimension is, from the ``usagetype`` first.
+
+    ⚠️ ``inferenceType`` is not sufficient: the cache-write row carries ``inferenceType: null`` and
+    only the usagetype says ``cache-write-input-token-count``.
+    """
+    u = str(usagetype or "").lower()
+    if "cache-read" in u:
+        return "cached"
+    if "cache-write" in u:
+        return "cache_write"
+    if "input-token" in u:
+        return "input"
+    if "output-token" in u:
+        return "output"
+    it = str(inference_type or "").strip().lower()
+    if it == "prompt cache read input tokens":
+        return "cached"
+    if it == "prompt cache write input tokens":
+        return "cache_write"
+    if it in ("input tokens", "text input tokens", "text input token"):
+        return "input"
+    if it in ("output tokens", "text output tokens", "text output token"):
+        return "output"
+    return None
+
+
+def _aws_model_key(name: str) -> str:
+    """Normalise an AWS ``attributes.model`` to the shape core's own lookup reduction produces.
+
+    AWS names a model two ways in the same file: a **display name** with spaces
+    (``Claude Sonnet 4.5``, ``Llama 3.3 70B``) and a **wire-ish id** with none (``gpt-oss-120b``,
+    ``xai.grok-4.3``). A display name becomes what :func:`_lookup_id` yields from a Bedrock wire id
+    (``us.anthropic.claude-sonnet-4-5-…-v1:0`` → ``claude-sonnet-4-5``): lowercase, ``N.M`` →
+    ``N-M``, whitespace → ``-``. A wire-ish id only loses its dotted vendor prefix.
+
+    Honest limit: a wire id carrying a suffix the display name lacks (``llama3-3-70b-instruct``)
+    will not match — and is never guessed at.
+    """
+    s = name.strip()
+    if " " not in s:
+        return re.sub(r"^(?:[a-z0-9]+\.)+", "", s.lower())
+    s = re.sub(r"(?<=\d)\.(?=\d)", "-", s.lower())
+    return re.sub(r"[\s_]+", "-", s)
+
+
+def _map_aws(raw: dict) -> dict:
+    """AWS Bedrock price files, as fetched by :func:`_fetch_aws` → ``{"offers": [file, ...]}``.
+
+    Rates live at ``terms.OnDemand[sku][*].priceDimensions[*].pricePerUnit.USD`` with a **per
+    dimension** ``unit``; ``publicationDate`` is the table's real as-of date.
+    """
+    by_model: dict[str, dict[str, Decimal]] = {}
+    published: str | None = None
+    for data in raw.get("offers", []):
+        p = str(data.get("publicationDate", ""))[:10]
+        if len(p) == 10 and (published is None or p > published):
+            published = p
+        on_demand = (data.get("terms") or {}).get("OnDemand") or {}
+        for sku, product in (data.get("products") or {}).items():
+            attrs = product.get("attributes") or {}
+            model = attrs.get("model")
+            if not model:
+                continue
+            usagetype = str(attrs.get("usagetype") or "").lower()
+            if any(frag in usagetype for frag in _AWS_NOT_ON_DEMAND):
+                continue
+            key = _aws_rate_key(attrs.get("usagetype"), attrs.get("inferenceType"))
+            if key is None:
+                continue
+            for term in (on_demand.get(sku) or {}).values():
+                for pd in (term.get("priceDimensions") or {}).values():
+                    divisor = _AWS_UNITS.get(str(pd.get("unit", "")).strip().lower())
+                    if divisor is None:
+                        continue  # image / hour / TPM-Hour — not a token rate
+                    usd = (pd.get("pricePerUnit") or {}).get("USD")
+                    if usd is None:
+                        continue
+                    value = _dec(usd) / divisor
+                    if value <= 0:
+                        continue
+                    mid = _aws_model_key(str(model))
+                    rates = by_model.setdefault(mid, {})
+                    if key not in rates or value < rates[key]:
+                        rates[key] = value
+    out = {mid: r for mid, r in by_model.items() if "input" in r}
+    result: dict = {"models": out}
+    if published is not None:
+        result["_updated"] = published
+    return result
+
+
+# ------------------------------------------------------------------------------- source registry
+
+
+def _get(url: str, timeout: float) -> dict:
+    """One unauthenticated HTTPS GET → parsed JSON with ``Decimal`` numbers.
+
+    ⚠️ Never gates on the HTTP status or the content-type, because neither is a signal here.
+    Measured 2026-08-01: Azure answers a wrong ``$filter`` with **200 + ``{"Items": []}``**,
+    models.dev answers a wrong path with **200 + ``text/html``**, Vercel answers a wrong path with
+    **404 + valid JSON**, AWS serves its *good* index files as ``application/octet-stream``, and
+    raw.githubusercontent serves the feed as ``text/plain``. Parse, then check shape — which is what
+    :func:`refresh`'s ``data.get("models")`` truthiness test does.
+    """
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": "cendor-core/prices"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - http(s) only
+        return _loads(resp.read().decode("utf-8"))
+
+
+def _fetch_simple(url: str, timeout: float, region: str | None) -> dict:
+    return _get(url, timeout)
+
+
+def _fetch_azure(url: str, timeout: float, region: str | None) -> dict:
+    """Paginate the Retail Prices API. Two pages for one region; capped so a filter that somehow
+    matches everything cannot turn one ``refresh()`` into an unbounded crawl."""
+    items: list = []
+    next_url: str | None = url
+    pages = 0
+    while next_url and pages < 10:
+        payload = _get(next_url, timeout)
+        items.extend(payload.get("Items") or [])
+        pages += 1
+        next_url = payload.get("NextPageLink")
+    return {"Items": items}
+
+
+def _fetch_aws(url: str, timeout: float, region: str | None) -> dict:
+    """Resolve each offer's region index, then fetch that region's file. Both offers, always."""
+    reg = region or AWS_DEFAULT_REGION
+    offers = []
+    for offer in AWS_OFFERS:
+        index = _get(
+            f"{AWS_PRICING_HOST}/offers/v1.0/aws/{offer}/current/region_index.json", timeout
+        )
+        entry = (index.get("regions") or {}).get(reg)
+        if not entry:
+            continue  # a region one offer does not publish is not a failure of the other
+        href = str(entry.get("currentVersionUrl") or "")
+        if not href:
+            continue
+        offers.append(_get(href if href.startswith("http") else AWS_PRICING_HOST + href, timeout))
+    return {"offers": offers}
+
+
+@dataclass(frozen=True)
+class _Source:
+    """A built-in ``refresh(source=...)`` adapter: how to reach it, and how to map its reply."""
+
+    url: str | Callable[[str | None], str]
+    mapper: Callable[[dict], dict]
+    fetch: Callable[[str, float, str | None], dict] = _fetch_simple
+    #: Accepts ``refresh(..., region=...)``. The others ignore it rather than pretending.
+    regional: bool = False
+
+    def url_for(self, region: str | None) -> str:
+        return self.url(region) if callable(self.url) else self.url
+
+
+#: models.dev providers we accept, in precedence order (earlier wins a collision). See
+#: :func:`_map_modelsdev` for why an allowlist is load-bearing here.
+_MODELSDEV_PROVIDERS = (
+    "openai", "anthropic", "google", "google-vertex", "xai", "deepseek", "mistral", "meta",
+    "alibaba", "moonshotai", "cohere", "amazon-bedrock", "azure", "groq", "fireworks-ai",
+    "huggingface",
+)  # fmt: skip
+
+
+def _is_host_id(mid: str) -> bool:
+    """Is this source id namespaced to a **host** rather than naming the model itself?
+
+    ⚠️ Measured 2026-08-01, and it published a wrong number before it was caught. litellm reaches
+    ``claude-3-5-haiku`` through ``vertex_ai/claude-3-5-haiku`` — **Vertex's $1/$5**, not
+    Anthropic's **$0.80/$4**. Stripping the namespace collapses a host's listing onto the bare id.
+    A direct naming outranks a host listing; the host case is what ``register_model_price`` /
+    ``register_deployment`` exist for, and core's lookup reduction still matches a Bedrock/Vertex
+    *wire* id onto the bare row at call time.
+    """
+    s = mid.strip().lower()
+    return "/" in s or bool(re.match(r"^(?:[a-z][a-z0-9_-]*\.)+[a-z]", s))
+
+
+#: Built-in live sources, all unauthenticated HTTPS GET → JSON. ``azure`` and ``aws`` are the
+#: providers' own billing catalogs (first-party facts); ``modelsdev`` and ``litellm`` are MIT
+#: aggregators; ``openrouter`` and ``vercel`` are gateways quoting their own **resale** prices.
+_SOURCES: dict[str, _Source] = {
+    "litellm": _Source(LITELLM_URL, _map_litellm),
+    "openrouter": _Source(OPENROUTER_URL, _map_openrouter),
+    "modelsdev": _Source(MODELSDEV_URL, _map_modelsdev),
+    "vercel": _Source(VERCEL_URL, _map_vercel),
+    "azure": _Source(
+        lambda region: azure_url(region or AZURE_DEFAULT_REGION),
+        _map_azure,
+        _fetch_azure,
+        regional=True,
+    ),
+    "aws": _Source(AWS_URL, _map_aws, _fetch_aws, regional=True),
 }
 
 
 def sources() -> list[str]:
-    """Names of the built-in live price sources accepted by ``refresh(source=...)``."""
+    """Names of the built-in live price sources accepted by ``refresh(source=...)``.
+
+    ``["aws", "azure", "litellm", "modelsdev", "openrouter", "vercel"]``. ``azure`` and ``aws``
+    additionally accept ``region=``.
+
+    ```python
+    from cendor.core import prices
+    prices.refresh(source="aws", region="eu-west-1")
+    ```
+    """
     return sorted(_SOURCES)
 
 
@@ -525,55 +1002,342 @@ def refresh(
     source: str | None = None,
     mapper: Callable[[dict], dict] | None = None,
     timeout: float = 5.0,
+    region: str | None = None,
+    required: bool = False,
 ) -> bool:
     """Replace the table from a live source or static JSON URL. Never raises; offline-safe.
+
+    With no arguments this fetches the **cendor-prices feed** (:data:`SNAPSHOT_URL`) — a dated,
+    per-row-provenanced table reconciled from the cloud catalogs and the MIT aggregators.
 
     Args:
         url: A static JSON URL in *our* schema (``{"models": {...}}``). Defaults to
             :data:`SNAPSHOT_URL` when neither ``url`` nor ``source`` is given.
-        source: A built-in adapter name — one of :func:`sources` (``"litellm"`` / ``"openrouter"``
-            / ``"azure"``). Takes precedence over ``url``; selects that source's URL + mapper.
+        source: A built-in adapter name — one of :func:`sources` (``"azure"``, ``"aws"``,
+            ``"modelsdev"``, ``"litellm"``, ``"openrouter"``, ``"vercel"``). Takes precedence over
+            ``url``; selects that source's URL + mapper.
         mapper: A custom ``raw_json -> {"models": {...}}`` callable (overrides the source's mapper);
             use it to map any other source onto our schema.
         timeout: Per-request timeout in seconds.
+        region: Cloud region for the ``azure`` / ``aws`` sources (default ``eastus2`` /
+            ``us-east-1``). Ignored by the others.
+        required: ``True`` raises :class:`PriceRefreshError` instead of returning ``False``. Use it
+            when running on stale rates would be worse than not running at all. **Never the
+            default** — ``refresh()`` is contractually never-raise so a library import can't take an
+            app down when a CDN blips.
 
     Returns:
         ``True`` if the table was updated, ``False`` if the fetch/parse/map failed (the bundled or
-        last-good snapshot stays active). The fetched table lives in memory only — nothing is
-        persisted. docs/core.md §7.
+        last-good snapshot stays active — a failure never reverts anything). The fetched table lives
+        in memory only; nothing is persisted unless you call :func:`save`. docs/core.md §7.
+
+    ```python
+    from cendor.core import prices
+
+    prices.refresh()                                  # the cendor-prices feed
+    prices.refresh(source="aws", region="eu-west-1")  # Bedrock's own price file
+    prices.refresh(required=True)                     # raise instead of degrading silently
+    ```
     """
     global _table, _source, _source_name, _source_url
     adapter: Callable[[dict], dict] | None
+    # Annotated: without it mypy infers the *function* type of `_fetch_simple` rather than the
+    # protocol, and the reassignment below is then an error.
+    fetch: Callable[[str, float, str | None], dict] = _fetch_simple
     if source is not None:
-        if source not in _SOURCES:
+        entry = _SOURCES.get(source)
+        if entry is None:
+            if required:
+                raise PriceRefreshError(
+                    f"unknown price source {source!r}; expected one of {sources()}"
+                )
             return False  # unknown source name -> no-op, keep current table
-        target, builtin_mapper = _SOURCES[source]
-        adapter = mapper or builtin_mapper
+        target = entry.url_for(region)
+        adapter = mapper or entry.mapper
+        fetch = entry.fetch
         name = source
     else:
         target = url or SNAPSHOT_URL
         adapter = mapper
-        name = "custom" if url else "default"
+        name = "custom" if url else "feed"
     if not target or not target.lower().startswith(("http://", "https://")):
+        if required:
+            raise PriceRefreshError(f"price source must be an http(s) URL, got {target!r}")
         return False  # fetch static JSON over http(s) only — never file://, ftp://, etc.
     try:
-        import urllib.request
-
-        with urllib.request.urlopen(target, timeout=timeout) as resp:  # noqa: S310 - http(s) only
-            raw = _loads(resp.read().decode("utf-8"))
+        raw = fetch(target, timeout, region)
         data = adapter(raw) if adapter is not None else raw
         if isinstance(data, dict) and data.get("models"):
-            with _table_lock:  # publish the new table atomically for concurrent estimate() readers
-                if _registered:  # programmatic registrations survive a refresh (see _register)
-                    data.setdefault("models", {}).update(_registered)
-                _table = data
-                _source = "refreshed"
-                _source_name = name
-                _source_url = target
+            _install(data, "refreshed", name, target)
             return True
+        detail = "the source returned no models (a wrong filter or a changed shape answers 200)"
+    except Exception as exc:  # noqa: BLE001 - the never-raise contract; re-raised only if required
+        if required:
+            raise PriceRefreshError(f"price refresh from {target!r} failed: {exc}") from exc
+        return False
+    if required:
+        raise PriceRefreshError(f"price refresh from {target!r} failed: {detail}")
+    return False
+
+
+def _coerce_rates(models: dict) -> None:
+    """Force every rate in a swapped-in table to a ``Decimal``, in place.
+
+    A **pass-through** ``refresh(url)`` — no mapper, the caller pointing at any ``prices/1`` JSON —
+    hands the parsed rate objects straight to :func:`estimate`. ``json.loads(parse_float=Decimal)``
+    turns a JSON *number* into a ``Decimal`` but leaves a JSON *string* a string, so a table that
+    quotes its rates (a perfectly reasonable authoring choice) would otherwise reach the arithmetic
+    as text. ``estimate`` already coerces defensively on every read; this does it once at the swap
+    so ``explain()`` also hands callers real ``Decimal``s. (Measured 2026-08-01: the TypeScript twin
+    had no such per-read coercion and threw ``inputRate.times is not a function``.)
+    """
+    for rates in models.values():
+        if not isinstance(rates, dict):
+            continue
+        for k, v in list(rates.items()):
+            if not isinstance(v, Decimal):
+                try:
+                    rates[k] = Decimal(str(v))
+                except Exception:  # noqa: BLE001 - a non-numeric rate is dropped, never guessed
+                    del rates[k]
+
+
+def _install(data: dict, kind: str, name: str, url: str | None) -> None:
+    """Publish a new table atomically for concurrent ``estimate()`` readers."""
+    global _table, _source, _source_name, _source_url
+    _coerce_rates(data.get("models") or {})
+    with _table_lock:
+        if _registered:  # programmatic registrations survive every table swap (see register)
+            data.setdefault("models", {}).update(_registered)
+        _table = data
+        _source = kind
+        _source_name = name
+        _source_url = url
+
+
+# ------------------------------------------------------------------------- explain / save / load
+
+
+@dataclass(frozen=True)
+class PriceExplanation:
+    """Where one model's rates came from — the answer to *"why is my cost that number?"*.
+
+    Returned by :func:`explain`. Field names are snake_case here and camelCase in
+    ``@cendor/core``'s ``prices.explain`` (the same documented divergence as ``snapshot_date`` /
+    ``snapshotDate``).
+    """
+
+    model: str
+    """The id you asked about, verbatim."""
+    resolved: str | None
+    """The table key that answered, or ``None`` if nothing did."""
+    how: Literal["exact", "normalized", "registered", "unpriced"]
+    """``"registered"`` — your own ``register*`` call is in effect (it overrides every table).
+    ``"exact"`` — the id is a table key. ``"normalized"`` — a wire-level id was reduced to its base
+    (``us.anthropic.claude-…-v1:0`` → ``claude-sonnet-4-6``). ``"unpriced"`` — no rate exists, and
+    :func:`estimate` would raise."""
+    rates: dict[str, Decimal] | None
+    """Per-token USD rates, or ``None`` when unpriced."""
+    registered: bool
+    """A user registration is in effect for this id."""
+    source_name: str
+    """Provenance of the whole table: ``"bundled"`` | ``"feed"`` | ``"azure"`` | …"""
+    source_url: str | None
+    table_origin: str
+    """``"bundled"`` | ``"refreshed"`` | ``"loaded"``."""
+    snapshot_date: str | None
+    age_days: int | None
+    row_source: str | None = None
+    """Per-row provenance from the feed's ``_provenance`` map: which source this rate came from."""
+    row_asof: str | None = None
+    """That source's own as-of date for this rate — not the day it was fetched."""
+    notes: tuple[str, ...] = field(default_factory=tuple)
+    """Honest caveats that apply to this answer (resale pricing, staleness, …)."""
+
+    def summary(self) -> str:
+        """One human-readable line, for a log or a CLI."""
+        if self.rates is None:
+            return f"{self.model}: no price in the {self.source_name} table — cost will be None"
+        rates = " ".join(f"{k}={v}" for k, v in sorted(self.rates.items()))
+        via = "" if self.resolved == self.model else f" (via {self.resolved})"
+        prov = f"{self.row_source or self.source_name}"
+        asof = self.row_asof or self.snapshot_date or "undated"
+        return f"{self.model}{via}: {rates} — {self.how}, from {prov} as of {asof}"
+
+
+#: Sources whose numbers are what a **gateway** charges for reselling a model, not what the lab
+#: charges. Surfaced by :func:`explain` rather than buried in the docs.
+_RESALE_SOURCES = {"openrouter", "vercel"}
+
+
+def explain(model: str) -> PriceExplanation:
+    """Explain where ``model``'s rates come from: the resolved id, the rates, and the provenance.
+
+    The visibility half of *"if the live price is wrong, the user can overwrite it"*: an override
+    already wins (:func:`register`), and this shows you whether one is in effect, which table
+    answered, which source that row came from, and how old it is.
+
+    ```python
+    from cendor.core import prices
+
+    prices.refresh()
+    print(prices.explain("gpt-4o").summary())
+    # gpt-4o: cached=1.25E-6 input=2.5E-6 output=1E-5 — exact, from azure as of 2026-07-01
+    ```
+
+    Args:
+        model: The id a call reports (a deployment name, a Bedrock wire id, anything).
+
+    Returns:
+        A :class:`PriceExplanation`. Never raises — an unpriced model is an answer, not an error.
+    """
+    table = _ensure_loaded()
+    models = table.get("models", {})
+    mid = str(model)
+    resolved: str | None
+    how: Literal["exact", "normalized", "registered", "unpriced"]
+    if mid in models:
+        resolved, how = mid, "exact"
+    else:
+        reduced = _lookup_id(mid)
+        resolved, how = (reduced, "normalized") if reduced in models else (None, "unpriced")
+    registered = resolved is not None and resolved in _registered
+    if registered:
+        how = "registered"
+    rates = dict(models[resolved]) if resolved is not None else None
+    prov = table.get("_provenance") or {}
+    row = prov.get(resolved) if resolved is not None else None
+    notes: list[str] = []
+    if registered:
+        notes.append(
+            "a register()/register_model_price()/register_deployment() call overrides "
+            "every table for this id, including after a refresh()"
+        )
+    if _source_name in _RESALE_SOURCES:
+        notes.append(
+            f"{_source_name} publishes gateway RESALE prices — what the gateway charges "
+            "you, which may differ from the model lab's own rate"
+        )
+    age = age_days()
+    if age is not None and age > 45:
+        notes.append(f"this table is {age} days old; call refresh() for current rates")
+    if snapshot_date() is None:
+        notes.append(
+            "this source publishes no as-of date, so staleness cannot be measured "
+            "(is_stale() reports False, which means unknown, not fresh)"
+        )
+    if how == "unpriced":
+        notes.append(
+            "estimate() raises UnknownModelError and tokenguard records $0 — register a "
+            "rate with prices.register_model_price(...) or prices.register_deployment(...)"
+        )
+    return PriceExplanation(
+        model=mid,
+        resolved=resolved,
+        how=how,
+        rates=rates,
+        registered=registered,
+        source_name=_source_name,
+        source_url=_source_url,
+        table_origin=_source,
+        snapshot_date=snapshot_date(),
+        age_days=age,
+        row_source=(row or {}).get("src") if isinstance(row, dict) else None,
+        row_asof=(row or {}).get("asof") if isinstance(row, dict) else None,
+        notes=tuple(notes),
+    )
+
+
+def save(path: str) -> str:
+    """Write the **active** table to ``path`` so a later process can :func:`load` it. Opt-in.
+
+    ``refresh()`` is in-memory only, per process: a short-lived or serverless worker starts at the
+    bundled snapshot every time and must fetch again. This is the explicit escape hatch — a path
+    *you* choose, written when *you* ask. There is deliberately **no implicit cache**: a library
+    quietly writing price files is a side effect, and a hidden cache is exactly how prices go
+    *invisibly* stale.
+
+    Provenance rides along, so ``explain()`` and ``age_days()`` stay honest after a ``load()`` —
+    the saved file records the original source and its ``_updated``, never the moment you saved.
+
+    ```python
+    from cendor.core import prices
+
+    prices.refresh()
+    prices.save(".cache/cendor-prices.json")     # in your deploy step
+    # ... a later process:
+    prices.load(".cache/cendor-prices.json")     # no network
+    ```
+
+    Args:
+        path: Destination file. Parent directories are created.
+
+    Returns:
+        The path written.
+
+    Raises:
+        OSError: If the file cannot be written. Unlike :func:`refresh`, this one is explicit, so it
+            reports failure the normal way.
+    """
+    from pathlib import Path
+
+    table = _ensure_loaded()
+    payload = {
+        "_note": "Saved by cendor.core.prices.save(). Restore with prices.load(path).",
+        "_schema": "prices/1",
+        "_saved": {"source_name": _source_name, "source_url": _source_url, "origin": _source},
+        # `format(d, "f")`, not `str(d)`: str renders 1.23e-7 in scientific notation. Both
+        # round-trip exactly, but a plain decimal literal is what the price-dataset spec and the
+        # cendor-prices feed use, so a saved file is diffable against them.
+        "models": {
+            k: {kk: format(_dec(vv), "f") for kk, vv in v.items()}
+            for k, v in table.get("models", {}).items()
+        },
+    }
+    if table.get("_updated"):
+        payload["_updated"] = table["_updated"]
+    if table.get("_provenance"):
+        payload["_provenance"] = table["_provenance"]
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+    return str(p)
+
+
+def load(path: str) -> bool:
+    """Load a table previously written by :func:`save`. Opt-in, explicit, no network.
+
+    Registrations are re-applied on top exactly as they are after a ``refresh()``, and the file's
+    recorded source name / URL / ``_updated`` are restored so :func:`explain` and :func:`age_days`
+    describe where the rates *came from*, not where they were read from. ``source()`` then reports
+    ``"loaded"``.
+
+    ```python
+    from cendor.core import prices
+    if not prices.load(".cache/cendor-prices.json"):
+        prices.refresh()      # no saved table yet, or it was unreadable
+    ```
+
+    Args:
+        path: A file written by :func:`save` (or any ``prices/1`` JSON).
+
+    Returns:
+        ``True`` if the table was replaced, ``False`` if the file was missing, unreadable or empty
+        — the same never-raise, keep-the-last-good contract as :func:`refresh`.
+    """
+    from pathlib import Path
+
+    try:
+        data = _loads(Path(path).read_text(encoding="utf-8"))
     except Exception:
         return False
-    return False
+    if not isinstance(data, dict) or not data.get("models"):
+        return False
+    # `save()` writes rates as strings (a plain decimal literal, diffable against the feed);
+    # `_install`'s `_coerce_rates` turns them back into Decimals.
+    saved = data.get("_saved") or {}
+    _install(data, "loaded", str(saved.get("source_name") or "custom"), saved.get("source_url"))
+    return True
 
 
 def _reset() -> None:
@@ -601,6 +1365,24 @@ def __getattr__(name: str) -> object:  # PEP 562 — teach the common wrong gues
             "(per-1M rates) or cendor.core.prices.register(model, {'input': ..., 'output': ...}) "
             "(per-token); cendor.core.tokens.register(fam, counter) registers a token counter, "
             "not a price."
+        )
+    if name in ("cache", "cache_path", "persist", "save_to_disk", "load_from_disk"):
+        raise AttributeError(
+            f"cendor.core.prices has no {name!r}. refresh() is in-memory only and never writes a "
+            "hidden cache; persistence is explicit — cendor.core.prices.save(path) then "
+            "cendor.core.prices.load(path) in the next process."
+        )
+    if name in ("refresh_async", "arefresh"):
+        raise AttributeError(
+            f"cendor.core.prices has no {name!r}. Python's refresh() is SYNCHRONOUS (urllib); the "
+            "async form is the TypeScript one, `await prices.refresh()` in @cendor/core. Call it "
+            "once at startup, or from a thread if you must not block the loop."
+        )
+    if name in ("why", "describe", "provenance", "source_of"):
+        raise AttributeError(
+            f"cendor.core.prices has no {name!r}. To see where a model's rates came from, use "
+            "cendor.core.prices.explain(model) -> PriceExplanation (.rates, .row_source, "
+            ".row_asof, .registered, .summary())."
         )
     if name in ("register_alias", "alias", "map_deployment", "registerDeployment"):
         raise AttributeError(

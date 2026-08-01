@@ -46,6 +46,7 @@ __all__ = [
     "Report",
     "BudgetEvent",
     "BudgetExceeded",
+    "StalePriceTableWarning",
     "UnpricedModelWarning",
     "reset",
 ]
@@ -98,6 +99,20 @@ class UnpricedModelWarning(UserWarning):
     An unpriced model records ``$0`` toward USD spend, so a USD-only cap can't enforce against it.
     Filter or escalate it like any warning (``simplefilter("error", UnpricedModelWarning)``); or set
     :func:`configure` ``on_unpriced="raise"`` to make ``on_exceed="block"`` reject such calls.
+    """
+
+
+class StalePriceTableWarning(UserWarning):
+    """Warned **once per process** when a USD budget estimates from an old price table.
+
+    A USD cap enforced against stale rates is quietly wrong in a direction that depends on which way
+    prices moved: after a price *cut* the estimate is high, so the cap binds early (conservative);
+    after a price *rise* it is low, so **the cap binds late and you overspend**. That second case is
+    the one worth a warning.
+
+    Once per process, not per call — a budget in a hot loop must not become a log flood. Silence it
+    with :func:`configure` ``on_stale_prices="ignore"``, move the threshold with
+    ``stale_prices_after_days=``, or fix it properly with ``cendor.core.prices.refresh()``.
     """
 
 
@@ -191,6 +206,16 @@ _DEFAULT_ON_UNPRICED = "warn"
 _on_unpriced: str = _DEFAULT_ON_UNPRICED
 _warned_unpriced: set[str] = set()  # models already warned about (warn once per model, per reset)
 
+#: How a USD budget treats an OLD price table: ``"warn"`` (default — :class:`StalePriceTableWarning`
+#: once per process) or ``"ignore"``. Mirrors ``on_unpriced``'s shape. An *undatable* table
+#: (litellm, openrouter, vercel publish no as-of date) is never called stale — it already
+#: surfaces through ``prices.source_name()``/``prices.explain()``, and inventing an age is worse.
+_DEFAULT_ON_STALE_PRICES = "warn"
+_DEFAULT_STALE_PRICES_AFTER_DAYS = 45
+_on_stale_prices: str = _DEFAULT_ON_STALE_PRICES
+_stale_prices_after_days: int = _DEFAULT_STALE_PRICES_AFTER_DAYS
+_warned_stale_prices: bool = False  # once per process, per reset()
+
 
 def _warn_unpriced(model: str, mode: str) -> None:
     """Warn once per model that an active USD budget can't enforce against an unpriced model."""
@@ -203,6 +228,28 @@ def _warn_unpriced(model: str, mode: str) -> None:
         f"Add a rate (cendor.core.prices), use a tokens= cap instead, or "
         f"configure(on_unpriced='raise') to reject unpriced calls under on_exceed='block'.",
         UnpricedModelWarning,
+        stacklevel=3,
+    )
+
+
+def _warn_stale_prices() -> None:
+    """Warn once that an active USD budget is estimating from an old price table."""
+    global _warned_stale_prices
+    if _warned_stale_prices or _on_stale_prices != "warn":
+        return
+    from cendor.core import prices
+
+    age = prices.age_days()
+    if age is None or age <= _stale_prices_after_days:
+        return  # fresh, or undatable — an undatable table is not "stale", it is unmeasurable
+    _warned_stale_prices = True
+    warnings.warn(
+        f"tokenguard: this USD budget is estimating from a price table last updated "
+        f"{prices.snapshot_date()} ({age} days ago, source={prices.source_name()!r}). After a "
+        f"price rise a stale table under-estimates, so the cap binds LATE and you overspend. Call "
+        f"cendor.core.prices.refresh() at startup, or configure(on_stale_prices='ignore') to "
+        f"silence this. cendor.core.prices.explain(model) shows where a rate came from.",
+        StalePriceTableWarning,
         stacklevel=3,
     )
 
@@ -273,7 +320,13 @@ def _reset_tap() -> None:
     _tap_off = False
 
 
-def configure(*, max_records: int | None = _UNSET, on_unpriced: str = _UNSET) -> None:
+def configure(
+    *,
+    max_records: int | None = _UNSET,
+    on_unpriced: str = _UNSET,
+    on_stale_prices: str = _UNSET,
+    stale_prices_after_days: int = _UNSET,
+) -> None:
     """Tune tokenguard's runtime behavior. Each argument is independent — omit one to leave it as
     is. docs/tokenguard.md §5.
 
@@ -289,14 +342,35 @@ def configure(*, max_records: int | None = _UNSET, on_unpriced: str = _UNSET) ->
             :class:`BudgetExceeded` (a strict cap that refuses what it can't price). Either way,
             unpriced calls are counted by :func:`unpriced_calls` and surfaced per-row by
             :func:`report`.
+        on_stale_prices: How a USD budget handles an OLD price table. ``"warn"`` (default) emits a
+            :class:`StalePriceTableWarning` **once per process**; ``"ignore"`` says nothing. An
+            undatable table (litellm / openrouter / vercel publish no as-of date) is never stale.
+        stale_prices_after_days: Age at which the table counts as stale. Defaults to 45.
+
+    ```python
+    from cendor import tokenguard
+
+    tokenguard.configure(on_stale_prices="warn", stale_prices_after_days=30)
+    ```
     """
-    global _max_records, _on_unpriced
+    global _max_records, _on_unpriced, _on_stale_prices, _stale_prices_after_days
     if max_records is not _UNSET:
         _max_records = max_records
     if on_unpriced is not _UNSET:
         if on_unpriced not in ("warn", "raise"):
             raise ValueError(f"on_unpriced must be 'warn' or 'raise', got {on_unpriced!r}")
         _on_unpriced = on_unpriced
+    if on_stale_prices is not _UNSET:
+        if on_stale_prices not in ("warn", "ignore"):
+            raise ValueError(f"on_stale_prices must be 'warn' or 'ignore', got {on_stale_prices!r}")
+        _on_stale_prices = on_stale_prices
+    if stale_prices_after_days is not _UNSET:
+        if not isinstance(stale_prices_after_days, int) or stale_prices_after_days < 0:
+            raise ValueError(
+                f"stale_prices_after_days must be a non-negative int, got "
+                f"{stale_prices_after_days!r}"
+            )
+        _stale_prices_after_days = stale_prices_after_days
 
 
 def dropped() -> int:
@@ -780,6 +854,10 @@ def _on_call(call: object) -> None:
         if usd_frame is not None:
             mode = usd_frame.on_exceed
             _warn_unpriced(call.model, mode if isinstance(mode, str) else "callable")
+    elif any(f.cap_usd is not None for f in frames):
+        # The call WAS priced, and a USD cap is enforcing against that price. If the table it came
+        # from is old, say so once — a stale rate after a price rise makes the cap bind late.
+        _warn_stale_prices()
 
     tags = dict(attached[1]) if attached is not None else dict(_current_tags())
     record = _Record(
@@ -1271,7 +1349,8 @@ def reset() -> None:
 
     Useful between tests so spend doesn't leak across cases.
     """
-    global _sink, _dropped, _max_records, _on_unpriced
+    global _sink, _dropped, _max_records, _on_unpriced, _on_stale_prices
+    global _stale_prices_after_days, _warned_stale_prices
     with _records_lock:
         _records.clear()
         _dropped = 0
@@ -1281,6 +1360,9 @@ def reset() -> None:
     _sink = None
     _max_records = _DEFAULT_MAX_RECORDS
     _on_unpriced = _DEFAULT_ON_UNPRICED
+    _on_stale_prices = _DEFAULT_ON_STALE_PRICES
+    _stale_prices_after_days = _DEFAULT_STALE_PRICES_AFTER_DAYS
+    _warned_stale_prices = False
     _tags.set({})
     _budgets.set(())
     _reset_tap()
