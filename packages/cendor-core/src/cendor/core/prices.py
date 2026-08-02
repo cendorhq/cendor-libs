@@ -60,10 +60,15 @@ _registered: dict[str, dict] = {}
 
 #: Default table used by ``refresh()`` when no URL or source is given: the **cendor-prices feed** —
 #: a dated, per-row-provenanced ``prices/1`` table rebuilt daily behind validation gates and served
-#: by GitHub's CDN. Cendor operates no server for this; it is a static file in a public repo, and a
+#: by GitHub Pages. Cendor operates no server for this; it is a static file on GitHub's CDN, and a
 #: Cendor outage cannot exist to break your cost estimation. Override by passing ``url=`` /
 #: ``source=`` or reassigning this. Must resolve to a *public* static JSON.
-SNAPSHOT_URL: str = "https://raw.githubusercontent.com/cendorhq/cendor-prices/main/prices.json"
+#:
+#: ⚠️ It is a **Pages** URL, not ``raw.githubusercontent``. The builder repo is private — the source,
+#: the curation policy and the run history are internal — while a data-only ``gh-pages`` branch
+#: publishes the file itself, keyless. Pages also serves it as ``application/json`` rather than
+#: raw's ``text/plain``. Do not "correct" this back to a raw URL: that one needs auth and 404s.
+SNAPSHOT_URL: str = "https://cendorhq.github.io/cendor-prices/prices.json"
 
 #: Community-maintained, near-daily-updated cross-provider price table (broadest coverage).
 LITELLM_URL: str = (

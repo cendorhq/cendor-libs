@@ -33,8 +33,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SNAPSHOT = REPO / "packages" / "cendor-core" / "src" / "cendor" / "core" / "prices.json"
 
-FEED_URL = "https://raw.githubusercontent.com/cendorhq/cendor-prices/main/prices.json"
-CURATION_URL = "https://raw.githubusercontent.com/cendorhq/cendor-prices/main/curation.json"
+FEED_URL = "https://cendorhq.github.io/cendor-prices/prices.json"
+CURATION_URL = "https://cendorhq.github.io/cendor-prices/curation.json"
 #: Prefer a sibling checkout when there is one — it is what a maintainer is actually editing.
 SIBLING = REPO.parent / "cendor-prices"
 

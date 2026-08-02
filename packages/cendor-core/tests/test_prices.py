@@ -1040,7 +1040,11 @@ def test_default_refresh_targets_the_cendor_prices_feed(monkeypatch):
     )
     assert prices.refresh() is True
     assert seen[0] == prices.SNAPSHOT_URL
-    assert "cendorhq/cendor-prices" in prices.SNAPSHOT_URL
+    assert "cendor-prices" in prices.SNAPSHOT_URL
+    # A PAGES url, not raw.githubusercontent: the builder repo is private, so the raw URL needs
+    # auth and 404s. A data-only gh-pages branch publishes the file itself, keyless.
+    assert prices.SNAPSHOT_URL.startswith("https://cendorhq.github.io/")
+    assert "raw.githubusercontent" not in prices.SNAPSHOT_URL
     assert prices.source_name() == "feed"
 
 

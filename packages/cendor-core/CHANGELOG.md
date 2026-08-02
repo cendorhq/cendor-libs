@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.19.1] — 2026-08-02
+
+### Fixed
+- **`SNAPSHOT_URL` moves to the feed's GitHub Pages URL**
+  (`https://cendorhq.github.io/cendor-prices/prices.json`). The `cendorhq/cendor-prices` repo is
+  private — the builder, the curation policy and the run history are internal — so the
+  `raw.githubusercontent` URL 1.19.0 shipped requires auth and would 404. A data-only `gh-pages`
+  branch publishes the file itself, keyless and CDN-served, and Pages returns it as
+  `application/json` rather than raw's `text/plain`. **Anyone on 1.19.0 should upgrade**: there, a
+  bare `prices.refresh()` fails and — because `refresh()` is contractually never-raise — returns a
+  silent `False`, leaving the bundled snapshot active. Nothing is wrong with the rates in 1.19.0;
+  only the default refresh target is unreachable.
+
 ## [1.19.0] — 2026-08-02
 
 Live pricing: three new first-party/aggregator sources, a rewritten Azure source, and the
