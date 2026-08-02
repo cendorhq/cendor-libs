@@ -428,6 +428,38 @@ def test_refresh_openrouter_maps_string_prices_and_strips_prefix(monkeypatch):
     assert prices.estimate("gpt-4o", 1000, 500).amount == Decimal("0.0075")
 
 
+def test_refresh_openrouter_drops_the_string_zero_free_tier(monkeypatch):
+    """The exact shape that carried the bug, pinned offline so it cannot come back.
+
+    ``BUG-openrouter-source-publishes-zero-input-rates.md`` (closed 2026-08-02): every other mapper
+    dropped a zero input rate, but ``_map_openrouter``'s guard was ``pricing.prompt is None`` and
+    OpenRouter serves its free tier as the **string** ``"0"``, which is not ``None``. 17 models
+    priced 1M input tokens at ``$0.00`` *as a fact*, so a USD ``budget(...)`` cap never bound on
+    them. The row is now dropped by ``_drop_unpriceable`` and the model is honestly absent.
+
+    ⚠️ Asserting "no row prices at $0" would go **vacuously green** the day OpenRouter stops
+    listing free models. The fixture carries the zero rows itself, so the DROP is what is pinned.
+
+    ``-1`` is OpenRouter's own sentinel for a dynamically-routed model (``openrouter/auto`` and
+    four siblings, measured live 2026-08-02): the price is not known until a model is chosen, which
+    is the model-router case that is never priceable. It is dropped by the same ``<= 0`` rule.
+    """
+    raw = """
+    {"data": [
+      {"id": "openai/gpt-4o", "pricing": {"prompt": "0.0000025", "completion": "0.00001"}},
+      {"id": "meta/llama3:free", "pricing": {"prompt": "0", "completion": "0"}},
+      {"id": "google/lyria-3-pro-preview", "pricing": {"prompt": "0", "completion": "0.000002"}},
+      {"id": "openrouter/auto", "pricing": {"prompt": "-1", "completion": "-1"}}
+    ]}
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh(source="openrouter") is True
+    assert prices.models() == ["gpt-4o"]
+    for absent in ("llama3:free", "lyria-3-pro-preview", "auto"):
+        with pytest.raises(prices.UnknownModelError):
+            prices.estimate(absent, 1_000_000)
+
+
 def test_refresh_azure_parses_sku_and_converts_per_1k(monkeypatch):
     raw = """
     {"Items": [
@@ -1129,6 +1161,46 @@ def test_modelsdev_allowlist_keeps_a_reseller_from_outranking_the_lab(monkeypatc
     assert prices.source_name() == "modelsdev"
     assert prices.estimate("gpt-5.1", 1_000_000).amount == Decimal("1.25")
     assert prices.snapshot_date() == "2026-07-20"  # per-row last_updated, real provenance
+
+
+def test_modelsdev_lab_beats_a_host_when_both_key_the_model_bare(monkeypatch):
+    """⚠️ THE PRECEDENCE INVERSION, measured 2026-08-02 on the live payload.
+
+    The ``bare`` guard was a plain ``if key in bare: continue``, which inverted the allowlist
+    whenever two ALLOWLISTED providers both used a bare id: the reverse walk writes the
+    lower-precedence provider first, it claims the key, and the higher-precedence one is skipped.
+    So ``refresh(source="modelsdev")`` returned **azure's $1/$6 deployment price** for
+    ``gpt-5.6-luna`` where OpenAI's own listing says **$0.2/$1.2**. Four rows were affected, every
+    one of them a host's listing displacing the lab's.
+
+    Caught in ``cendor-prices`` by G6 (>2x day-over-day swing) rather than by any library test,
+    because nothing offline had two allowlisted providers keying one model bare.
+    """
+    raw = """
+    {
+      "azure":  {"models": {"gpt-5.6-luna": {"cost": {"input": 1,   "output": 6}}}},
+      "openai": {"models": {"gpt-5.6-luna": {"cost": {"input": 0.2, "output": 1.2}}}}
+    }
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh(source="modelsdev") is True
+    # openai is index 0 in the allowlist, azure index 12 — the LAB rate must win.
+    assert prices.estimate("gpt-5.6-luna", 1_000_000).amount == Decimal("0.2")
+    assert prices.estimate("gpt-5.6-luna", 0, 1_000_000).amount == Decimal("1.2")
+
+
+def test_modelsdev_a_host_namespaced_id_still_never_overwrites_a_bare_one(monkeypatch):
+    """The rule the guard actually exists for, unchanged: a namespaced id names a HOST's listing,
+    and must not displace a direct naming even when its provider outranks the bare one's."""
+    raw = """
+    {
+      "azure":  {"models": {"gpt-5.9": {"cost": {"input": 9, "output": 9}}}},
+      "openai": {"models": {"azure/gpt-5.9": {"cost": {"input": 1, "output": 1}}}}
+    }
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh(source="modelsdev") is True
+    assert prices.estimate("gpt-5.9", 1_000_000).amount == Decimal("9")
 
 
 def test_modelsdev_ignores_providers_outside_the_allowlist(monkeypatch):
