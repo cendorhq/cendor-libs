@@ -144,8 +144,24 @@ Key points a port must replicate exactly:
   every existing handler is unaffected), raised whenever the model is priced — not only when the
   call happens to carry output tokens. A table that cannot price a model cannot price it, and
   learning that on the first output-bearing call rather than the first call is a late, partial
-  signal. The three unpriceable shapes are: no `input`, a **table-stated** zero `input`, and no
-  `output`. A rate the *user* registered is exempt from the zero rule — see the 2026-08-02 note.
+  signal. The four unpriceable shapes are: no `input`, a **table-stated** zero `input`, no `output`,
+  and a **negative** value on any of the four rate keys. A rate the *user* registered is exempt from
+  the zero rule — see the 2026-08-02 notes.
+- **Every rate is ≥ 0, and a negative one is refused wherever it appears** (*Changed 2026-08-02*).
+  A negative rate is not a price, and it fails worse than a fabricated zero rather than equally: a
+  zero makes a USD budget cap *fail to bind*, while a negative one **un-binds** it — the spend
+  counter goes down, so a negative-rate model pays for other calls. So, unlike the zero rule, there
+  is **no registered-value exemption**: an implementation refuses a negative on a table row
+  (`MissingRateError`, on any of `input` / `output` / `cached` / `cache_write` — no fallback rescues
+  a rate that would subtract money) **and** at the write call that states one (`InvalidRateError`
+  from `register` / `register_model_price` / `registerModelPrice`, so nothing is left in the table
+  for a later `estimate()` to multiply). A refusal must name the **value it found**, not the
+  condition: saying "zero" of a `-1` sends a reader grepping their own table for a `0`.
+  A producer must not emit one — the `cendor-prices` builder's **G2** already fails a negative rate,
+  and every mapped runtime source drops rows with `input <= 0`. This is reachable only through the
+  two paths that are deliberately not mappers: `register()` and a pass-through table. OpenRouter's
+  `-1` ("the price depends on which model gets routed", e.g. `openrouter/auto`) is the shape it
+  arrives in.
 - **Lookup normalization.** The table keys are bare ids. When the exact id misses the table, the
   implementation retries once with a normalized key before erroring: lowercase; drop a
   `provider/`-style prefix; drop leading **alpha-only** dotted segments (Bedrock vendor/region

@@ -1,6 +1,6 @@
 [project]
 name = "cendor-core"
-version = "1.20.1"
+version = "1.21.0"
 description = "Wrap your LLM client once and capture exact token counts and cost on every call — the shared foundation the other Cendor tools build on."
 requires-python = ">=3.11"
 license = "Apache-2.0"

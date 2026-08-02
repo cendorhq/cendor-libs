@@ -144,6 +144,87 @@ def test_a_table_zero_input_rate_is_refused_but_a_registered_one_is_honoured():
     assert prices.estimate("llama3", 1000, 500).amount == Decimal(0)
 
 
+def test_register_refuses_a_negative_rate_on_any_key():
+    """A negative rate does not merely fail to bind a USD cap — it UN-binds one. Refused at the call
+    that wrote it, like `register_deployment(like=)` already is, so nothing is left in the table for
+    a later `estimate()` to multiply into a negative `Money`.
+
+    Measured on the published 1.20.0 before this fix: `register("neg", {"input": -1, "output": -1})`
+    then `estimate("neg", 1M, 1M)` returned Money(Decimal("-2000000.00")).
+    """
+    for rates in (
+        {"input": -1, "output": -1},
+        {"input": "0.000005", "output": "-0.00001"},  # only the OUTPUT side is negative
+        {"input": "0.000005", "output": "0.00001", "cached": -1},
+        {"input": "0.000005", "output": "0.00001", "cache_write": Decimal("-0.5")},
+    ):
+        with pytest.raises(prices.InvalidRateError) as ei:
+            prices.register("neg-model", rates)
+        assert "negative" in str(ei.value)
+        assert "neg-model" not in prices.models(), "nothing is written when the rate is refused"
+
+    # ...and the unit-converting helper inherits it, since it writes through `register`.
+    with pytest.raises(prices.InvalidRateError):
+        prices.register_model_price("neg-model", input=-5, output=10, per="1M")
+    assert "neg-model" not in prices.models()
+
+
+def test_register_still_honours_a_ZERO_rate():
+    """NEGATIVE CONTROL for the rule above, and the D5 boundary: 0 is a price a user may mean (a
+    local model), a negative one is not. If this test ever fails, the negative rule has overreached
+    into the case the library deliberately does not second-guess."""
+    prices.register("llama3-local", {"input": 0, "output": 0})
+    assert prices.estimate("llama3-local", 1_000_000, 1_000_000).amount == Decimal(0)
+
+
+def test_a_table_negative_rate_is_refused_and_the_message_names_the_VALUE():
+    """The refusal was already right for input; the sentence was false. A pass-through table is a
+    TABLE, not a mapper, so it keeps the row and `estimate()` refuses it by name — and the name has
+    to be the value it found, or a user greps their own table for a `0`, does not find one, and
+    concludes the error is wrong about their data.
+
+    OpenRouter's `-1` routing sentinel is the shape this arrives in (`openrouter/auto` + four more).
+    """
+    _table({"auto": {"input": Decimal(-1), "output": Decimal(-1)}})
+    with pytest.raises(prices.MissingRateError) as ei:
+        prices.estimate("auto", 1_000_000, 1_000_000)
+    msg = str(ei.value)
+    assert "negative INPUT rate of -1" in msg, msg
+    assert "zero INPUT rate" not in msg, "the table states -1; it must not be described as a zero"
+
+    # Every key, not just input — a negative OUTPUT subtracts money just as effectively, and no
+    # spec fallback rescues a negative `cached` / `cache_write` either.
+    for key, why in (
+        ("output", "negative OUTPUT rate of -0.00001"),
+        ("cached", "negative CACHED rate of -1"),
+        ("cache_write", "negative CACHE_WRITE rate of -1"),
+    ):
+        _table(
+            {"m": {"input": Decimal("0.000005"), "output": Decimal("0.00001"), key: Decimal(-1)}}
+            if key != "output"
+            else {"m": {"input": Decimal("0.000005"), "output": Decimal("-0.00001")}}
+        )
+        with pytest.raises(prices.MissingRateError, match=re.escape(why)):
+            prices.estimate("m", 1000, 500)
+
+
+def test_a_negative_rate_can_never_produce_a_negative_money():
+    """The invariant behind both halves of the fix, asserted end to end rather than by construction:
+    a negative rate cannot reach the arithmetic by EITHER reachable path."""
+    _table(
+        {
+            "auto": {"input": Decimal(-1), "output": Decimal(-1)},
+            "auto-ok": {"input": Decimal("0.000001"), "output": Decimal("0.000002")},
+        }
+    )
+    with pytest.raises(prices.UnknownModelError):  # MissingRateError, via the table path
+        prices.estimate("auto", 1_000_000, 1_000_000)
+    with pytest.raises(prices.InvalidRateError):  # ...and the registration path
+        prices.register("auto", {"input": -1, "output": -1})
+    # The neighbouring good row still prices — the refusal is per-model, not a table-wide failure.
+    assert prices.estimate("auto-ok", 1_000_000, 1_000_000).amount == Decimal("3.00")
+
+
 def test_a_missing_input_key_raises_the_typed_error_not_a_bare_keyerror():
     _table({"headless": {"output": Decimal("0.00001")}})
     with pytest.raises(prices.MissingRateError, match="no INPUT rate"):

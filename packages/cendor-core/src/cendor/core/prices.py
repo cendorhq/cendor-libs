@@ -52,18 +52,44 @@ class MissingRateError(UnknownModelError):
     reports a fabricated cost as a *fact* while a USD budget cap silently never binds. A rate
     **you** registered is never second-guessed: ``prices.register("llama3", {"input": 0})``
     prices a local model at zero because you said so.
+
+    A **negative** rate in a table is refused too, on every key, registered or not — see
+    :class:`InvalidRateError` for why a negative is not the same case as a zero.
     """
 
     def __str__(self) -> str:  # KeyError repr()s its arg, which mangles a sentence into "'…'"
         return str(self.args[0]) if self.args else ""
 
 
+class InvalidRateError(ValueError):
+    """Raised by the ``register*`` functions when a rate you passed cannot be a price.
+
+    Today that means a **negative** rate. A ``ValueError``, not a :class:`MissingRateError`, because
+    this is a bad *argument* caught at the call that made it — the same shape
+    :func:`register_model_price` already uses for a bad ``per=``.
+
+    ⚠️ Why a negative is refused where a **zero** is honoured, which looks inconsistent and is not.
+    A zero is a price some models really have (a local model, an embedding's output side), so
+    ``register("llama3", {"input": 0, "output": 0})`` is a person stating a fact and the library
+    does not second-guess it. No model ever cost a negative amount to call. And the failure is worse
+    than a fabricated zero rather than merely equal to it: a zero rate makes a USD ``budget(...)``
+    cap *fail to bind*, while a negative one **un-binds** it — the spend counter goes down, so a
+    negative-rate model pays for other calls and the cap is further from firing after every one.
+
+    OpenRouter is the reason this is reachable at all: it serves ``-1`` as its "price depends on
+    which model gets routed" sentinel (``openrouter/auto`` and four others). Every mapped
+    ``refresh(source=…)`` drops those rows, so no shipped data path produces one — this closes the
+    two paths that are deliberately *not* mappers, ``register()`` and a pass-through table.
+    """
+
+
 def _missing_rate(model: str, key: str, why: str) -> MissingRateError:
     """Build the actionable error: it names the fix, in the caller's own code, both call shapes."""
     return MissingRateError(
-        f"the price table {why} for {model!r}, so this call cannot be priced. An absent or zero "
-        f"rate is indistinguishable from 'we do not know': pricing it as $0.00 would report a "
-        f"fabricated cost as a fact, and a USD budget cap would silently never bind on it.\n"
+        f"the price table {why} for {model!r}, so this call cannot be priced. An absent, zero or "
+        f"negative rate is indistinguishable from 'we do not know': pricing it as $0.00 would "
+        f"report a fabricated cost as a fact, and a USD budget cap would silently never bind on "
+        f"it.\n"
         f"Set the rate yourself:\n"
         f"    prices.register_model_price({model!r}, input=..., output=..., per='1M')\n"
         f"    prices.register({model!r}, {{'input': ..., 'output': ...}})   # per-token\n"
@@ -228,16 +254,49 @@ def register(model: str, rates: dict) -> None:
     prices.estimate("my-deployment", 1000, output_tokens=500)   # -> Money("0.0075", "USD")
     ```
 
+    A rate of ``0`` is honoured — you said so, and some models really are free. A **negative** rate
+    is refused here, at the call that wrote it, rather than surfacing as a negative ``Money`` on a
+    later ``estimate()``; see :class:`InvalidRateError`.
+
     Args:
         model: The exact model id calls report (deployment name / Hub id / local id).
         rates: Per-**token** USD rates — ``input`` (required), ``output``, ``cached``,
             ``cache_write``.
+
+    Raises:
+        InvalidRateError: If any rate is negative.
     """
     entry = {k: Decimal(str(v)) for k, v in rates.items()}
+    _reject_negative(str(model), entry)
     table = _ensure_loaded()
     with _table_lock:
         _registered[str(model)] = entry
         table.setdefault("models", {})[str(model)] = entry
+
+
+def _reject_negative(model: str, entry: dict[str, Decimal]) -> None:
+    """Refuse a negative rate at the call that wrote it — the only reachable entrance.
+
+    Registration-time, matching :func:`register_deployment`, whose ``like=`` already fails here
+    rather than on the first call: an error at the line that states the wrong thing names the fix in
+    the caller's own code, while one raised from ``estimate()`` names a call site that is merely
+    where the consequence showed up. Nothing is written when this raises, so the table is never left
+    holding a rate the next ``estimate()`` would multiply.
+    """
+    bad = sorted(k for k, v in entry.items() if v < 0)
+    if not bad:
+        return
+    shown = ", ".join(f"{k}={entry[k]}" for k in bad)
+    raise InvalidRateError(
+        f"cannot register a negative price rate for {model!r}: {shown}. No model costs a negative "
+        f"amount to call, and a negative rate does not merely fail to bind a USD budget cap — it "
+        f"UN-binds one, because the spend counter goes down and the model pays for other calls.\n"
+        f"A rate of 0 IS accepted (a local model really is free); a negative one is not.\n"
+        f"If this came from a price feed, that feed is telling you the model is not priceable — "
+        f"OpenRouter serves -1 for a dynamically-routed model, for instance. Leave it unpriced and "
+        f"let estimate() raise UnknownModelError, which every cendor caller already degrades to an "
+        f"honest None."
+    )
 
 
 #: Accepted ``per=`` units for :func:`register_model_price` → tokens per price unit.
@@ -416,12 +475,25 @@ def _priceable(r: dict, model: str) -> None:
     first output-bearing call rather than the first call is exactly the kind of late, partial signal
     this rule exists to remove.
 
-    Symmetric across the two rate keys that have no defined fallback (``cached`` and ``cache_write``
-    do have one, stated in the spec, so their absence is a default and not a gap).
+    Presence is required for the two rate keys that have no defined fallback (``cached`` and
+    ``cache_write`` do have one, stated in the spec, so their absence is a default and not a gap).
+    A **negative** value is refused on *every* key, including those two: no fallback rescues a rate
+    that would subtract money, and unlike the zero case there is no registered-value carve-out to
+    make — :func:`register` refuses a negative outright, so one can only have arrived from a table.
     """
     if "input" not in r:
         raise _missing_rate(model, "input", "has no INPUT rate")
-    if Decimal(str(r["input"])) <= 0 and not _is_registered(model):
+    for key in ("input", "output", "cached", "cache_write"):
+        if key not in r:
+            continue
+        value = Decimal(str(r[key]))
+        if value < 0:
+            # ⚠️ Name the value, not the condition. The message used to say "states a zero INPUT
+            # rate" for any non-positive rate, so a table holding -1 produced a refusal a user
+            # would grep their own table for a 0, not find one, and conclude was wrong about their
+            # data. The refusal was right; the sentence was false.
+            raise _missing_rate(model, key, f"states a negative {key.upper()} rate of {value}")
+    if Decimal(str(r["input"])) == 0 and not _is_registered(model):
         raise _missing_rate(model, "input", "states a zero INPUT rate")
     if "output" not in r:
         raise _missing_rate(model, "output", "has no OUTPUT rate")
