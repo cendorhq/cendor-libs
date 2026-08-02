@@ -313,7 +313,7 @@ provides-extras = ["squeeze"]
 
 [[package]]
 name = "cendor-core"
-version = "1.19.1"
+version = "1.19.2"
 source = { editable = "packages/cendor-core" }
 dependencies = [
     { name = "tiktoken" },
