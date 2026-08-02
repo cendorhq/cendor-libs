@@ -76,6 +76,137 @@ def test_unknown_model_raises():
         prices.estimate("does-not-exist", 100)
 
 
+# ------------------------------------------------------- unknown is not zero (prices/1, 2026-08-02)
+#
+# `prices/1` used to read an absent `output` as 0. Right for an embedding, wrong for a chat model
+# whose rate never parsed — and the two are indistinguishable downstream, so `estimate()` reported a
+# fabricated $0.00 as a FACT and a USD cap under-counted by the whole output side. Measured on the
+# shipped 1.19.2: after `refresh(source="litellm")`, `estimate("gpt-image-1", 1M, 1M)` returned
+# $5.00 where OpenAI's own rates make it $45.00.
+
+
+def _table(models):
+    """Install a table exactly as a pass-through `refresh(url=…)` would."""
+    prices._install({"_updated": "2026-08-02", "models": models}, "refreshed", "custom", "http://x")
+
+
+def test_a_missing_output_rate_is_unknown_not_free():
+    _table({"chatty": {"input": Decimal("0.000005")}})
+    with pytest.raises(prices.MissingRateError) as ei:
+        prices.estimate("chatty", 1_000_000, 1_000_000)
+    msg = str(ei.value)
+    assert "no OUTPUT rate" in msg
+    assert "register_model_price" in msg, "the error must name the fix, in the caller's own code"
+    assert "output=0 is honoured" in msg
+
+
+def test_the_refusal_does_not_wait_for_an_output_bearing_call():
+    """D2: refuse whenever the model is priced, not only when output tokens happen to be present.
+
+    A table that cannot price this model cannot price it. Finding that out on the first
+    output-bearing call rather than the first call is a late, partial signal.
+    """
+    _table({"chatty": {"input": Decimal("0.000005")}})
+    with pytest.raises(prices.MissingRateError):
+        prices.estimate("chatty", 1_000_000)  # no output tokens at all
+
+
+def test_missing_rate_error_is_catchable_as_unknown_model_and_keyerror():
+    """Every existing handler keeps working: instrument/otel/langchain/tokenguard catch KeyError."""
+    _table({"chatty": {"input": Decimal("0.000005")}})
+    assert issubclass(prices.MissingRateError, prices.UnknownModelError)
+    assert issubclass(prices.MissingRateError, KeyError)
+    with pytest.raises(prices.UnknownModelError):
+        prices.estimate("chatty", 10)
+    with pytest.raises(KeyError):
+        prices.estimate("chatty", 10)
+
+
+def test_an_explicit_zero_output_rate_is_honoured_forever():
+    """NEGATIVE CONTROL for the rule above: a STATED zero is a real embedding price, not a gap.
+    18 rows in the bundled snapshot depend on this."""
+    _table({"embedder": {"input": Decimal("0.00000002"), "output": Decimal(0)}})
+    assert prices.estimate("embedder", 1000, 1000).amount == Decimal("0.00002")
+    # ...and the shipped snapshot's real embeddings keep pricing.
+    prices._reset()
+    assert prices.estimate("text-embedding-3-small", 1000, 0).amount == Decimal("0.00002")
+
+
+def test_a_table_zero_input_rate_is_refused_but_a_registered_one_is_honoured():
+    """D5. A zero that arrived in a TABLE is a parser having lost a rate; a zero YOU registered is a
+    person stating a fact. The spec already says a user registration outranks any table, and
+    1.19.0 documented `register("llama3", {"input": 0, "output": 0})` as pricing one free."""
+    _table({"llama3": {"input": Decimal(0), "output": Decimal(0)}})
+    with pytest.raises(prices.MissingRateError, match="zero INPUT rate"):
+        prices.estimate("llama3", 1000, 500)
+
+    prices.register("llama3", {"input": 0, "output": 0})
+    assert prices.estimate("llama3", 1000, 500).amount == Decimal(0)
+
+
+def test_a_missing_input_key_raises_the_typed_error_not_a_bare_keyerror():
+    _table({"headless": {"output": Decimal("0.00001")}})
+    with pytest.raises(prices.MissingRateError, match="no INPUT rate"):
+        prices.estimate("headless", 1000)
+
+
+def test_register_model_price_is_the_documented_escape_and_it_works():
+    _table({"gpt-image-1": {"input": Decimal("0.000005")}})
+    with pytest.raises(prices.MissingRateError):
+        prices.estimate("gpt-image-1", 1_000_000, 1_000_000)
+    # OpenAI's published rates: $5/1M text in, $40/1M image out.
+    prices.register_model_price("gpt-image-1", input=5, output=40, per="1M")
+    assert prices.estimate("gpt-image-1", 1_000_000, 1_000_000).amount == Decimal(45)
+
+
+def test_register_deployment_refuses_an_unpriceable_base():
+    """Copying an unpriceable row onto a deployment reproduces the exact silence the function
+    exists to remove, so it fails at registration rather than on the first call."""
+    _table({"half-priced": {"input": Decimal("0.000005")}})
+    with pytest.raises(prices.MissingRateError):
+        prices.register_deployment("prod-eastus", like="half-priced")
+    assert "prod-eastus" not in prices.models()
+
+
+def test_a_mapped_source_drops_a_row_it_cannot_price(monkeypatch):
+    """D4 — the library mirror of the feed's `dropMissingOutput`. Measured 2026-08-02 against the
+    live payload: `refresh(source="litellm")` produced 10 such rows, `gpt-image-1` among them."""
+    raw = """
+    {"gpt-4o":      {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001},
+     "gpt-image-1": {"input_cost_per_token": 0.000005}}
+    """
+    _install_fetch(monkeypatch, raw)
+    assert prices.refresh(source="litellm") is True
+    assert "gpt-4o" in prices.models()
+    assert "gpt-image-1" not in prices.models(), (
+        "an unpriceable mapped row is absent, not half-priced"
+    )
+    with pytest.raises(prices.UnknownModelError):  # the plain one — the model is simply not there
+        prices.estimate("gpt-image-1", 1000, 500)
+
+
+def test_a_pass_through_table_keeps_every_row_and_estimate_refuses(monkeypatch):
+    """The other half of D4: a `refresh(url=…)` is a TABLE, not a mapper. We do not quietly discard
+    rows from a table the user chose — `estimate()` refuses the unpriceable ones, by name."""
+    _install_fetch(monkeypatch, '{"models": {"chatty": {"input": 0.000005}}}')
+    assert prices.refresh(url="https://example.test/p.json") is True
+    assert "chatty" in prices.models()
+    with pytest.raises(prices.MissingRateError):
+        prices.estimate("chatty", 1000, 500)
+
+
+def test_every_model_the_bundled_snapshot_lists_can_actually_be_priced():
+    """The invariant the whole rule exists to protect. If this ever fails, the generated snapshot
+    published a row no caller can use — which is what shipped in <= 1.19.1."""
+    unpriceable = []
+    for mid in prices.models():
+        try:
+            prices.estimate(mid, 1000, 1000)
+        except prices.UnknownModelError:
+            unpriceable.append(mid)
+    assert unpriceable == [], f"{len(unpriceable)} rows cannot be priced: {unpriceable[:10]}"
+
+
 def test_lookup_normalizes_wire_level_ids():
     # Bedrock modelId (vendor + region prefixes, -vN:0 suffix) prices like the base model.
     base = prices.estimate("claude-sonnet-4-6", 1000, 500)
@@ -471,7 +602,9 @@ def test_register_model_price_carries_cached_and_cache_write():
 
 def test_sdk_era_private_alias_still_writes():
     # An older `cendor-sdk` pinned against an older core calls `prices._register`. Keep it working.
-    prices._register("legacy-hook", {"input": Decimal("0.000001")})
+    # The `output` is STATED (0) rather than omitted: since 1.20.0 an absent rate means unknown, and
+    # this is exactly the one-line migration the error message asks any author to make.
+    prices._register("legacy-hook", {"input": Decimal("0.000001"), "output": 0})
     assert prices.estimate("legacy-hook", 1000).amount == Decimal("0.001")
 
 
@@ -591,6 +724,8 @@ def test_azure_skips_batch_and_fine_tune_and_long_context_meters(monkeypatch):
     {"Items": [
       {"skuName": "GPT 5.1 inp Gl", "retailPrice": 1.25, "unitOfMeasure": "1M",
        "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "GPT 5.1 opt Gl", "retailPrice": 10.0, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
       {"skuName": "GPT 5.1 Batch inp Gl", "retailPrice": 0.625, "unitOfMeasure": "1M",
        "productName": "Azure OpenAI GPT5", "type": "Consumption"},
       {"skuName": "GPT 5.1 inp Gl L", "retailPrice": 0.5, "unitOfMeasure": "1M",
@@ -610,12 +745,20 @@ def test_azure_unit_is_read_per_row(monkeypatch):
     {"Items": [
       {"skuName": "gpt-4o-0806-Inp-glbl", "retailPrice": 0.0025, "unitOfMeasure": "1K",
        "productName": "Azure OpenAI", "type": "Consumption"},
+      {"skuName": "gpt-4o-0806-Outp-glbl", "retailPrice": 0.01, "unitOfMeasure": "1K",
+       "productName": "Azure OpenAI", "type": "Consumption"},
       {"skuName": "GPT 5 Inpt Glbl", "retailPrice": 1.25, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "GPT 5 Outp Glbl", "retailPrice": 10.0, "unitOfMeasure": "1M",
        "productName": "Azure OpenAI GPT5", "type": "Consumption"}
     ]}
     """
     _install_fetch(monkeypatch, raw)
-    prices.refresh(source="azure")
+    # Assert the source actually took: before 1.20.0 these two rows carried no output rate, and once
+    # such a row is dropped `refresh` returns False — leaving the BUNDLED snapshot active, whose
+    # gpt-4o happens to be $2.50/1M too. The test would then have passed without the mapper running.
+    assert prices.refresh(source="azure") is True
+    assert prices.source_name() == "azure"
     assert prices.estimate("gpt-4o", 1_000_000).amount == Decimal("2.5")
     assert prices.estimate("gpt-5", 1_000_000).amount == Decimal("1.25")
 
@@ -628,16 +771,24 @@ def test_azure_family_root_does_not_mangle_o1_o3(monkeypatch):
     {"Items": [
       {"skuName": "o3 Inp glbl", "retailPrice": 0.002, "unitOfMeasure": "1K",
        "productName": "Azure OpenAI Reasoning", "type": "Consumption"},
+      {"skuName": "o3 Outp glbl", "retailPrice": 0.008, "unitOfMeasure": "1K",
+       "productName": "Azure OpenAI Reasoning", "type": "Consumption"},
       {"skuName": "4.3 Inp Glbl", "retailPrice": 0.00125, "unitOfMeasure": "1K",
+       "productName": "Azure Grok Models", "type": "Consumption"},
+      {"skuName": "4.3 Outp Glbl", "retailPrice": 0.00625, "unitOfMeasure": "1K",
        "productName": "Azure Grok Models", "type": "Consumption"},
       {"skuName": "V4 Pro Inp glbl", "retailPrice": 0.00174, "unitOfMeasure": "1K",
        "productName": "Azure Deepseek Models", "type": "Consumption"},
+      {"skuName": "V4 Pro Outp glbl", "retailPrice": 0.00696, "unitOfMeasure": "1K",
+       "productName": "Azure Deepseek Models", "type": "Consumption"},
       {"skuName": "GPT 5.2 pro inp Gl", "retailPrice": 21.0, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "GPT 5.2 pro opt Gl", "retailPrice": 84.0, "unitOfMeasure": "1M",
        "productName": "Azure OpenAI GPT5", "type": "Consumption"}
     ]}
     """
     _install_fetch(monkeypatch, raw)
-    prices.refresh(source="azure")
+    assert prices.refresh(source="azure") is True  # a dropped row would leave the bundled table
     known = prices.models()
     assert "o3" in known and "gpt-o3" not in known
     assert "grok-4.3" in known
@@ -650,12 +801,14 @@ def test_azure_maps_cache_read(monkeypatch):
     {"Items": [
       {"skuName": "GPT 5.1 inp Gl", "retailPrice": 1.25, "unitOfMeasure": "1M",
        "productName": "Azure OpenAI GPT5", "type": "Consumption"},
+      {"skuName": "GPT 5.1 opt Gl", "retailPrice": 10.0, "unitOfMeasure": "1M",
+       "productName": "Azure OpenAI GPT5", "type": "Consumption"},
       {"skuName": "GPT 5.1 cd inp Gl", "retailPrice": 0.125, "unitOfMeasure": "1M",
        "productName": "Azure OpenAI GPT5", "type": "Consumption"}
     ]}
     """
     _install_fetch(monkeypatch, raw)
-    prices.refresh(source="azure")
+    assert prices.refresh(source="azure") is True  # a dropped row would leave the bundled table
     # all 1M tokens cached: billed at the cached rate, once
     assert prices.estimate("gpt-5.1", 1_000_000, cached_tokens=1_000_000).amount == Decimal("0.125")
 
@@ -693,9 +846,43 @@ _AWS_INDEX = (
 )
 
 
-def _aws_file(products, terms, published="2026-07-29T23:58:47Z"):
+def _aws_file(products, terms, published="2026-07-29T23:58:47Z", with_output=True):
+    """Build an AWS offer file. ``with_output`` mirrors the real ones — for every *input-tokens*
+    product it appends the matching *output-tokens* product and term at 4x the rate.
+
+    Not cosmetic. Since ``cendor-core`` 1.20.0 a mapped row with no output rate is dropped as
+    unpriceable, so an input-only fixture maps to an EMPTY table, ``refresh()`` returns ``False``
+    and the bundled snapshot stays active — several of these tests would then have gone on passing
+    while asserting against the bundled rates instead of the mapper's. Pass ``with_output=False``
+    to exercise that drop on purpose.
+    """
     import json as _json
 
+    if with_output:
+        products = dict(products)
+        terms = dict(terms)
+        for sku, p in list(products.items()):
+            attrs = p.get("attributes", {})
+            if attrs.get("inferenceType") != "Input tokens":
+                continue  # cache rows carry a null inferenceType; only the usagetype names them
+            rate = terms[sku]["t"]["priceDimensions"]["d"]["pricePerUnit"]["USD"]
+            products[f"{sku}o"] = {
+                "attributes": {
+                    **attrs,
+                    "inferenceType": "Output tokens",
+                    "usagetype": attrs["usagetype"].replace("input-tokens", "output-tokens"),
+                }
+            }
+            terms[f"{sku}o"] = {
+                "t": {
+                    "priceDimensions": {
+                        "d": {
+                            "unit": terms[sku]["t"]["priceDimensions"]["d"]["unit"],
+                            "pricePerUnit": {"USD": str(Decimal(rate) * 4)},
+                        }
+                    }
+                }
+            }
     return _json.dumps(
         {"publicationDate": published, "products": products, "terms": {"OnDemand": terms}}
     )
@@ -1084,14 +1271,20 @@ def test_explain_surfaces_per_row_provenance(monkeypatch):
 
 
 def test_explain_flags_a_resale_source(monkeypatch):
-    raw = '{"data": [{"id": "gpt-4o", "type": "language", "pricing": {"input": "0.000003"}}]}'
+    raw = (
+        '{"data": [{"id": "gpt-4o", "type": "language",'
+        ' "pricing": {"input": "0.000003", "output": "0.000012"}}]}'
+    )
     _install_fetch(monkeypatch, raw)
     prices.refresh(source="vercel")
     assert any("RESALE" in n for n in prices.explain("gpt-4o").notes)
 
 
 def test_explain_flags_an_undatable_table(monkeypatch):
-    _install_fetch(monkeypatch, '{"gpt-4o": {"input_cost_per_token": 0.0000025}}')
+    _install_fetch(
+        monkeypatch,
+        '{"gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001}}',
+    )
     prices.refresh(source="litellm")
     assert any("no as-of date" in n for n in prices.explain("gpt-4o").notes)
 
@@ -1126,7 +1319,10 @@ def test_save_load_round_trips_rates_and_provenance(tmp_path, monkeypatch):
 
 
 def test_save_writes_exact_decimals_not_floats(tmp_path, monkeypatch):
-    _install_fetch(monkeypatch, '{"models": {"m": {"input": 0.000000123456789012345}}}')
+    _install_fetch(
+        monkeypatch,
+        '{"models": {"m": {"input": 0.000000123456789012345, "output": 0}}}',
+    )
     prices.refresh()
     path = prices.save(str(tmp_path / "p.json"))
     assert "0.000000123456789012345" in (tmp_path / "p.json").read_text(encoding="utf-8")
@@ -1195,6 +1391,9 @@ def test_the_feed_schema_is_number_literals_and_stays_exact(monkeypatch):
     """`prices/1` specifies JSON number literals; the cendor-prices feed emits them, and
     `parse_float=Decimal` reads the token text verbatim, so a long decimal survives to the last
     digit rather than going through a float."""
-    _install_fetch(monkeypatch, '{"models": {"m": {"input": 0.000000123456789012345}}}')
+    _install_fetch(
+        monkeypatch,
+        '{"models": {"m": {"input": 0.000000123456789012345, "output": 0}}}',
+    )
     prices.refresh()
     assert prices.estimate("m", 1_000_000).amount == Decimal("0.123456789012345")

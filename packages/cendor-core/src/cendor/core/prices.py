@@ -38,6 +38,40 @@ class UnknownModelError(KeyError):
     """Raised when a model id is not present in the price table."""
 
 
+class MissingRateError(UnknownModelError):
+    """Raised when a model IS in the table but its rates cannot price a call.
+
+    A **subclass of** :class:`UnknownModelError` (and therefore of ``KeyError``) on purpose: every
+    caller that already handles "I cannot price this" keeps working unchanged — ``instrument()``,
+    ``otel``, the LangChain handler and ``tokenguard`` all catch ``KeyError`` and fall back to an
+    honest ``None``/warn-once. Catch this specific type only when you want to tell *"no such model"*
+    apart from *"known model, unusable rate"*.
+
+    Raised for a rate a **table** left absent, or an input rate a table states as ``0`` — both are
+    indistinguishable from "we do not know", and :func:`estimate` returning ``$0.00`` for them
+    reports a fabricated cost as a *fact* while a USD budget cap silently never binds. A rate
+    **you** registered is never second-guessed: ``prices.register("llama3", {"input": 0})``
+    prices a local model at zero because you said so.
+    """
+
+    def __str__(self) -> str:  # KeyError repr()s its arg, which mangles a sentence into "'…'"
+        return str(self.args[0]) if self.args else ""
+
+
+def _missing_rate(model: str, key: str, why: str) -> MissingRateError:
+    """Build the actionable error: it names the fix, in the caller's own code, both call shapes."""
+    return MissingRateError(
+        f"the price table {why} for {model!r}, so this call cannot be priced. An absent or zero "
+        f"rate is indistinguishable from 'we do not know': pricing it as $0.00 would report a "
+        f"fabricated cost as a fact, and a USD budget cap would silently never bind on it.\n"
+        f"Set the rate yourself:\n"
+        f"    prices.register_model_price({model!r}, input=..., output=..., per='1M')\n"
+        f"    prices.register({model!r}, {{'input': ..., 'output': ...}})   # per-token\n"
+        f"If this model genuinely bills nothing for {key}, say so explicitly — an explicit "
+        f"{key}=0 is honoured, an absent one is not."
+    )
+
+
 class PriceRefreshError(RuntimeError):
     """Raised by ``refresh(..., required=True)`` when the fetch/parse/map failed.
 
@@ -309,17 +343,17 @@ def register_deployment(deployment: str, *, like: str) -> dict[str, Decimal]:
         The stored per-token rate dict (a copy — mutating it does not change the table).
 
     Raises:
-        UnknownModelError: If ``like`` is not in the active table, or its entry carries no ``input``
-            rate (which cannot price anything). Registering nothing and letting the deployment stay
-            unpriced would reproduce the exact silence this function exists to remove, so it raises.
+        UnknownModelError: If ``like`` is not in the active table.
+        MissingRateError: If ``like``'s entry cannot price a call — no ``input`` rate, a
+            table-stated zero ``input``, or no ``output``. Copying an unpriceable entry onto one
+            would reproduce the exact silence this function exists to remove, so it fails at
+            registration rather than on the first call.
     """
     # Copy EVERY rate key, not an enumerated few: a base entry may carry a key this function has
     # never heard of (a future rate category, or a hand-written `register()` dict), and dropping it
     # would silently under-price the deployment. `Decimal` is immutable, so sharing values is safe.
     rates = dict(_rates(like))  # raises UnknownModelError — never register a silent nothing
-    if "input" not in rates:
-        # `estimate` would raise later — i.e. the silent-unpriced outcome. Fail at registration.
-        raise UnknownModelError(like)
+    _priceable(rates, like)  # ...and never register rates that cannot price a call
     register(deployment, rates)
     return rates
 
@@ -363,6 +397,36 @@ def _rates(model: str) -> dict:
     return r
 
 
+def _is_registered(model: str) -> bool:
+    """Did *you* write these rates with :func:`register`, rather than a table supplying them?
+
+    The distinction is the whole reason a zero can be legal: the spec already says a user
+    registration outranks any table, so ``register("llama3", {"input": 0, "output": 0})`` is a
+    person stating a fact, while a ``0`` arriving inside a fetched table is a parser having lost
+    one. Checked against the same two ids :func:`_rates` resolves.
+    """
+    return model in _registered or _lookup_id(model) in _registered
+
+
+def _priceable(r: dict, model: str) -> None:
+    """Refuse rates that cannot price a call, instead of quietly treating the gap as free.
+
+    Applied whenever :func:`estimate` looks a model up — **not** only when the call happens to carry
+    output tokens. A table that cannot price this model cannot price it, and finding that out on the
+    first output-bearing call rather than the first call is exactly the kind of late, partial signal
+    this rule exists to remove.
+
+    Symmetric across the two rate keys that have no defined fallback (``cached`` and ``cache_write``
+    do have one, stated in the spec, so their absence is a default and not a gap).
+    """
+    if "input" not in r:
+        raise _missing_rate(model, "input", "has no INPUT rate")
+    if Decimal(str(r["input"])) <= 0 and not _is_registered(model):
+        raise _missing_rate(model, "input", "states a zero INPUT rate")
+    if "output" not in r:
+        raise _missing_rate(model, "output", "has no OUTPUT rate")
+
+
 def estimate(
     model: str,
     input_tokens: int,
@@ -378,8 +442,15 @@ def estimate(
     published ``cached`` rate, cache-read tokens fall back to the full input rate (no discount),
     which reduces to ``input_rate*input`` — never a double charge.
 
+    The model must be **priceable**, not merely present: a rate the table leaves absent, or an
+    input rate the table states as ``0``, raises :class:`MissingRateError` (a subclass of
+    :class:`UnknownModelError`, so existing ``except KeyError`` handlers are unaffected). Unknown is
+    not free — see the class docstring. State the rate with :func:`register_model_price`, or state
+    an explicit ``output=0`` if the model really does bill nothing for output.
+
     Args:
-        model: Model id; must exist in the table (else :class:`UnknownModelError`).
+        model: Model id; must exist in the table (else :class:`UnknownModelError`) and carry usable
+            rates (else :class:`MissingRateError`).
         input_tokens: Billed input tokens (inclusive of ``cached_tokens``).
         output_tokens: Billed output tokens.
         cached_tokens: Cache-read tokens, a subset of ``input_tokens``; priced at the model's
@@ -401,6 +472,7 @@ def estimate(
     ```
     """
     r = _rates(model)
+    _priceable(r, model)  # an absent or zero-in-a-table rate is UNKNOWN, never free
     cached = min(max(cached_tokens, 0), input_tokens)  # cached ⊆ input; clamp defensively
     input_rate = Decimal(str(r["input"]))
     cached_rate = Decimal(str(r["cached"])) if "cached" in r else input_rate
@@ -409,7 +481,7 @@ def estimate(
     )
     amount = (
         input_rate * (input_tokens - cached)
-        + Decimal(str(r.get("output", 0))) * output_tokens
+        + Decimal(str(r["output"])) * output_tokens
         + cached_rate * cached
         + write_rate * max(cache_write_tokens, 0)
     )
@@ -1072,6 +1144,13 @@ def refresh(
     try:
         raw = fetch(target, timeout, region)
         data = adapter(raw) if adapter is not None else raw
+        if adapter is not None and isinstance(data, dict):
+            # A MAPPED source only. These adapters are the deliberate twins of the cendor-prices
+            # builder's, and the feed already applies this rule (`zero.mjs`) before publishing —
+            # so a row our own mapper cannot price should be absent here for the same reason it
+            # is absent there. A pass-through `refresh(url=…)` is a TABLE, not a mapper: every row a
+            # user's own table states and let `estimate()` refuse the unpriceable ones by name.
+            _drop_unpriceable(data.get("models") or {})
         if isinstance(data, dict) and data.get("models"):
             _install(data, "refreshed", name, target)
             return True
@@ -1083,6 +1162,32 @@ def refresh(
     if required:
         raise PriceRefreshError(f"price refresh from {target!r} failed: {detail}")
     return False
+
+
+def _drop_unpriceable(models: dict) -> list[str]:
+    """Drop rows a mapped source produced that cannot price a call. In place; returns the ids.
+
+    The library mirror of ``cendor-prices``' ``dropZeroInput`` + ``dropMissingOutput``. Measured
+    2026-08-02 against the live payloads: ``refresh(source="litellm")`` produced **10** rows with no
+    output rate — including ``gpt-image-1``, which OpenAI bills at $40 per 1M output tokens, so
+    ``estimate("gpt-image-1", 1M, 1M)`` answered **$5.00** where the truth is **$45.00** — and
+    ``refresh(source="azure")`` produced one (``fw-deepseek-v4-pro-ch``).
+
+    A model no source can price is honestly **absent**, which is the plain ``UnknownModelError`` a
+    caller already handles, rather than a half-priced row that survives to under-report money. An
+    output rate a source explicitly states as ``0`` is kept: embeddings really do have one.
+    """
+    dropped = [
+        mid
+        for mid, r in models.items()
+        if not isinstance(r, dict)
+        or r.get("input") is None
+        or Decimal(str(r["input"])) <= 0
+        or r.get("output") is None
+    ]
+    for mid in dropped:
+        del models[mid]
+    return dropped
 
 
 def _coerce_rates(models: dict) -> None:

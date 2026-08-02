@@ -2,6 +2,63 @@
 
 All notable changes to this package are documented here. Format: [Keep a Changelog](https://keepachangelog.com); this project follows [Semantic Versioning](https://semver.org) — minor releases are additive and backward-compatible, and breaking changes land only in a new major.
 
+## [1.20.0] — 2026-08-02
+
+### Changed — an absent price rate is **unknown**, never zero
+
+1.19.2 closed the *data* half of this: the feed can no longer publish a row without an output rate.
+This closes the two halves a data fix cannot reach — the **spec** and the **library** — so a table
+that did not come from us can no longer make the same mistake.
+
+`prices/1` used to read an absent `output` as `0`. Right for an embedding, which genuinely bills no
+output tokens; wrong for a chat model whose rate merely failed to parse — and downstream the two are
+indistinguishable, so `estimate()` reported a fabricated `$0.00` as a *fact* and a USD `budget(...)`
+cap under-counted by the entire output side.
+
+Measured on 1.19.2 itself, through a documented API:
+
+```
+refresh(source="litellm")   ->  10 rows with no output rate
+estimate("gpt-image-1", 1_000_000, 1_000_000)   ->  $5.00
+OpenAI's own rates ($5/1M text in, $40/1M image out)  ->  $45.00
+```
+
+`refresh(source="azure")` supplied one more (`fw-deepseek-v4-pro-ch`).
+
+- **New `prices.MissingRateError`**, a **subclass of `UnknownModelError`** (and so of `KeyError`), so
+  every existing handler is unaffected — `instrument()`, `otel`, the LangChain handler and
+  `tokenguard` all already catch it and fall back to an honest `None` / warn-once. Catch the new type
+  only to tell *"no such model"* from *"known model, unusable rate"*. Its message names the fix, in
+  your own code, on both call shapes.
+- **`estimate()` refuses an unpriceable rate object** whenever it prices the model — *not* only when
+  the call carries output tokens. A table that cannot price a model cannot price it, and learning
+  that on the first output-bearing call is a late, partial signal. Three shapes are refused: no
+  `input`, a **table-stated** zero `input` (previously a silent `$0.00`; a missing `input` was a bare
+  `KeyError`), and no `output`.
+- **An explicit `"output": 0` is honoured forever** — 18 rows in the bundled snapshot are real
+  embeddings and depend on it.
+- **A rate *you* registered is never second-guessed.** `prices.register("llama3", {"input": 0,
+  "output": 0})` still prices a local model at zero, exactly as 1.19.0 documented: the spec already
+  says a user registration outranks any table, and a zero a person wrote is a statement, while a zero
+  that arrived inside a fetched table is a parser having lost one.
+- **`register_deployment(like=)` fails at registration** rather than on the first call when the base
+  it is copying cannot price one.
+- **A mapped `refresh(source=…)` drops rows it cannot price** — the library mirror of the feed's own
+  `dropZeroInput` + `dropMissingOutput`. Such a model is then honestly *absent* (the plain
+  `UnknownModelError` a caller already handles) instead of surviving half-priced. A pass-through
+  `refresh(url=…)` is a **table**, not a mapper: every row a user's own table states is kept, and
+  `estimate()` refuses the unpriceable ones by name.
+- **There is deliberately no switch back to the old behaviour.** The escape is to *state* the rate —
+  `prices.register_model_price(model, input=…, output=…, per="1M")`, or an explicit `0`.
+
+Why a **minor** and not a major: the shape of `prices/1` is unchanged, the function's contract
+("the cost of this call") is unchanged, the error is one the API already defines and documents for
+this condition, and **zero** rows in the bundled snapshot, the feed or `refresh(source="modelsdev")`
+are affected. It is the same call 1.19.0 made when it removed `llama3` at `0.0/0.0` from the snapshot
+and turned `estimate("llama3", …)` from `$0.00` into an `UnknownModelError` — one field over.
+
+Spec: `docs/specs/price-dataset.md` § *Changed 2026-08-02*. Parity: `@cendor/core` 3.7.0.
+
 ## [1.19.2] — 2026-08-02
 
 ### Fixed

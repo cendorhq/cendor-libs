@@ -282,8 +282,9 @@ call does, so a dated or Bedrock-decorated base id works (`like="gpt-4o-2024-08-
 key is copied, cached and cache-write rates included. Three properties worth knowing, all
 deliberate:
 
-- **An unknown `like` raises `UnknownModelError`.** Registering nothing and leaving the deployment
-  quietly unpriced would reproduce the exact silence this function exists to remove.
+- **An unknown `like` raises `UnknownModelError`**, and one whose rates cannot price a call raises
+  `MissingRateError`. Registering nothing and leaving the deployment quietly unpriced would
+  reproduce the exact silence this function exists to remove.
 - **Copy-at-registration, not a live alias.** The base's rates are read *now*. A later `refresh()`
   that reprices `gpt-4o` does **not** reprice `prod-chat` — call it again. The alternative would make
   a deployment's cost depend on whether its base still exists in whatever table was last fetched.
@@ -543,13 +544,13 @@ prices.registerDeployment('prod-chat', { like: 'gpt-4o' }); // a deployment name
 
 | Call | Returns | What it does |
 |---|---|---|
-| `estimate(model, input_tokens=, output_tokens=, cached_tokens=)` | `Money` | Price a call from the active table (Decimal, never float). |
+| `estimate(model, input_tokens=, output_tokens=, cached_tokens=)` | `Money` | Price a call from the active table (Decimal, never float). Raises `UnknownModelError` for a model the table does not have, and `MissingRateError` (a subclass of it) for one it has but cannot price — no `input`, a table-stated zero `input`, or no `output`. **An absent rate is unknown, never zero**; since core 1.20.0 / `@cendor/core` 3.7.0. |
 | `refresh(url=None, source=…, mapper=, timeout=, region=, required=False)` | `bool` | Pull live rates from a no-auth JSON source; falls back silently to the last-good table. No args = the **cendor-prices feed**. `region=` applies to `azure`/`aws`. `required=True` raises `PriceRefreshError` instead of returning `False`. |
 | `sources()` | `list[str]` | `["aws", "azure", "litellm", "modelsdev", "openrouter", "vercel"]`. |
 | `explain(model)` | `PriceExplanation` | Where this model's rates came from: resolved id, `how` (exact/normalized/registered/unpriced), the rates, table + per-row provenance, age, and honest notes. Never raises. |
 | `save(path)` · `load(path)` | `str` · `bool` | Explicit, opt-in persistence of the active table across processes. Provenance and `_updated` travel with it. Never an implicit cache. (TS: both `async`.) |
 | `register(model, rates)` | — | Register **per-token** rates for a model the snapshot doesn't know. Survives `refresh()`. (TS: `prices.register`.) |
-| `register_deployment(deployment, like=)` | `dict` | Price an Azure/Foundry **deployment name** by copying the rates of the base model it serves. Raises `UnknownModelError` if `like` isn't in the table. Copy-at-registration, not a live alias. Since core 1.16.0 / `@cendor/core` 3.2.0. (TS: `registerDeployment(deployment, { like })`.) |
+| `register_deployment(deployment, like=)` | `dict` | Price an Azure/Foundry **deployment name** by copying the rates of the base model it serves. Raises `UnknownModelError` if `like` isn't in the table, `MissingRateError` if its rates cannot price a call. Copy-at-registration, not a live alias. Since core 1.16.0 / `@cendor/core` 3.2.0. (TS: `registerDeployment(deployment, { like })`.) |
 | `register_model_price(model, input=, output=, cached=, cache_write=, per="1M")` | `dict` | The per-1M/1K convenience over `register`. Python only; TS's twin is `registerModelPrice` in `@cendor/sdk`. |
 | `models()` · `snapshot_date()` · `source()` | — | Introspect the active table. `source()` is `"bundled"` \| `"refreshed"` \| `"loaded"`. |
 | `age_days()` · `is_stale(max_age_days=30)` | — | Freshness signals. |

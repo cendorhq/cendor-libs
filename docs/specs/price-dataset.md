@@ -36,12 +36,17 @@ same shape.
 
 - **`models`** maps a model id (string) to a **rate object**.
 - Rate object fields, all **USD per single token**:
-  - `input` — required. Price per input (prompt) token.
-  - `output` — price per output token (treated as `0` if absent).
+  - `input` — **required**, and greater than zero. Price per input (prompt) token.
+  - `output` — **required**. Price per output token. A model that genuinely bills nothing for output
+    states `"output": 0`; **omitting the key means the rate is unknown, not zero.**
   - `cached` — optional. Price per cache-**read** token (a subset of input tokens). If absent, cache
     reads fall back to the `input` rate (no discount).
   - `cache_write` — optional. Price per cache-**write** token (a separate category). If absent, it
     defaults to `1.25 × input`.
+- ⚠️ **A rate object that cannot price a call MUST NOT be used to price one.** A reader that meets a
+  missing `input`, a zero `input`, or a missing `output` **MUST** refuse — the same honest error an
+  *unknown model* already gets — rather than substituting a zero. `cached` and `cache_write` are
+  different: their fallbacks are *stated above*, so their absence is a documented default, not a gap.
 - **Unit is per token**, not per 1K or 1M. e.g. `gpt-4o` `input: 0.0000025` = **$2.50 per 1M tokens**.
 - **No schema-version field is required.** `_updated` is the as-of date; the *format* version is this
   spec (`prices/1`), pinned out of band. A table MAY carry `"_schema": "prices/1"` for readers that
@@ -54,6 +59,50 @@ same shape.
   row that made exactly one local model report a fabricated `$0.00` while every other reported
   `None`. To price a local model at zero, the *user* says so with `prices.register`.)
 - **Unknown top-level keys MUST be ignored.** That is what makes `_provenance` additive.
+
+### Changed 2026-08-02 — an absent rate is *unknown*, not zero
+
+This spec previously read an absent `output` as `0`. That is correct for an embedding, which really
+does bill nothing for output, and **wrong for a chat model whose output rate merely failed to
+parse** — and downstream the two are indistinguishable, so `estimate()` reported a fabricated
+`$0.00` as a *fact* and a USD budget cap under-counted by the whole output side.
+
+Measured on `cendor-core` 1.19.2 / `@cendor/core` 3.6.2, through a documented API:
+`refresh(source="litellm")` supplied **10** rows with no output rate, and
+`estimate("gpt-image-1", 1_000_000, 1_000_000)` answered **$5.00** where OpenAI's own published
+rates ($5/1M text in, $40/1M image out) make it **$45.00**. `refresh(source="azure")` supplied one
+more (`fw-deepseek-v4-pro-ch`).
+
+The rule is now symmetric with the `input` bullet above, which this spec has always had. It is not a
+new idea, only the same one applied to the field next door.
+
+**What this changes for a table author.** State `output` — as a real rate, or as an explicit `0`
+when the model genuinely has no output billing. Both reference implementations refuse an unpriceable
+row rather than guessing, and the error they raise names the fix:
+
+<!-- tabs: lang -->
+<!-- tab: Python -->
+```python
+prices.register_model_price("my-model", input=5.00, output=40.00, per="1M")
+prices.register("my-model", {"input": "0.000005", "output": 0})   # per-token; 0 = no output billing
+```
+<!-- tab: TypeScript -->
+```ts
+prices.registerModelPrice('my-model', { input: 5.0, output: 40.0, per: '1M' });
+prices.register('my-model', { input: '0.000005', output: 0 }); // per-token; 0 = no output billing
+```
+<!-- /tabs -->
+
+**Why the version string is unchanged.** The document *shape* is identical — same keys, same types,
+same optionality — and the only movement is that a reader now refuses where it used to guess, which
+is strictly more conservative. Nothing that reads a conformant table behaves differently. Minting
+`prices/2` would have rippled `_schema` through the feed and both bundled snapshots and required a
+stated `prices/1` ⇄ `prices/2` compatibility rule, for a change no conformant table can notice.
+
+**A rate the user registers is never second-guessed.** `prices.register("llama3", {"input": 0,
+"output": 0})` still prices a local model at zero: the spec already says a user registration
+outranks any table, and a zero a *person* wrote is a statement, while a zero that arrived inside a
+fetched table is a parser having lost one.
 
 ## Decimal rule (mandatory in every language)
 
@@ -75,7 +124,7 @@ cached_rate = rate.cached      if present else input_rate
 write_rate  = rate.cache_write if present else input_rate × 1.25
 
 amount = input_rate  × (input_tokens − cached)
-       + output_rate × output_tokens                        // output_rate = rate.output or 0
+       + output_rate × output_tokens                        // rate.output; ABSENT -> refuse, see below
        + cached_rate × cached
        + write_rate  × max(cache_write_tokens, 0)
 
@@ -91,6 +140,12 @@ Key points a port must replicate exactly:
   `1.25 × input` when unpriced.
 - **Unknown model → error** (`UnknownModelError`), not a silent `0`. (Callers that must not fail on
   unpriced models handle that at a higher layer — see `tokenguard`'s `on_unpriced`.)
+- **Unpriceable rates → the same error** (`MissingRateError`, a *subclass* of `UnknownModelError` so
+  every existing handler is unaffected), raised whenever the model is priced — not only when the
+  call happens to carry output tokens. A table that cannot price a model cannot price it, and
+  learning that on the first output-bearing call rather than the first call is a late, partial
+  signal. The three unpriceable shapes are: no `input`, a **table-stated** zero `input`, and no
+  `output`. A rate the *user* registered is exempt from the zero rule — see the 2026-08-02 note.
 - **Lookup normalization.** The table keys are bare ids. When the exact id misses the table, the
   implementation retries once with a normalized key before erroring: lowercase; drop a
   `provider/`-style prefix; drop leading **alpha-only** dotted segments (Bedrock vendor/region
