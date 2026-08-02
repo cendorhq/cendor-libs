@@ -23,7 +23,14 @@ same shape.
   },
   "_provenance": {         // OPTIONAL, additive — see below. A reader may ignore it entirely.
     "gpt-4o": { "src": "azure", "asof": "2026-07-01" }
-  }
+  },
+  "_units": {              // OPTIONAL, additive — the unit each rate was converted FROM.
+    "gpt-4o": { "input": "1M", "output": "1M" }
+  },
+  "_withheld": [           // OPTIONAL, additive — rows a source published that this table omits.
+    { "model": "microsoft/phi-4-mini-instruct", "key": "input", "value": "0.008",
+      "ratio": 100000, "cohort": 2, "reason": "phi-4-mini-instruct is better corroborated and is kept" }
+  ]
 }
 ```
 
@@ -109,6 +116,28 @@ this spec requires — is unaffected, which is what makes the key additive rathe
 `asof` MAY be `null`: some sources publish no date at all, and a table MUST NOT invent one. An
 undatable rate is undatable, not fresh.
 
+## `_units` and `_withheld` (optional, additive)
+
+Both are **producer-side** keys. A consumer never needs them to price a call, and a `prices/1` reader
+ignores them like any other unknown top-level key. They exist so that a *table built from other
+tables* can be audited.
+
+`_units` maps a model id to `{ <rate key>: "token" | "1K" | "1M" }` — the unit the published
+per-token rate was **converted from**. It is not decoration. A vendor that moves a meter from `1K` to
+`1M` and changes the price in the same run lands on a number that no value-based check can question:
+the swing looks ordinary, the absolute value looks plausible, and the rate is off by 1000. Comparing
+the recorded unit against the previous table's is the only signal that survives that, so the unit
+travels with the rate that won.
+
+`_withheld` lists rows a source published that this table deliberately does **not** carry, each with
+`model`, `key`, the rejected `value`, and a `reason`. Producers reconciling several catalogs will
+sometimes find two irreconcilable prices for one model; dropping the doubtful row is right, but
+dropping it *silently* makes a suppressed model and an unknown model look identical, which overstates
+coverage. Stating the omission costs a few lines and keeps the table honest about its own gaps.
+
+Neither key is required, and a table carrying neither is fully conformant — a hand-authored snapshot
+has no upstream to reconcile.
+
 ## Refresh sources (informative)
 
 `refresh()` can replace the table at runtime from public, no-auth sources — each normalized back into
@@ -116,7 +145,7 @@ the `{ "models": { … } }` schema above:
 
 | Name | What | Dated |
 |---|---|---|
-| *(default)* | the **cendor-prices feed** (`raw.githubusercontent.com/cendorhq/cendor-prices/main/prices.json`) — the sources below, reconciled, with `_provenance` | yes |
+| *(default)* | the **cendor-prices feed** (`cendorhq.github.io/cendor-prices/prices.json`) — the sources below, reconciled, with `_provenance` | yes |
 | `azure` | Microsoft Azure Retail Prices, Foundry Models meters, one region | yes |
 | `aws` | AWS Bedrock public price files, one region, both offer codes | yes |
 | `modelsdev` | models.dev (MIT) | yes, per row |
